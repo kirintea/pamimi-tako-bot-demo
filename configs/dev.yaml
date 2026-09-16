@@ -2,7 +2,7 @@
 # 通过 APP_ENV=dev 加载 (默认)
 
 otel:
-  enabled: true
+  enabled: false
   endpoint: "${OTEL_ENDPOINT:-http://localhost:4317}"
   service_name: "platform-agent"
   service_version: "0.1.0"
@@ -13,7 +13,7 @@ llm:
   provider: "openai"
   api_key: "${LLM_API_KEY}"
   base_url: "${LLM_BASE_URL}"
-  model: "${LLM_MODEL_NAME:-glm-5}"
+  model: "${LLM_MODEL_NAME:-qwen-max}"
   stream: true
   context_size: 128000
   max_tokens: 4096
@@ -107,16 +107,16 @@ agent:
 
 # MCP 服务列表 (可选)
 mcp_servers:
-  - name: "baidu-maps"
-    transport: "http"
-    url: "https://mcp.api-inference.modelscope.net/20cc3a3b3d6740/mcp"
-    headers:
-      Authorization: "Bearer ${BAIDU_MAPS_API_KEY:-}"
-  - name: "market-cmgjmcp00074997"
-    transport: "http"
-    url: "https://dashscope.aliyuncs.com/api/v1/mcps/market-cmgjmcp00074997/mcp"
-    headers:
-      Authorization: "Bearer ${DASHSCOPE_API_KEY:-}"
+  # - name: "baidu-maps"
+  #   transport: "http"
+  #   url: "https://mcp.api-inference.modelscope.net/20cc3a3b3d6740/mcp"
+  #   headers:
+  #     Authorization: "Bearer ${BAIDU_MAPS_API_KEY:-}"
+  # - name: "market-cmgjmcp00074997"
+  #   transport: "http"
+  #   url: "https://dashscope.aliyuncs.com/api/v1/mcps/market-cmgjmcp00074997/mcp"
+  #   headers:
+  #     Authorization: "Bearer ${DASHSCOPE_API_KEY:-}"
   # - name: "filesystem"
   #   transport: "stdio"
   #   command: "npx"
