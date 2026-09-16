@@ -10,7 +10,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { sessionApi } from '@/api/session';
-import type { ChatMessage, ToolCallInfo, ToolCallRecord, WsMessage } from '@/api/types';
+import type { ChatMessage, ContentPart, ToolCallInfo, ToolCallRecord, WsMessage } from '@/api/types';
 import { wsManager } from '@/api/ws';
 
 export type ReplyPhase = 'idle' | 'streaming' | 'interrupting';
@@ -226,10 +226,27 @@ export function useMessages(userId: string, sessionId: string | null) {
 
 			for (const m of res.messages) {
 				if (m.role === 'user') {
+					// 检查是否是多模态消息（JSON 格式）
+					let userContent = m.content;
+					let userImages: string[] | undefined;
+					try {
+						const parsed = JSON.parse(m.content);
+						if (Array.isArray(parsed)) {
+							const textParts = parsed.filter((p: { type: string }) => p.type === 'text');
+							const imageParts = parsed.filter((p: { type: string }) => p.type === 'image');
+							userContent = textParts.map((p: { text: string }) => p.text).join('') || '';
+							if (imageParts.length) {
+								userImages = imageParts.map((p: { key: string }) => p.key);
+							}
+						}
+					} catch {
+						// 纯文本，忽略
+					}
 					rebuilt.push({
 						id: `hist-${m.id}`,
 						role: 'user',
-						content: m.content,
+						content: userContent,
+						images: userImages,
 					});
 				} else {
 					const meta = m.metadata;
@@ -286,19 +303,44 @@ export function useMessages(userId: string, sessionId: string | null) {
 		});
 	}, [userId]);
 
-	/** 发送消息 */
-	const sendMessage = useCallback((content: string) => {
-		if (!content.trim()) return;
+	/** 发送消息（纯文本或多模态） */
+	const sendMessage = useCallback((content: string | ContentPart[]) => {
+		// 纯文本
+		if (typeof content === 'string') {
+			if (!content.trim()) return;
+			setMessages(prev => [
+				...prev,
+				{ id: `msg-${Date.now()}`, role: 'user', content: content.trim() },
+			]);
+			setPhase('streaming');
+			wsManager.send({
+				type: 'chat',
+				payload: { message: content.trim() },
+			});
+			return;
+		}
+
+		// 多模态（ContentPart[]）
+		if (!content.length) return;
+
+		// 构建用户消息显示文本
+		const textParts = content.filter((p): p is { type: 'text'; text: string } => p.type === 'text');
+		const imageParts = content.filter((p): p is { type: 'image'; key: string } => p.type === 'image');
+		const displayText = textParts.map(p => p.text).join('') || (imageParts.length ? `[${imageParts.length} 张图片]` : '');
 
 		setMessages(prev => [
 			...prev,
-			{ id: `msg-${Date.now()}`, role: 'user', content: content.trim() },
+			{
+				id: `msg-${Date.now()}`,
+				role: 'user',
+				content: displayText,
+				images: imageParts.map(p => p.key),
+			},
 		]);
 		setPhase('streaming');
-
 		wsManager.send({
 			type: 'chat',
-			payload: { message: content.trim() },
+			payload: { message: content },
 		});
 	}, []);
 

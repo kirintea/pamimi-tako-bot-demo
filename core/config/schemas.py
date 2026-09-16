@@ -291,6 +291,47 @@ class SandboxConfig(BaseModel):
 # 根配置
 # ============================================================
 
+class ObjectStorageConfig(BaseModel):
+    """对象存储配置"""
+    backend: str = Field(
+        default="local",
+        description="存储后端: local / s3 / aliyun_oss",
+    )
+    prefix: str = Field(default="images/", description="对象 key 前缀")
+
+    # local 模式
+    local_dir: str = Field(default="workspaces/uploads", description="本地存储目录（backend=local）")
+
+    # S3 通用（AWS S3 / MinIO / Cloudflare R2）
+    s3_endpoint: str | None = Field(default=None, description="S3 端点地址（MinIO/R2 需填写）")
+    s3_access_key: str = Field(default="", description="S3 Access Key")
+    s3_secret_key: str = Field(default="", description="S3 Secret Key")
+    s3_bucket: str = Field(default="agentscope-images", description="S3 存储桶")
+    s3_region: str = Field(default="us-east-1", description="S3 区域")
+    s3_addressing_style: str = Field(
+        default="path",
+        description="S3 寻址方式: path（MinIO）/ virtual（AWS S3）",
+    )
+
+    # 阿里云 OSS
+    oss_endpoint: str | None = Field(default=None, description="OSS 端点")
+    oss_access_key: str = Field(default="", description="OSS Access Key")
+    oss_secret_key: str = Field(default="", description="OSS Secret Key")
+    oss_bucket: str = Field(default="agentscope-images", description="OSS 存储桶")
+
+
+class ImageConfig(BaseModel):
+    """图片输入配置"""
+    enabled: bool = Field(default=True, description="是否启用图片输入")
+    max_size_mb: int = Field(default=10, description="单张图片最大 MB")
+    max_count_per_msg: int = Field(default=5, description="单条消息最多图片数")
+    allowed_types: list[str] = Field(
+        default_factory=lambda: ["image/png", "image/jpeg", "image/gif", "image/webp"],
+        description="允许的 MIME 类型",
+    )
+    presigned_url_ttl: int = Field(default=300, description="Presigned URL 有效期（秒）")
+
+
 class MemoryConfig(BaseModel):
     """长期记忆配置。"""
 
@@ -337,4 +378,12 @@ class AppConfig(BaseModel):
     memory: MemoryConfig = Field(
         default_factory=MemoryConfig,
         description="长期记忆配置",
+    )
+    object_storage: ObjectStorageConfig = Field(
+        default_factory=ObjectStorageConfig,
+        description="对象存储配置",
+    )
+    image: ImageConfig = Field(
+        default_factory=ImageConfig,
+        description="图片输入配置",
     )

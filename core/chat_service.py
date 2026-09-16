@@ -22,6 +22,8 @@ from agentscope.app.message_bus import MessageBus, MessageBusKeys
 from agentscope.event import EventType
 from agentscope.message import Msg, UserMsg
 
+from core.multimodal import ContentPart, build_user_msg, serialize_message_for_storage
+from core.object_storage.base import ObjectStorageBase
 from core.session import SessionManager
 from core.session_status import SessionBusyError, SessionState, SessionStatusTracker
 
@@ -79,9 +81,10 @@ class ChatService:
         self,
         user_id: str,
         session_id: str,
-        message: str,
+        message: str | list[ContentPart],
         db=None,
         device_id: str = "unknown",
+        object_storage: ObjectStorageBase | None = None,
     ) -> None:
         """触发一次 chat run（后台执行）
 
@@ -97,9 +100,10 @@ class ChatService:
         Args:
             user_id: 用户 ID
             session_id: 会话 ID
-            message: 用户消息
+            message: 用户消息（纯文本或多模态内容列表）
             db: 可选 DatabaseManager，用于 PG 双写；不传则仅写 Redis
             device_id: 发起请求的设备标识（用于多端状态广播）
+            object_storage: 对象存储实例（多模态消息需要读取图片）
         """
         events_key = MessageBusKeys.session_events(session_id)
 
@@ -159,7 +163,7 @@ class ChatService:
                 })
 
                 # 执行流式回复
-                user_msg = UserMsg(name="user", content=message)
+                user_msg = await build_user_msg(message, object_storage)
                 event_count = 0
 
                 async for event in agent.reply_stream(user_msg):
@@ -295,7 +299,8 @@ class ChatService:
                 # assistant 消息仅在 full_reply 非空时写入；标题按需 upsert。
                 if db and getattr(db, "is_initialized", False):
                     try:
-                        await db.insert_conversation(user_id, session_id, "user", message)
+                        stored_message = serialize_message_for_storage(message)
+                        await db.insert_conversation(user_id, session_id, "user", stored_message)
                         metadata = {}
                         if full_thinking:
                             metadata["thinking"] = full_thinking
@@ -306,7 +311,7 @@ class ChatService:
                                 user_id, session_id, "assistant", full_reply,
                                 metadata=metadata or None,
                             )
-                        title = message[:30] if message else None
+                        title = stored_message[:30] if stored_message else None
                         if title:
                             existing = await db.get_session_title(user_id, session_id)
                             if not existing:

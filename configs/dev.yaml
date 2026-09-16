@@ -160,3 +160,35 @@ sandbox:
     - host: "skills"
       container: "/workspace/skills"
       readonly: true
+
+# 对象存储配置（图片上传等）
+object_storage:
+  backend: "local"              # local / s3 / aliyun_oss
+  prefix: "images/"             # 对象 key 前缀
+  local_dir: "workspaces/uploads"  # 本地存储目录（backend=local）
+
+  # backend=s3 时生效（AWS S3 / MinIO / Cloudflare R2）
+  # s3_endpoint: "${S3_ENDPOINT:-http://localhost:9000}"
+  # s3_access_key: "${S3_ACCESS_KEY:-minioadmin}"
+  # s3_secret_key: "${S3_SECRET_KEY:-minioadmin}"
+  # s3_bucket: "${S3_BUCKET:-agentscope-images}"
+  # s3_region: "${S3_REGION:-us-east-1}"
+  # s3_addressing_style: "path"   # MinIO 用 "path"，AWS S3 用 "virtual"
+
+  # backend=aliyun_oss 时生效
+  # oss_endpoint: "${OSS_ENDPOINT:-https://oss-cn-hangzhou.aliyuncs.com}"
+  # oss_access_key: "${OSS_ACCESS_KEY:-}"
+  # oss_secret_key: "${OSS_SECRET_KEY:-}"
+  # oss_bucket: "${OSS_BUCKET:-agentscope-images}"
+
+# 图片输入配置
+image:
+  enabled: true
+  max_size_mb: 10               # 单张图片最大 MB
+  max_count_per_msg: 5          # 单条消息最多图片数
+  allowed_types:                # 允许的 MIME 类型
+    - "image/png"
+    - "image/jpeg"
+    - "image/gif"
+    - "image/webp"
+  presigned_url_ttl: 300        # Presigned URL 有效期（秒）

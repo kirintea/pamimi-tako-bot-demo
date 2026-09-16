@@ -38,6 +38,13 @@ from agentscope.message import Msg, UserMsg
 from loguru import logger
 
 from core.chat_service import acquire_session_lock
+from core.multimodal import (
+    ContentPart,
+    ImageContent,
+    TextContent,
+    build_user_msg,
+    serialize_message_for_storage,
+)
 from core.session_status import SessionBusyError, SessionState, SessionStatusTracker
 from core.validators import coerce_id, coerce_id_strict, is_auth_enabled
 
@@ -325,10 +332,23 @@ async def websocket_chat(
                             })
                             continue
 
-                    message = data.get("payload", {}).get("message", "")
-                    if not message:
+                    raw_message = data.get("payload", {}).get("message", "")
+                    if not raw_message:
                         await _send_json(ws, "error", {"message": "消息不能为空"})
                         continue
+
+                    # 解析多模态消息
+                    message: str | list[ContentPart] = raw_message
+                    if isinstance(raw_message, list):
+                        try:
+                            message = [
+                                TextContent(**part) if part.get("type") == "text"
+                                else ImageContent(**part)
+                                for part in raw_message
+                            ]
+                        except Exception:
+                            await _send_json(ws, "error", {"message": "消息格式错误"})
+                            continue
 
                     # 重置取消标志
                     cancelled.clear()
@@ -418,7 +438,7 @@ async def _handle_chat(
     db,
     user_id: str,
     session_id: str,
-    message: str,
+    message: str | list[ContentPart],
     cancelled: asyncio.Event,
     device_id: str = "unknown",
     status_tracker: SessionStatusTracker | None = None,
@@ -473,7 +493,8 @@ async def _handle_chat(
                 # 标记会话为生成中（多端并发状态广播）
                 if status_tracker:
                     await status_tracker.set_generating(
-                        session_id, device_id, message,
+                        session_id, device_id,
+                        serialize_message_for_storage(message),
                     )
 
                 agent = await session_mgr.get_or_create(user_id, session_id)
@@ -485,7 +506,9 @@ async def _handle_chat(
                 # 多实例场景：强制刷新状态
                 await session_mgr.refresh_state(user_id, session_id)
 
-                user_msg = UserMsg(name="user", content=message)
+                user_msg = await build_user_msg(
+                    message, ws.app.state.object_storage,
+                )
 
                 # LLM 超时保护（空闲超时：两事件之间最长等待）
                 llm_timeout = getattr(
@@ -697,7 +720,8 @@ async def _handle_chat(
         # PG 历史双写为 append-only 且风险较低，保留为 fire-and-forget；
         # Redis AgentState 已在上方锁内 awaited 落库（state-loss race 修复）。
         task = asyncio.create_task(_persist_conversation(
-            session_mgr, db, user_id, session_id, message, full_reply,
+            session_mgr, db, user_id, session_id,
+            serialize_message_for_storage(message), full_reply,
             thinking=full_thinking or None,
             tool_calls=list(tool_call_records.values()) or None,
         ))

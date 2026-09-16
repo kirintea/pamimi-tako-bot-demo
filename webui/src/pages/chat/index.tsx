@@ -283,6 +283,7 @@ export function ChatPage() {
 						<ContextIndicator userId={userId} sessionId={urlSessionId ?? null} />
 						<ChatInput
 							phase={phase}
+							userId={userId}
 							onSend={sendMessage}
 							onInterrupt={cancelGeneration}
 						/>
