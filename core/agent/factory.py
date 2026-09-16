@@ -12,6 +12,16 @@
 from __future__ import annotations
 
 from agentscope.agent import Agent, ContextConfig, InjectionConfig, ReActConfig
+from agentscope.formatter import (
+    AnthropicChatFormatter,
+    DashScopeChatFormatter,
+    DeepSeekChatFormatter,
+    GeminiChatFormatter,
+    MoonshotChatFormatter,
+    OllamaChatFormatter,
+    OpenAIChatFormatter,
+    XAIChatFormatter,
+)
 from agentscope.credential import OpenAICredential
 from agentscope.middleware import ReplyBudgetControlMiddleware, TracingMiddleware
 from agentscope.model import OpenAIChatModel
@@ -193,21 +203,21 @@ class AgentFactory:
     def _create_model(llm_config: LLMConfig) -> OpenAIChatModel:
         """创建 LLM 模型实例
 
-        当前支持 OpenAI 兼容协议（覆盖大多数国产 LLM 代理）。
-        后续可根据 provider 字段扩展 DashScope / Anthropic 等。
+        统一使用 OpenAI 兼容协议，由 provider 字段决定 Formatter：
+        - dashscope: DashScopeChatFormatter（阿里百炼消息格式）
+        - siliconflow: SiliconFlowFormatter（content 扁平化）
+        - 其他: 默认 OpenAI Formatter
 
-        特殊处理：
-        - SiliconFlow API 需要自定义 Formatter 扁平化 content 格式
+        base_url 指向实际 LLM 网关地址（内部代理，不含厂商标识），
+        不用于 provider 判断。
         """
         credential = OpenAICredential(
             api_key=SecretStr(llm_config.api_key),
             base_url=llm_config.base_url,
         )
 
-        # 根据 API 地址选择合适的 Formatter
-        formatter = None
-        if "siliconflow" in llm_config.base_url.lower():
-            formatter = SiliconFlowFormatter()
+        # 根据 provider / API 地址选择合适的 Formatter
+        formatter = AgentFactory._select_formatter(llm_config)
 
         return OpenAIChatModel(
             credential=credential,
@@ -221,6 +231,29 @@ class AgentFactory:
                 parallel_tool_calls=True,
             ),
         )
+
+    @staticmethod
+    def _select_formatter(llm_config: LLMConfig):
+        """根据 provider 选择 Formatter
+
+        provider 是唯一判断依据，不依赖 base_url 关键字检测
+        （实际部署中 base_url 指向内部网关，不含厂商标识）。
+        """
+        formatter_map = {
+            "anthropic": AnthropicChatFormatter,
+            "dashscope": DashScopeChatFormatter,
+            "deepseek": DeepSeekChatFormatter,
+            "gemini": GeminiChatFormatter,
+            "moonshot": MoonshotChatFormatter,
+            "ollama": OllamaChatFormatter,
+            "openai": OpenAIChatFormatter,
+            "siliconflow": SiliconFlowFormatter,
+            "xai": XAIChatFormatter,
+        }
+        formatter_cls = formatter_map.get(llm_config.provider)
+        if formatter_cls:
+            return formatter_cls()
+        return None
 
     @staticmethod
     def _create_toolkit(

@@ -51,15 +51,6 @@ DDL_STATEMENTS = [
     """
     ALTER TABLE conversations ALTER COLUMN metadata SET DEFAULT NULL
     """,
-    """
-    ALTER TABLE sessions ALTER COLUMN config SET DEFAULT NULL
-    """,
-    """
-    ALTER TABLE mcps ALTER COLUMN config SET DEFAULT NULL
-    """,
-    """
-    ALTER TABLE skills ALTER COLUMN data SET DEFAULT NULL
-    """,
 
     # 索引：用户+会话查询（过滤状态）
     """
@@ -103,6 +94,9 @@ DDL_STATEMENTS = [
         created_at  TIMESTAMPTZ DEFAULT NOW(),
         updated_at  TIMESTAMPTZ DEFAULT NOW()
     )
+    """,
+    """
+    ALTER TABLE sessions ALTER COLUMN config SET DEFAULT NULL
     """,
 
     # 状态字段（软删除：active / deleted）
