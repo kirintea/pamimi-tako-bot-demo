@@ -1,12 +1,13 @@
 /**
  * 消息气泡组件 — 渲染用户/助手消息
  *
- * 支持：Markdown、思考折叠、工具调用展示、复制、Fork
+ * 支持：Markdown、思考折叠、工具调用展示、复制、Fork、图片展示
  */
 
 import { Check, ChevronDown, ChevronRight, Copy, GitBranch, Wrench } from 'lucide-react';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
+import { imagesApi } from '@/api/images';
 import type { ChatMessage } from '@/api/types';
 import { cn } from '@/lib/utils';
 
@@ -53,6 +54,11 @@ export function MessageBubble({ message, onFork }: Props) {
 					>
 						<div className="whitespace-pre-wrap">{message.content.trimStart()}</div>
 					</div>
+				)}
+
+				{/* 图片展示（用户消息中的图片） */}
+				{message.images && message.images.length > 0 && (
+					<ImageGallery keys={message.images} />
 				)}
 
 				{/* Thinking block */}
@@ -170,6 +176,64 @@ function ToolCallBlock({
 					)}
 				</div>
 			)}
+		</div>
+	);
+}
+
+/** 图片画廊组件 — 加载并展示用户消息中的图片 */
+function ImageGallery({ keys }: { keys: string[] }) {
+	const [urls, setUrls] = useState<(string | null)[]>(keys.map(() => null));
+	const [errors, setErrors] = useState<(string | null)[]>(keys.map(() => null));
+
+	useEffect(() => {
+		let cancelled = false;
+
+		async function loadUrls() {
+			const results: (string | null)[] = [];
+			const errs: (string | null)[] = [];
+			for (const key of keys) {
+				try {
+					const res = await imagesApi.getAccessUrl(key);
+					results.push(res.url);
+					errs.push(null);
+				} catch {
+					results.push(null);
+					errs.push('加载失败');
+				}
+			}
+			if (!cancelled) {
+				setUrls(results);
+				setErrors(errs);
+			}
+		}
+
+		loadUrls();
+		return () => { cancelled = true; };
+	}, [keys]);
+
+	return (
+		<div className="flex gap-2 flex-wrap mt-2">
+			{keys.map((key, i) => (
+				<div key={key} className="relative group">
+					{urls[i] ? (
+						<a href={urls[i]!} target="_blank" rel="noopener noreferrer">
+							<img
+								src={urls[i]!}
+								alt={`图片 ${i + 1}`}
+								className="max-w-[300px] max-h-[300px] rounded-lg border border-border object-contain cursor-pointer hover:opacity-90 transition-opacity"
+							/>
+						</a>
+					) : errors[i] ? (
+						<div className="w-20 h-20 rounded-lg border border-destructive/30 bg-destructive/5 flex items-center justify-center text-xs text-destructive">
+							{errors[i]}
+						</div>
+					) : (
+						<div className="w-20 h-20 rounded-lg border border-border bg-muted flex items-center justify-center">
+							<div className="size-4 border-2 border-muted-foreground border-t-transparent rounded-full animate-spin" />
+						</div>
+					)}
+				</div>
+			))}
 		</div>
 	);
 }

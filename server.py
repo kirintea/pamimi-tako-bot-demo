@@ -28,6 +28,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from api.chat import router as chat_router
+from api.images import router as images_router
 from api.mcp import router as mcp_router
 from api.skill import router as skill_router
 from api.ws_chat import router as ws_chat_router
@@ -234,6 +235,34 @@ def create_app(config) -> FastAPI:
         app.state.workspace_manager = workspace_mgr
         logger.info("工作区管理器已就绪 (沙箱目录: {})", sandbox_dir)
 
+        # 创建对象存储（图片上传等）
+        from core.object_storage import create_object_storage
+        storage_cfg = config.object_storage
+        if storage_cfg.backend == "local":
+            obj_storage = create_object_storage("local", base_dir=storage_cfg.local_dir)
+        elif storage_cfg.backend == "s3":
+            obj_storage = create_object_storage(
+                "s3",
+                bucket=storage_cfg.s3_bucket,
+                endpoint=storage_cfg.s3_endpoint,
+                access_key=storage_cfg.s3_access_key,
+                secret_key=storage_cfg.s3_secret_key,
+                region=storage_cfg.s3_region,
+                addressing_style=storage_cfg.s3_addressing_style,
+            )
+        elif storage_cfg.backend == "aliyun_oss":
+            obj_storage = create_object_storage(
+                "aliyun_oss",
+                bucket=storage_cfg.oss_bucket,
+                endpoint=storage_cfg.oss_endpoint,
+                access_key=storage_cfg.oss_access_key,
+                secret_key=storage_cfg.oss_secret_key,
+            )
+        else:
+            raise ValueError(f"不支持的存储后端: {storage_cfg.backend}")
+        app.state.object_storage = obj_storage
+        logger.info("对象存储已就绪 (backend={})", storage_cfg.backend)
+
         # 创建 Chat 服务（Fire-and-Forget 模式）
         # 先初始化 SessionStatusTracker（多端并发状态广播）
         status_tracker = None
@@ -342,6 +371,7 @@ def create_app(config) -> FastAPI:
     # 3. 注册 API 路由
     # ============================================================
     app.include_router(chat_router, tags=["chat"])
+    app.include_router(images_router, tags=["images"])
     app.include_router(mcp_router)
     app.include_router(skill_router)
     app.include_router(ws_chat_router, tags=["websocket"])

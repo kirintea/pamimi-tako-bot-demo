@@ -30,6 +30,14 @@ from pydantic import BaseModel, Field
 from agentscope.event import EventType
 from agentscope.message import Msg, UserMsg
 
+from core.multimodal import (
+    ContentPart,
+    ImageContent,
+    TextContent,
+    build_user_msg,
+    serialize_message_for_storage,
+)
+
 from loguru import logger
 
 from core.chat_service import acquire_session_lock, session_lock_key
@@ -128,8 +136,8 @@ async def _persist_conversation(
 # ============================================================
 
 class ChatRequest(BaseModel):
-    """对话请求"""
-    message: str = Field(description="用户消息内容")
+    """对话请求 — 向后兼容纯字符串"""
+    message: str | list[ContentPart] = Field(description="用户消息内容")
     user_id: str = Field(
         default="anonymous",
         description="用户标识（区分不同用户）",
@@ -222,7 +230,8 @@ async def chat_stream(request: Request, body: ChatRequest):
                     # 标记会话为生成中（多端并发状态广播）
                     if status_tracker:
                         await status_tracker.set_generating(
-                            session_id, device_id, body.message,
+                            session_id, device_id,
+                            serialize_message_for_storage(body.message),
                         )
 
                     agent = await session_mgr.get_or_create(user_id, session_id)
@@ -232,7 +241,10 @@ async def chat_stream(request: Request, body: ChatRequest):
                         "agentscope.device.id": device_id,
                     }
                     await session_mgr.refresh_state(user_id, session_id)
-                    user_msg = UserMsg(name="user", content=body.message)
+                    user_msg = await build_user_msg(
+                        body.message,
+                        request.app.state.object_storage,
+                    )
 
                     event_count = 0
 
@@ -369,7 +381,7 @@ async def chat_stream(request: Request, body: ChatRequest):
             # Redis AgentState 已在上方锁内 awaited 落库（state-loss race 修复）。
             task = asyncio.create_task(_persist_conversation(
                 session_mgr, db, user_id, session_id,
-                body.message, full_reply,
+                serialize_message_for_storage(body.message), full_reply,
                 thinking=full_thinking or None,
                 tool_calls=list(tool_call_records.values()) or None,
             ))
@@ -596,7 +608,7 @@ async def fork_session(request: Request, user_id: str, session_id: str):
 
 class ChatTriggerRequest(BaseModel):
     """Fire-and-Forget 触发请求"""
-    message: str = Field(description="用户消息内容")
+    message: str | list[ContentPart] = Field(description="用户消息内容")
     user_id: str = Field(default="anonymous", description="用户标识")
     session_id: str | None = Field(default=None, description="会话 ID")
     device_id: str = Field(default="unknown", description="设备标识")
@@ -795,7 +807,11 @@ async def chat_trigger(request: Request, body: ChatTriggerRequest):
 
     # 后台触发 chat run（传入 db 以进行 PG 双写）
     task = asyncio.create_task(
-        chat_service.run(user_id, session_id, body.message, db, device_id=device_id)
+        chat_service.run(
+            user_id, session_id, body.message, db,
+            device_id=device_id,
+            object_storage=request.app.state.object_storage,
+        )
     )
     _PERSIST_TASKS.add(task)
     task.add_done_callback(_PERSIST_TASKS.discard)
