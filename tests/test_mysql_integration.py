@@ -19,7 +19,9 @@
 
 from __future__ import annotations
 
+import json
 import os
+import uuid
 
 import pytest
 import pytest_asyncio
@@ -53,8 +55,9 @@ async def db_manager():
 
 
 async def test_tables_created(db_manager):
+    # 显式别名：MySQL 8 服务端返回 TABLE_NAME（大写键），别名钉死小写键
     rows = await db_manager.fetch(
-        "SELECT table_name FROM information_schema.tables "
+        "SELECT table_name AS table_name FROM information_schema.tables "
         "WHERE table_schema = DATABASE()"
     )
     existing = {r["table_name"] for r in rows}
@@ -75,3 +78,98 @@ async def test_insert_returning_id_incrementing(db_manager):
     )
     assert isinstance(id1, int) and isinstance(id2, int)
     assert id2 > id1
+
+
+# ============================================================
+# Task 9 — 存储层端到端（接入语句注册表后的真实 MySQL 路径）
+# ============================================================
+
+async def test_storage_agent_roundtrip(db_manager):
+    """upsert_agent → get_agent 端到端（客户端 PK 路径）"""
+    from core.storage import PostgresStorage
+    from core.storage_models import AgentData, AgentRecord
+
+    storage = PostgresStorage(db_manager)
+    rec = AgentRecord(
+        user_id="it_user", data=AgentData(name="集成测试Agent"),
+    )
+    rec.id = "it-agent-001"
+    stored_id = await storage.upsert_agent("it_user", rec)
+    assert stored_id == rec.id
+    fetched = await storage.get_agent("it_user", rec.id)
+    assert fetched is not None
+    assert fetched.data.name == "集成测试Agent"
+
+
+async def test_storage_session_title_merge(db_manager):
+    """upsert_session_title 写入后可读回；标题行 state_json TEXT NULL → _row_to_session 读作 \"\""""
+    from core.storage import PostgresStorage
+
+    storage = PostgresStorage(db_manager)
+    await db_manager.upsert_session_title("it_user", "it-sess-1", "集成标题")
+    title = await db_manager.get_session_title("it_user", "it-sess-1")
+    assert title == "集成标题"
+    # 整行读回，验证 TEXT NULL 兼容
+    rows = await db_manager.fetch(
+        "SELECT * FROM sessions WHERE id = %s", "it-sess-1",
+    )
+    record = storage._row_to_session(rows[0])
+    assert record.state_json == ""
+    assert record.config.name  # SessionConfig 默认 name 字段仍在
+
+
+async def test_storage_mcp_name_conflict_returns_same_id(db_manager):
+    """(user_id, name) 冲突 upsert：MySQL 走回查 id，两次 upsert 返回同一条"""
+    from core.storage import PostgresStorage
+    from core.storage_models import MCPRecord
+
+    storage = PostgresStorage(db_manager)
+    rec = MCPRecord(user_id="it_user", name="it-mcp", transport="stdio")
+    id1 = await storage.upsert_mcp("it_user", rec)
+    rec2 = MCPRecord(user_id="it_user", name="it-mcp", transport="stdio")
+    id2 = await storage.upsert_mcp("it_user", rec2)
+    assert id1 == id2
+    all_mcps = await storage.list_mcps("it_user")
+    assert len([m for m in all_mcps if m.name == "it-mcp"]) == 1
+
+
+async def test_storage_message_roundtrip(db_manager):
+    """upsert_message 插入返回自增 id；内容/元数据读回一致"""
+    from core.storage import PostgresStorage
+
+    storage = PostgresStorage(db_manager)
+    msg_id = uuid.uuid4().hex
+    id1 = await storage.upsert_message(
+        user_id="it_user", session_id="it-sess-msg", msg_id=msg_id,
+        role="user", content="集成消息", metadata={"n": 1},
+    )
+    assert isinstance(id1, int)
+    rows = await db_manager.fetch(
+        "SELECT content, metadata FROM messages WHERE msg_id = %s", msg_id,
+    )
+    assert rows[0]["content"] == "集成消息"
+    assert json.loads(rows[0]["metadata"]) == {"n": 1}
+    # 同 msg_id 再写 → 去重走 UPDATE 分支，不产生新行
+    await storage.upsert_message(
+        user_id="it_user", session_id="it-sess-msg", msg_id=msg_id,
+        role="user", content="集成消息-更新", metadata={"n": 2},
+    )
+    again = await db_manager.fetchval(
+        "SELECT content FROM messages WHERE msg_id = %s", msg_id,
+    )
+    assert again == "集成消息-更新"
+
+
+async def test_get_user_sessions_with_title(db_manager):
+    """get_user_sessions：JSON_UNQUOTE 取自定义标题 + message_count 聚合"""
+    await db_manager.insert_conversation(
+        "it_user2", "it-sess-us", "user", "第一条消息", None,
+    )
+    await db_manager.insert_conversation(
+        "it_user2", "it-sess-us", "assistant", "第一条回复", None,
+    )
+    await db_manager.upsert_session_title("it_user2", "it-sess-us", "会话标题X")
+    sessions = await db_manager.get_user_sessions("it_user2", limit=10)
+    target = [s for s in sessions if s["session_id"] == "it-sess-us"]
+    assert target and target[0]["title"] == "会话标题X"
+    assert target[0]["message_count"] == 2

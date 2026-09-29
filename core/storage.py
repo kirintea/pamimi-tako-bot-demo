@@ -67,7 +67,7 @@ class PostgresStorage:
         if not record.created_at:
             record.created_at = now
 
-        # 客户端主键 (id)：MySQL 无 RETURNING，直接返回传入的 record.id
+        # 客户端主键 (id)：MySQL 侧无取回 id 能力，直接返回传入的 record.id
         await self._db.execute_named(
             "upsert_agent",
             record.id,
