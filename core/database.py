@@ -151,7 +151,7 @@ class DatabaseManager:
         return await self._require_backend().insert_returning_id(stmt, *args)
 
     # ------------------------------------------------------------------
-    # 便捷方法（SQL 原样保留，Task 9 切换到注册表）
+    # 便捷方法（分歧 SQL 已切换至 core/db/statements.py 注册表）
     # ------------------------------------------------------------------
 
     @staticmethod
@@ -192,13 +192,9 @@ class DatabaseManager:
             metadata_str = self._sanitize_text(metadata_str)
             metadata = json.loads(metadata_str)
 
-        sql = """
-            INSERT INTO conversations (user_id, session_id, role, content, metadata)
-            VALUES ($1, $2, $3, $4, $5)
-            RETURNING id
-        """
-        return await self.fetchval(
-            sql,
+        # 自增主键：PG 取 RETURNING id，MySQL 取 lastrowid
+        return await self.insert_returning_id(
+            "insert_conversation",
             user_id,
             session_id,
             role,
@@ -286,31 +282,8 @@ class DatabaseManager:
             会话列表（按最后活跃时间倒序）
         """
         # 从 conversations 聚合会话信息，同时 left join sessions 获取自定义标题
-        sql = """
-            SELECT
-                c.session_id,
-                MIN(c.created_at) AS created_at,
-                MAX(c.created_at) AS last_active,
-                COUNT(*) AS message_count,
-                s.config->>'title' AS custom_title,
-                (
-                    SELECT LEFT(x.content, 30)
-                    FROM conversations x
-                    WHERE x.user_id = $1
-                      AND x.session_id = c.session_id
-                      AND x.role = 'user'
-                      AND x.status = 'active'
-                    ORDER BY x.id ASC
-                    LIMIT 1
-                ) AS first_message
-            FROM conversations c
-            LEFT JOIN sessions s ON s.id = c.session_id AND s.user_id = c.user_id AND s.status = 'active'
-            WHERE c.user_id = $1 AND c.status = 'active'
-            GROUP BY c.session_id, s.config
-            ORDER BY last_active DESC
-            LIMIT $2
-        """
-        rows = await self.fetch(sql, user_id, limit)
+        # （PG `->>` / MySQL JSON_UNQUOTE(JSON_EXTRACT(...)) 分歧由注册表消解）
+        rows = await self.fetch_named("get_user_sessions", user_id, limit)
 
         # 转换为字典列表，优先使用自定义标题
         sessions = []
@@ -384,14 +357,13 @@ class DatabaseManager:
         """
         import json
 
-        sql = """
-            INSERT INTO sessions (id, user_id, agent_id, config, status)
-            VALUES ($1, $2, 'default', $3, 'active')
-            ON CONFLICT (id) DO UPDATE SET
-                config = COALESCE(sessions.config, '{}'::jsonb) || EXCLUDED.config,
-                updated_at = NOW()
-        """
-        await self.execute(sql, session_id, user_id, json.dumps({"title": title}))
+        # PG `||` JSONB 拼接 vs MySQL JSON_MERGE_PATCH（注册表分歧消解）
+        await self.execute_named(
+            "upsert_session_title",
+            session_id,
+            user_id,
+            json.dumps({"title": title}),
+        )
 
     async def get_session_title(
         self,
@@ -407,15 +379,13 @@ class DatabaseManager:
         Returns:
             会话标题或 None
         """
-        import json
-
-        sql = """
-            SELECT config->>'title' AS title
-            FROM sessions
-            WHERE id = $1 AND user_id = $2 AND status = 'active'
-        """
-        row = await self.fetchrow(sql, session_id, user_id)
-        return row["title"] if row else None
+        # PG `->>` / MySQL JSON_UNQUOTE(JSON_EXTRACT(...)) 分歧由注册表消解；
+        # 无匹配行时两侧均返回 NULL → None
+        return await self.fetchval_named(
+            "get_session_title",
+            session_id,
+            user_id,
+        )
 
     @property
     def is_initialized(self) -> bool:

@@ -28,6 +28,14 @@ class Statement:
     #: mysql_id_sql 的参数取自原语句的哪些 $N（1-based），如 (2, 3) 表示 $2 $3
     mysql_id_args: tuple[int, ...] = ()
 
+    def pick(self, dialect: str) -> str:
+        """按方言挑选语句变体（"postgres" / "mysql"）"""
+        if dialect == "postgres":
+            return self.pg
+        if dialect == "mysql":
+            return self.mysql
+        raise ValueError(f"未知方言: {dialect!r}")
+
 
 STATEMENTS: dict[str, Statement] = {
     # ---------------------------------------------------------------
