@@ -67,17 +67,9 @@ class PostgresStorage:
         if not record.created_at:
             record.created_at = now
 
-        sql = """
-            INSERT INTO agents (id, user_id, source, data, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6)
-            ON CONFLICT (id) DO UPDATE SET
-                data = EXCLUDED.data,
-                source = EXCLUDED.source,
-                updated_at = EXCLUDED.updated_at
-            RETURNING id
-        """
-        return await self._db.fetchval(
-            sql,
+        # 客户端主键 (id)：MySQL 无 RETURNING，直接返回传入的 record.id
+        await self._db.execute_named(
+            "upsert_agent",
             record.id,
             user_id,
             record.source,
@@ -85,6 +77,7 @@ class PostgresStorage:
             record.created_at,
             record.updated_at,
         )
+        return record.id
 
     async def list_agents(self, user_id: str) -> list[AgentRecord]:
         """列出用户的所有 Agent"""
@@ -161,21 +154,9 @@ class PostgresStorage:
         sid = session_id or _generate_id()
         final_depth = 0 if depth is None else depth
 
-        sql = """
-            INSERT INTO sessions (id, user_id, agent_id, source, config, state_json,
-                                  parent_session_id, depth, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-            ON CONFLICT (id) DO UPDATE SET
-                config = EXCLUDED.config,
-                state_json = EXCLUDED.state_json,
-                source = EXCLUDED.source,
-                parent_session_id = COALESCE(EXCLUDED.parent_session_id, sessions.parent_session_id),
-                depth = COALESCE(NULLIF(EXCLUDED.depth, 0), sessions.depth),
-                updated_at = EXCLUDED.updated_at
-            RETURNING id
-        """
-        await self._db.fetchval(
-            sql,
+        # 客户端主键 (id)：无需取回 id，直接构造记录返回
+        await self._db.execute_named(
+            "upsert_session",
             sid,
             user_id,
             agent_id,
@@ -332,7 +313,7 @@ class PostgresStorage:
             source=SessionSource(row["source"]),
             team_id=row.get("team_id"),
             config=SessionConfig(**config_data),
-            state_json=row.get("state_json", ""),
+            state_json=row.get("state_json") or "",  # MySQL TEXT 列可为 NULL
             parent_session_id=row.get("parent_session_id"),
             depth=int(row.get("depth") or 0),
             created_at=row["created_at"],
@@ -369,18 +350,9 @@ class PostgresStorage:
             "version": record.version,
         }
 
-        sql = """
-            INSERT INTO mcps (id, user_id, name, transport, config, enabled, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            ON CONFLICT (user_id, name) DO UPDATE SET
-                transport = EXCLUDED.transport,
-                config = EXCLUDED.config,
-                enabled = EXCLUDED.enabled,
-                updated_at = EXCLUDED.updated_at
-            RETURNING id
-        """
-        return await self._db.fetchval(
-            sql,
+        # (user_id, name) 冲突：MySQL 侧 ON DUPLICATE 后由 insert_returning_id 回查 id
+        return await self._db.insert_returning_id(
+            "upsert_mcp",
             record.id,
             user_id,
             record.name,
@@ -476,17 +448,9 @@ class PostgresStorage:
             "version": record.version,
         }
 
-        sql = """
-            INSERT INTO skills (id, user_id, name, data, enabled, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
-            ON CONFLICT (user_id, name) DO UPDATE SET
-                data = EXCLUDED.data,
-                enabled = EXCLUDED.enabled,
-                updated_at = EXCLUDED.updated_at
-            RETURNING id
-        """
-        return await self._db.fetchval(
-            sql,
+        # (user_id, name) 冲突：MySQL 侧 ON DUPLICATE 后由 insert_returning_id 回查 id
+        return await self._db.insert_returning_id(
+            "upsert_skill",
             record.id,
             user_id,
             record.name,
@@ -588,14 +552,9 @@ class PostgresStorage:
             )
             return last["id"]
 
-        # 插入新消息
-        insert_sql = """
-            INSERT INTO messages (user_id, session_id, msg_id, role, content, metadata)
-            VALUES ($1, $2, $3, $4, $5, $6)
-            RETURNING id
-        """
-        return await self._db.fetchval(
-            insert_sql,
+        # 插入新消息（自增主键：MySQL 侧取 lastrowid）
+        return await self._db.insert_returning_id(
+            "insert_message",
             user_id,
             session_id,
             msg_id,
@@ -686,23 +645,9 @@ class PostgresStorage:
         now = datetime.now()
         record.updated_at = now
 
-        sql = """
-            INSERT INTO schedules (id, user_id, agent_id, session_id, name,
-                                   cron_expr, prompt, source, enabled,
-                                   last_run_at, next_run_at, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-            ON CONFLICT (id) DO UPDATE SET
-                name = EXCLUDED.name,
-                cron_expr = EXCLUDED.cron_expr,
-                prompt = EXCLUDED.prompt,
-                enabled = EXCLUDED.enabled,
-                last_run_at = EXCLUDED.last_run_at,
-                next_run_at = EXCLUDED.next_run_at,
-                updated_at = EXCLUDED.updated_at
-            RETURNING id
-        """
-        return await self._db.fetchval(
-            sql,
+        # 客户端主键 (id)：无需取回 id，直接返回传入的 record.id
+        await self._db.execute_named(
+            "upsert_schedule",
             record.id,
             user_id,
             record.agent_id,
@@ -717,6 +662,7 @@ class PostgresStorage:
             record.created_at or now,
             now,
         )
+        return record.id
 
     async def list_schedules(self, user_id: str) -> list[ScheduleRecord]:
         """列出用户的所有定时任务"""

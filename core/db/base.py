@@ -36,11 +36,7 @@ class DatabaseBackend(ABC):
 
     def pick(self, stmt: Statement) -> str:
         """按当前方言挑选语句变体"""
-        if self.dialect == "postgres":
-            return stmt.pg
-        if self.dialect == "mysql":
-            return stmt.mysql
-        raise ValueError(f"未知方言: {self.dialect!r}")
+        return stmt.pick(self.dialect)
 
     # ------------------------------------------------------------------
     # 具名语句分派（语句注册表入口）
