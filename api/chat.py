@@ -222,7 +222,7 @@ async def chat_stream(request: Request, body: ChatRequest):
 
         lock_ctx = (
             acquire_session_lock(bus, user_id, session_id)
-            if bus is not None else contextlib.nullasynccontext()
+            if bus is not None else contextlib.nullcontext()
         )
         try:
             async with lock_ctx:
@@ -407,7 +407,8 @@ async def health(request: Request):
     checks = {}
     overall_ok = True
 
-    # Redis 检查
+    # Redis 检查（kv.backend=jsonl 时 Redis 为可选：会话走本地文件，消息总线自降级）
+    kv_backend = getattr(getattr(config, "kv", None), "backend", "redis")
     try:
         import redis as redis_lib
         redis_url = getattr(getattr(config, "redis", None), "url", "redis://localhost:6379/0")
@@ -415,8 +416,11 @@ async def health(request: Request):
         r.ping()
         checks["redis"] = "ok"
     except Exception as e:
-        checks["redis"] = f"error: {e}"
-        overall_ok = False
+        if kv_backend == "jsonl":
+            checks["redis"] = f"unavailable (kv.backend=jsonl, 消息总线降级): {e}"
+        else:
+            checks["redis"] = f"error: {e}"
+            overall_ok = False
 
     # 数据库检查（PostgreSQL / MySQL）
     # 已初始化 → ping；运行期故障置 error + 503（进程不退出，见 Q2）；
@@ -801,7 +805,7 @@ async def chat_trigger(request: Request, body: ChatTriggerRequest):
 
     # 检查是否已有 run 在执行（与 run() 内部使用的锁 key 一致）
     lock_key = session_lock_key(user_id, session_id)
-    if await message_bus.is_locked(lock_key):
+    if message_bus is not None and await message_bus.is_locked(lock_key):
         return JSONResponse(
             status_code=409,
             content={"detail": "该会话已有对话在执行中"},
