@@ -16,7 +16,26 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from check_http import run as check_http
 from check_redis import run as check_redis
 from check_postgres import run as check_postgres
+from check_mysql import run as check_mysql
 from check_llm import run as check_llm
+from utils import load_config
+
+
+def _check_database():
+    """按配置的 URL scheme 分派 PostgreSQL / MySQL 检查"""
+    try:
+        cfg = load_config()
+        backend = getattr(cfg.database, "backend", "auto") if cfg else "auto"
+        url = (getattr(cfg.database, "url", "") or "") if cfg else ""
+        if backend == "mysql" or (
+            backend == "auto" and url.startswith(("mysql://", "mariadb://"))
+        ):
+            return check_mysql()
+        if backend == "postgres":
+            return check_postgres()
+        return check_postgres()
+    except Exception:  # noqa: BLE001 — 配置加载失败时回退到 PG 检查
+        return check_postgres()
 
 
 def main():
@@ -32,8 +51,8 @@ def main():
     print("\n[2] Redis")
     results.append(check_redis())
 
-    print("\n[3] PostgreSQL")
-    results.append(check_postgres())
+    print("\n[3] 数据库")
+    results.append(_check_database())
 
     print("\n[4] LLM API")
     results.append(check_llm())

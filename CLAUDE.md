@@ -27,7 +27,8 @@ platform-server-8090/
 │   │   ├── loader.py          # YAML 加载器
 │   │   ├── manager.py         # ConfigManager 单例
 │   │   └── resolver.py        # 环境变量解析器
-│   ├── database.py            # PostgreSQL 管理器（asyncpg 连接池 + 自动建表）
+│   ├── database.py            # 数据库管理器（后端分派 + fail-fast 初始化 + 便捷方法）
+│   ├── db/                    # 后端实现（base/factory/dialect/statements/postgres/mysql/ddl）
 │   ├── storage.py             # PostgreSQL 存储层（Agent/Session/MCP/Skill/Message CRUD）
 │   ├── storage_models.py      # 数据模型定义（AgentRecord/MCPRecord/SkillRecord 等）
 │   ├── chat_service.py        # Chat 服务层（Fire-and-Forget 事件驱动模式）
@@ -54,6 +55,7 @@ platform-server-8090/
 │   ├── check_http.py          # HTTP 服务 + API 端点检查
 │   ├── check_redis.py         # Redis 连接读写检查
 │   ├── check_postgres.py      # PostgreSQL 连接表结构检查
+│   ├── check_mysql.py         # MySQL 连接/版本/表结构检查
 │   └── check_llm.py           # LLM API 可达性检查
 ├── workflow/
 │   └── base.py                # 自用工作流基类
@@ -189,8 +191,8 @@ SessionManager
       └── agentscope:session:{user_id}:{session_id}:meta → 会话元数据 JSON (TTL 1800s)
           {session_id, user_id, title, created_at, last_active, message_count}
 
-PostgresStorage (PostgreSQL)
-  └── DatabaseManager asyncpg 连接池
+PostgresStorage (PostgreSQL / MySQL — 后端无关)
+  └── DatabaseManager 连接池（PostgresBackend(asyncpg) / MySQLBackend(aiomysql)）
       ├── users 表           — 用户元数据
       ├── conversations 表   — 对话历史（user_id, session_id, role, content, metadata）
       ├── sessions 表        — 会话记录（parent_session_id, depth）
@@ -217,15 +219,19 @@ redis:
   session_ttl: 1800    # 秒
 ```
 
-### PostgreSQL 配置
+### 数据库配置（PostgreSQL / MySQL）
 
 ```yaml
 database:
+  backend: "auto"               # auto / postgres / mysql（auto 按 URL scheme 推断）
   url: "${DATABASE_URL:-postgresql://user:password@localhost:5432/ragdb}"
+  # MySQL 示例: mysql://user:password@localhost:3306/platform（需带库名，>= 5.7.22）
   pool_size: 10
+  auto_create_tables: true      # 启动时执行幂等 DDL（受限账号场景设 false）
+  verify_tables: true           # 连接后校验必需表（禁用 DDL 时尤其重要）
 ```
 
-`DatabaseManager` 在 `server.py` lifespan 中初始化，启动时自动执行幂等 DDL（建表 + 索引），未配置 URL 时跳过。提供 `execute / fetch / fetchrow / fetchval` 通用查询接口，以及 `insert_conversation / get_conversation_history` 便捷方法。
+`DatabaseManager` 在 `server.py` lifespan 中初始化，按 `backend`/URL scheme 分派 `PostgresBackend`（asyncpg）或 `MySQLBackend`（aiomysql）。`auto_create_tables=true` 时执行幂等 DDL（PG 29 条 / MySQL 21 条），`verify_tables=true` 时校验 `core/db/ddl.py REQUIRED_TABLES` 的 7 张必需表。初始化失败固定 fail-fast（ERROR 日志 + 抛出 → 启动中止进程退出；`verify_tables` 缺表时日志列出缺表清单）。未配置 URL（空串）时跳过初始化。提供 `execute / fetch / fetchrow / fetchval` 通用接口、`execute_named / fetch_named / fetchval_named`（按方言取注册表 SQL）、`insert_returning_id`（PG RETURNING / MySQL lastrowid 或回查），以及 `insert_conversation / get_conversation_history` 便捷方法。未初始化（URL 未配置）时访问 `/mcp` `/skill` 等未守卫路由返回 **503**（`DatabaseUnavailableError` 统一处理器）；启动后的运行期数据库故障由 `/health` 503 与各路由异常覆盖，进程不退出。
 
 ## 健康检查
 
@@ -237,6 +243,7 @@ database:
 .venv/Scripts/python.exe health_check/check_http.py
 .venv/Scripts/python.exe health_check/check_redis.py
 .venv/Scripts/python.exe health_check/check_postgres.py
+.venv/Scripts/python.exe health_check/check_mysql.py
 .venv/Scripts/python.exe health_check/check_llm.py
 ```
 

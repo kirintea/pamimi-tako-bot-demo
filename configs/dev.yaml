@@ -123,11 +123,20 @@ mcp_servers:
   #   args: ["-y", "@modelcontextprotocol/server-filesystem", "/workspace"]
 
 database:
-  # 注意：以下为本地开发默认凭据，仅用于 localhost。
+  # ------------------------------------------------------------
+  # 数据库（PostgreSQL / MySQL 二选一，backend=auto 按 URL scheme 推断）
+  #   auto_create_tables: 启动时自动执行幂等 DDL 建表
+  #   verify_tables:      建表/连接后校验必需表齐全（禁用 DDL 时尤其重要）
+  #   初始化失败固定 fail-fast：ERROR 日志（根因/缺表清单）→ 抛出 → 进程启动失败退出
+  # 注意：url 默认值为本地开发凭据，仅用于 localhost。
   # 真实部署（尤其是生产环境）必须显式设置 DATABASE_URL 环境变量，
   # 切勿使用默认账号/密码直连数据库。
+  # ------------------------------------------------------------
+  backend: "auto"
   url: "${DATABASE_URL:-postgresql://user:password@localhost:5432/ragdb}"
   pool_size: 10
+  auto_create_tables: true
+  verify_tables: true
 
 redis:
   url: "${REDIS_URL:-redis://localhost:6379/0}"

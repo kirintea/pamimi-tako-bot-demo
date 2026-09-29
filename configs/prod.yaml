@@ -93,8 +93,19 @@ agent:
 mcp_servers: []
 
 database:
+  # ------------------------------------------------------------
+  # 生产数据库（权限受限账号场景：DBA 预先建表，应用账号按最小权限分配）
+  #   应用账号仅需：7 张必需表的 SELECT/INSERT/UPDATE/DELETE + 连接权限（无 DDL 权限）
+  #   auto_create_tables: false — 不执行 DDL，连接已有库
+  #   verify_tables:      true  — 启动即校验 7 张必需表（读 information_schema，
+  #                        所有账号可读），缺表即启动失败
+  #                        （fail-fast，报错列出缺表清单 → DBA 建表后重启）
+  # ------------------------------------------------------------
+  backend: "auto"
   url: "${DATABASE_URL:-}"
   pool_size: 20
+  auto_create_tables: false
+  verify_tables: true
 
 redis:
   url: "${REDIS_URL:-redis://localhost:6379/0}"
