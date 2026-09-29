@@ -1,269 +1,33 @@
 # -*- coding: utf-8 -*-
 
-"""PostgreSQL 数据库管理器 — 连接池 + DDL 自动迁移
+"""数据库管理器门面 — 后端分派 + DDL + 查询接口
 
 设计：
-- 使用 asyncpg 连接池管理数据库连接
-- 启动时自动建表（幂等操作）
-- 提供便捷的查询方法供 SessionManager 使用
+- 底层通过 DatabaseBackend 抽象分派 PostgreSQL(asyncpg) / MySQL(aiomysql)
+- 方言差异由 core/db/statements.py 语句注册表 + $N→%s 翻译消解
+- 初始化失败固定 fail-fast：ERROR 日志后抛出，启动中止（见 Task 7）
 
 使用方式：
     db = DatabaseManager(config)
-    await db.initialize()  # 初始化连接池 + 建表
+    await db.initialize()   # 初始化连接池 + 建表
     await db.execute("INSERT INTO ...")
     rows = await db.fetch("SELECT * FROM ...")
-    await db.shutdown()  # 关闭连接池
+    await db.shutdown()     # 关闭连接池
 """
 
 from __future__ import annotations
 
-import asyncpg
-
-from core.config.schemas import DatabaseConfig
-
 from loguru import logger
 
-# ============================================================
-# DDL 建表语句（幂等操作，可重复执行）
-# ============================================================
-
-DDL_STATEMENTS = [
-    # 对话历史表（核心）
-    """
-    CREATE TABLE IF NOT EXISTS conversations (
-        id          BIGSERIAL PRIMARY KEY,
-        user_id     VARCHAR(64) NOT NULL,
-        session_id  VARCHAR(64) NOT NULL,
-        role        VARCHAR(16) NOT NULL,
-        content     TEXT NOT NULL,
-        metadata    JSONB DEFAULT NULL,
-        status      VARCHAR(16) NOT NULL DEFAULT 'active',
-        created_at  TIMESTAMPTZ DEFAULT NOW()
-    )
-    """,
-
-    # 状态字段（软删除：active / deleted）
-    """
-    ALTER TABLE conversations ADD COLUMN IF NOT EXISTS status VARCHAR(16) NOT NULL DEFAULT 'active'
-    """,
-
-    # JSONB 字段默认值改为 NULL（已有表）
-    """
-    ALTER TABLE conversations ALTER COLUMN metadata SET DEFAULT NULL
-    """,
-
-    # 索引：用户+会话查询（过滤状态）
-    """
-    CREATE INDEX IF NOT EXISTS idx_conv_user_session
-    ON conversations(user_id, session_id) WHERE status = 'active'
-    """,
-
-    # 索引：时间范围查询
-    """
-    CREATE INDEX IF NOT EXISTS idx_conv_created
-    ON conversations(created_at)
-    """,
-
-    # 索引：用户最近对话（过滤状态）
-    """
-    CREATE INDEX IF NOT EXISTS idx_conv_user_time
-    ON conversations(user_id, created_at DESC) WHERE status = 'active'
-    """,
-
-    # 索引：按状态查询（供数据部门清理 deleted 记录）
-    """
-    CREATE INDEX IF NOT EXISTS idx_conv_status
-    ON conversations(status) WHERE status != 'active'
-    """,
-
-    # ============================================================
-    # 服务层新表（Phase 1+）
-    # ============================================================
-
-    # Session 会话表
-    """
-    CREATE TABLE IF NOT EXISTS sessions (
-        id          VARCHAR(32) PRIMARY KEY,
-        user_id     VARCHAR(64) NOT NULL,
-        agent_id    VARCHAR(32) NOT NULL,
-        source      VARCHAR(16) NOT NULL DEFAULT 'user',
-        team_id     VARCHAR(32),
-        config      JSONB DEFAULT NULL,
-        state_json  TEXT NOT NULL DEFAULT '',
-        status      VARCHAR(16) NOT NULL DEFAULT 'active',
-        created_at  TIMESTAMPTZ DEFAULT NOW(),
-        updated_at  TIMESTAMPTZ DEFAULT NOW()
-    )
-    """,
-    """
-    ALTER TABLE sessions ALTER COLUMN config SET DEFAULT NULL
-    """,
-
-    # 状态字段（软删除：active / deleted）
-    """
-    ALTER TABLE sessions ADD COLUMN IF NOT EXISTS status VARCHAR(16) NOT NULL DEFAULT 'active'
-    """,
-
-    """
-    CREATE INDEX IF NOT EXISTS idx_sessions_user_agent
-    ON sessions(user_id, agent_id) WHERE status = 'active'
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS idx_sessions_team
-    ON sessions(team_id) WHERE team_id IS NOT NULL AND status = 'active'
-    """,
-
-    # 索引：按状态查询（供数据清理 deleted 记录）
-    """
-    CREATE INDEX IF NOT EXISTS idx_sessions_status
-    ON sessions(status) WHERE status != 'active'
-    """,
-
-    # MCP 已安装表
-    """
-    CREATE TABLE IF NOT EXISTS mcps (
-        id          VARCHAR(32) PRIMARY KEY,
-        user_id     VARCHAR(64) NOT NULL,
-        name        VARCHAR(128) NOT NULL,
-        transport   VARCHAR(16) NOT NULL DEFAULT 'stdio',
-        config      JSONB DEFAULT NULL,
-        enabled     BOOLEAN NOT NULL DEFAULT TRUE,
-        created_at  TIMESTAMPTZ DEFAULT NOW(),
-        updated_at  TIMESTAMPTZ DEFAULT NOW(),
-        UNIQUE(user_id, name)
-    )
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS idx_mcps_user
-    ON mcps(user_id)
-    """,
-
-    # Skill 已安装表
-    """
-    CREATE TABLE IF NOT EXISTS skills (
-        id          VARCHAR(32) PRIMARY KEY,
-        user_id     VARCHAR(64) NOT NULL,
-        name        VARCHAR(128) NOT NULL,
-        data        JSONB DEFAULT NULL,
-        enabled     BOOLEAN NOT NULL DEFAULT TRUE,
-        created_at  TIMESTAMPTZ DEFAULT NOW(),
-        updated_at  TIMESTAMPTZ DEFAULT NOW(),
-        UNIQUE(user_id, name)
-    )
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS idx_skills_user
-    ON skills(user_id)
-    """,
-
-    # 定时任务表
-    """
-    CREATE TABLE IF NOT EXISTS schedules (
-        id          VARCHAR(32) PRIMARY KEY,
-        user_id     VARCHAR(64) NOT NULL,
-        agent_id    VARCHAR(32) NOT NULL,
-        session_id  VARCHAR(32),
-        name        VARCHAR(256) NOT NULL,
-        cron_expr   VARCHAR(64) NOT NULL,
-        prompt      TEXT NOT NULL DEFAULT '',
-        source      VARCHAR(16) NOT NULL DEFAULT 'user',
-        enabled     BOOLEAN NOT NULL DEFAULT TRUE,
-        last_run_at TIMESTAMPTZ,
-        next_run_at TIMESTAMPTZ,
-        created_at  TIMESTAMPTZ DEFAULT NOW(),
-        updated_at  TIMESTAMPTZ DEFAULT NOW()
-    )
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS idx_schedules_user
-    ON schedules(user_id)
-    """,
-
-    # ============================================================
-    # Agent / Message 持久化表（storage.py 的 Agent/Message CRUD 使用）
-    # 列定义与 core/storage_models.py 的 AgentRecord / MessageRecord 对齐，
-    # 并匹配 storage.py 中 upsert_agent / upsert_message 的 INSERT 列顺序。
-    # ============================================================
-
-    # Agent 记录表
-    # 列: id(VARCHAR(32) PK, 对应 AgentRecord._generate_id 的 16 位 hex)
-    #     user_id / source / data(JSONB, 存 AgentData) / created_at / updated_at
-    # upsert_agent 使用 ON CONFLICT (id) 更新，故 id 为主键。
-    """
-    CREATE TABLE IF NOT EXISTS agents (
-        id          VARCHAR(32) PRIMARY KEY,
-        user_id     VARCHAR(64) NOT NULL,
-        source      VARCHAR(16) NOT NULL DEFAULT 'user',
-        data        JSONB NOT NULL,
-        created_at  TIMESTAMPTZ DEFAULT NOW(),
-        updated_at  TIMESTAMPTZ DEFAULT NOW()
-    )
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS idx_agents_user
-    ON agents(user_id)
-    """,
-
-    # Message 记录表
-    # 列: id(BIGSERIAL PK, 对应 _row_to_message 中 str(row["id"]))
-    #     user_id / session_id / msg_id / role / content / metadata(JSONB) / created_at
-    # upsert_message 通过「同 session 末条 msg_id 相同则更新」逻辑去重，不依赖唯一约束。
-    """
-    CREATE TABLE IF NOT EXISTS messages (
-        id          BIGSERIAL PRIMARY KEY,
-        user_id     VARCHAR(64) NOT NULL,
-        session_id  VARCHAR(64) NOT NULL,
-        msg_id      VARCHAR(64) NOT NULL,
-        role        VARCHAR(16) NOT NULL,
-        content     TEXT NOT NULL,
-        metadata    JSONB DEFAULT NULL,
-        created_at  TIMESTAMPTZ DEFAULT NOW()
-    )
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS idx_messages_user_session
-    ON messages(user_id, session_id)
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS idx_messages_user_session_msg
-    ON messages(user_id, session_id, msg_id)
-    """,
-
-    # ============================================================
-    # 会话分支血缘（Fork 特性）
-    # ============================================================
-
-    # parent_session_id：父会话 ID（Fork 血缘），根会话为 NULL
-    """
-    ALTER TABLE sessions ADD COLUMN IF NOT EXISTS parent_session_id VARCHAR(32)
-    """,
-    # depth：Fork 深度，根会话=0，每 fork 一次 +1
-    """
-    ALTER TABLE sessions ADD COLUMN IF NOT EXISTS depth INTEGER NOT NULL DEFAULT 0
-    """,
-    # 索引：按父会话查询子分支（仅对非根会话生效）
-    """
-    CREATE INDEX IF NOT EXISTS idx_sessions_parent
-    ON sessions(parent_session_id) WHERE parent_session_id IS NOT NULL
-    """,
-
-    # ============================================================
-    # 列宽迁移 — sessions.id / parent_session_id 扩容至 VARCHAR(64)
-    # 原始 DDL 用 VARCHAR(32)，但 8090 API 层用 str(uuid.uuid4())（36 字符）
-    # 生成 session_id，超出 32 字符上限。conversations.session_id 已是 VARCHAR(64)，
-    # 此处对齐。ALTER ... TYPE 是幂等的，列宽不变时 PostgreSQL 不报错。
-    # ============================================================
-    """
-    ALTER TABLE sessions ALTER COLUMN id TYPE VARCHAR(64)
-    """,
-    """
-    ALTER TABLE sessions ALTER COLUMN parent_session_id TYPE VARCHAR(64)
-    """,
-]
+from core.config.schemas import DatabaseConfig
+from core.db.base import DatabaseBackend, DatabaseUnavailableError
+from core.db.ddl import DDL_POSTGRES
+from core.db.postgres_backend import PostgresBackend
+from core.db.statements import STATEMENTS
 
 
 class DatabaseManager:
-    """PostgreSQL 数据库管理器 — 连接池 + 自动建表
+    """数据库管理器门面 — 连接池生命周期 + 查询接口
 
     Args:
         config: 数据库配置
@@ -271,141 +35,84 @@ class DatabaseManager:
 
     def __init__(self, config: DatabaseConfig) -> None:
         self._config = config
-        self._pool: asyncpg.Pool | None = None
+        self._backend: DatabaseBackend | None = None
 
     # ------------------------------------------------------------------
     # 生命周期
     # ------------------------------------------------------------------
 
     async def initialize(self) -> None:
-        """初始化连接池并执行 DDL 建表"""
+        """初始化连接池并执行 DDL 建表（Task 7 替换为 fail-fast 版本）"""
         if not self._config.url:
             logger.warning("DatabaseManager: 数据库 URL 未配置，跳过初始化")
             return
 
-        # 创建连接池
-        self._pool = await asyncpg.create_pool(
-            self._config.url,
-            min_size=2,
-            max_size=self._config.pool_size,
-            command_timeout=30,
-        )
-        logger.info(
-            "DatabaseManager: 连接池已创建 (pool_size={})",
-            self._config.pool_size,
-        )
-
-        # 执行 DDL 建表
-        await self._run_ddl()
+        backend = PostgresBackend(self._config.url, pool_size=self._config.pool_size)
+        await backend.connect()
+        if self._config.auto_create_tables:
+            await backend.run_ddl(DDL_POSTGRES)
+            logger.info("DatabaseManager: DDL 建表完成")
+        self._backend = backend
 
     async def shutdown(self) -> None:
         """关闭连接池"""
-        if self._pool:
-            await self._pool.close()
-            self._pool = None
+        if self._backend is not None:
+            await self._backend.close()
+            self._backend = None
             logger.info("DatabaseManager: 连接池已关闭")
 
-    # ------------------------------------------------------------------
-    # DDL 执行
-    # ------------------------------------------------------------------
-
-    async def _run_ddl(self) -> None:
-        """执行 DDL 建表语句（幂等操作）"""
-        if not self._pool:
-            return
-
-        # 幂等性冲突错误码（可安全忽略）
-        _IDEMPOTENT_CODES = {
-            "42P07",  # duplicate_table
-            "42710",  # duplicate_object
-            "42P16",  # invalid_table_definition (IF NOT EXISTS 兜底)
-        }
-
-        async with self._pool.acquire() as conn:
-            for ddl in DDL_STATEMENTS:
-                try:
-                    await conn.execute(ddl)
-                except Exception as e:
-                    # 区分幂等性冲突（可忽略）和真正的 DDL 错误（应告警）
-                    pgcode = getattr(e, "sqlstate", None) or getattr(e, "pgcode", None)
-                    if pgcode and str(pgcode) in _IDEMPOTENT_CODES:
-                        logger.debug("DDL 幂等跳过 ({}): {}", pgcode, e)
-                    else:
-                        logger.error("DDL 执行失败: {}", e)
-                        raise
-
-        logger.info("DatabaseManager: DDL 建表完成")
+    def _require_backend(self) -> DatabaseBackend:
+        """取已初始化的后端；未初始化时抛 503 语义异常"""
+        if self._backend is None:
+            raise DatabaseUnavailableError("数据库未初始化")
+        return self._backend
 
     # ------------------------------------------------------------------
-    # 查询接口
+    # 查询接口（通用 SQL：PostgreSQL 原生 $N；MySQL 由后端翻译为 %s）
     # ------------------------------------------------------------------
 
     async def execute(self, sql: str, *args) -> str:
-        """执行 SQL 语句（INSERT/UPDATE/DELETE）
+        """执行 SQL 语句（INSERT/UPDATE/DELETE），返回状态串（如 "INSERT 0 1"）"""
+        return await self._require_backend().execute(sql, *args)
 
-        Args:
-            sql: SQL 语句
-            *args: 参数
+    async def fetch(self, sql: str, *args) -> list:
+        """查询多行数据"""
+        return await self._require_backend().fetch(sql, *args)
 
-        Returns:
-            状态字符串，如 "INSERT 0 1"
-        """
-        if not self._pool:
-            raise RuntimeError("数据库未初始化")
-
-        async with self._pool.acquire() as conn:
-            return await conn.execute(sql, *args)
-
-    async def fetch(self, sql: str, *args) -> list[asyncpg.Record]:
-        """查询多行数据
-
-        Args:
-            sql: SQL 语句
-            *args: 参数
-
-        Returns:
-            记录列表
-        """
-        if not self._pool:
-            raise RuntimeError("数据库未初始化")
-
-        async with self._pool.acquire() as conn:
-            return await conn.fetch(sql, *args)
-
-    async def fetchrow(self, sql: str, *args) -> asyncpg.Record | None:
-        """查询单行数据
-
-        Args:
-            sql: SQL 语句
-            *args: 参数
-
-        Returns:
-            单条记录或 None
-        """
-        if not self._pool:
-            raise RuntimeError("数据库未初始化")
-
-        async with self._pool.acquire() as conn:
-            return await conn.fetchrow(sql, *args)
+    async def fetchrow(self, sql: str, *args):
+        """查询单行数据（无匹配返回 None）"""
+        return await self._require_backend().fetchrow(sql, *args)
 
     async def fetchval(self, sql: str, *args):
-        """查询单个值
-
-        Args:
-            sql: SQL 语句
-            *args: 参数
-
-        Returns:
-            单个值
-        """
-        if not self._pool:
-            raise RuntimeError("数据库未初始化")
-
-        async with self._pool.acquire() as conn:
-            return await conn.fetchval(sql, *args)
+        """查询单个值（无匹配返回 None）"""
+        return await self._require_backend().fetchval(sql, *args)
 
     # ------------------------------------------------------------------
-    # 便捷方法
+    # 具名语句分派（core/db/statements.py 注册表）
+    # ------------------------------------------------------------------
+
+    async def execute_named(self, name: str, *args) -> str:
+        """执行注册表中的写语句（自动挑选方言变体）"""
+        return await self._require_backend().execute_named(name, *args)
+
+    async def fetchval_named(self, name: str, *args):
+        """执行注册表中的单值查询"""
+        return await self._require_backend().fetchval_named(name, *args)
+
+    async def fetch_named(self, name: str, *args) -> list:
+        """执行注册表中的多行查询"""
+        return await self._require_backend().fetch_named(name, *args)
+
+    async def insert_returning_id(self, name: str, *args):
+        """执行注册表中的插入语句并返回生成 ID
+
+        MySQL 侧：自增表用 lastrowid；(user_id,name) 冲突表回查现有行 id。
+        """
+        stmt = STATEMENTS[name]
+        return await self._require_backend().insert_returning_id(stmt, *args)
+
+    # ------------------------------------------------------------------
+    # 便捷方法（SQL 原样保留，Task 9 切换到注册表）
     # ------------------------------------------------------------------
 
     @staticmethod
@@ -673,5 +380,5 @@ class DatabaseManager:
 
     @property
     def is_initialized(self) -> bool:
-        """连接池是否已初始化"""
-        return self._pool is not None
+        """数据库后端是否已初始化"""
+        return self._backend is not None
