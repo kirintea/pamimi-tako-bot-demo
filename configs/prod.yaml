@@ -110,6 +110,10 @@ database:
 redis:
   url: "${REDIS_URL:-redis://localhost:6379/0}"
 
+# KV 存储 — 生产固定 redis（多实例共享）；jsonl 仅限开发单进程场景，勿在生产使用
+kv:
+  backend: "redis"
+
 # 沙箱配置
 sandbox:
   backend: "${SANDBOX_BACKEND:-local}"

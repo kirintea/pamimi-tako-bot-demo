@@ -1,16 +1,16 @@
 # -*- coding: utf-8 -*-
 
-"""会话管理器 — 用户区分 + 会话隔离 + Redis 持久化
+"""会话管理器 — 用户区分 + 会话隔离 + KV 持久化
 
 设计：
 - 每个 (user_id, session_id) 维护一个独立的 Agent 实例
 - Agent 实例持有独立的 AgentState（对话上下文、摘要等）
-- AgentState 通过 Redis 持久化，服务器重启后可恢复会话
-- 会话有 TTL，超时后自动清理（内存 + Redis）
+- AgentState 通过 KV 持久化，服务器重启后可恢复会话
+- 会话有 TTL，超时后自动清理（内存 + KV）
 
 使用方式：
     manager = SessionManager(config)
-    await manager.initialize()  # 初始化 Redis 连接
+    await manager.initialize()  # 初始化 KV 存储
     agent = await manager.get_or_create("user_001", "session_abc")
     reply = await agent.reply(UserMsg("user", "你好"))
     await manager.save("user_001", "session_abc")  # 持久化状态
@@ -23,7 +23,6 @@ import json
 import time
 from dataclasses import dataclass, field
 
-import redis.asyncio as aioredis
 from agentscope.agent import Agent
 from agentscope.state import AgentState
 
@@ -31,6 +30,7 @@ from agentscope.message import AssistantMsg, Msg, UserMsg
 
 from core.agent import AgentFactory
 from core.config.schemas import AppConfig
+from core.kv import KVStore, create_kv_store
 
 from loguru import logger
 
@@ -50,7 +50,7 @@ class SessionEntry:
 
 
 class SessionManager:
-    """会话管理器 — 管理多用户多会话的 Agent 实例，支持 Redis 持久化
+    """会话管理器 — 管理多用户多会话的 Agent 实例，支持 KV 持久化
 
     Args:
         config: 应用配置
@@ -75,11 +75,11 @@ class SessionManager:
         self._sessions: dict[tuple[str, str], SessionEntry] = {}
         self._lock = asyncio.Lock()
 
-        # Redis 配置
+        # KV 配置（backend: redis / jsonl；key 前缀与 TTL 仍取自 redis 配置）
         redis_cfg = config.redis
         self._redis_url = redis_cfg.url
         self._redis_prefix = redis_cfg.key_prefix
-        self._redis: aioredis.Redis | None = None
+        self._kv: KVStore | None = None
 
         # 存储层（可选，用于 fork_session 落库）
         self._storage = storage
@@ -89,20 +89,18 @@ class SessionManager:
     # ------------------------------------------------------------------
 
     async def initialize(self) -> None:
-        """初始化 Redis 连接并测试连通性。"""
-        self._redis = aioredis.from_url(
-            self._redis_url,
-            decode_responses=True,
-        )
-        await self._redis.ping()
-        logger.info("SessionManager: Redis 连接成功 ({})", self._redis_url)
+        """初始化 KV 存储（backend=redis 连接并 ping；backend=jsonl 加载本地文件）"""
+        kv_cfg = self._config.kv
+        self._kv = create_kv_store(kv_cfg, redis_url=self._redis_url)
+        await self._kv.ping()
+        logger.info("SessionManager: KV 存储就绪 (backend={})", kv_cfg.backend)
 
     async def shutdown(self) -> None:
-        """关闭 Redis 连接。"""
-        if self._redis:
-            await self._redis.aclose()
-            self._redis = None
-            logger.info("SessionManager: Redis 连接已关闭")
+        """关闭 KV 存储。"""
+        if self._kv:
+            await self._kv.aclose()
+            self._kv = None
+            logger.info("SessionManager: KV 存储已关闭")
 
     # ------------------------------------------------------------------
     # 公开接口
@@ -115,8 +113,8 @@ class SessionManager:
     ) -> Agent:
         """获取或创建会话对应的 Agent 实例
 
-        优先从内存缓存获取；若内存未命中，尝试从 Redis 恢复 AgentState；
-        若 Redis 也未命中，创建全新 Agent。
+        优先从内存缓存获取；若内存未命中，尝试从 KV 恢复 AgentState；
+        若 KV 也未命中，创建全新 Agent。
 
         Args:
             user_id: 用户标识
@@ -143,10 +141,10 @@ class SessionManager:
                     f"会话数已达上限 ({self._max_sessions})，请稍后重试"
                 )
 
-            # 尝试从 Redis 恢复 AgentState
+            # 尝试从 KV 恢复 AgentState
             saved_state = await self._load_state(user_id, session_id)
 
-            # Redis 未命中时，尝试从 PG 回填历史消息
+            # KV 未命中时，尝试从 PG 回填历史消息
             if saved_state is None:
                 saved_state = await self._backfill_from_pg(
                     user_id, session_id,
@@ -164,33 +162,33 @@ class SessionManager:
             )
             self._sessions[key] = entry
 
-            # 从 PG 恢复的状态需同步写入 Redis（否则 fork 等依赖 Redis 的操作会失败）
+            # 从 PG 恢复的状态需同步写入 KV（否则 fork 等依赖 KV 的操作会失败）
             if saved_state is not None:
                 await self._save_state(user_id, session_id, agent)
 
             logger.info(
                 "新建会话: user={} session={} (恢复={}, 当前 {} 个会话)",
                 user_id, session_id,
-                "Redis" if saved_state else "无",
+                "KV" if saved_state else "无",
                 len(self._sessions),
             )
             return agent
 
     async def refresh_state(self, user_id: str, session_id: str) -> None:
-        """强制从 Redis 重新加载 AgentState 覆盖内存中的副本
+        """强制从 KV 重新加载 AgentState 覆盖内存中的副本
 
-        用于多实例场景：其他实例可能已写入更新的状态到 Redis，
+        用于多实例场景：其他实例可能已写入更新的状态到 KV，
         本方法拉取最新 state 替换当前内存中 agent 的 state。
 
         如果当前内存中没有该会话，则静默返回（下次 get_or_create 会
-        自动从 Redis 恢复）；如果 Redis 中也无 state，则不修改内存。
+        自动从 KV 恢复）；如果 KV 中也无 state，则不修改内存。
         """
         key = (user_id, session_id)
         async with self._lock:
             entry = self._sessions.get(key)
             if entry is None:
-                return  # 内存中没有，下次 get_or_create 会自动从 Redis 恢复
-            # 强制从 Redis 加载最新状态
+                return  # 内存中没有，下次 get_or_create 会自动从 KV 恢复
+            # 强制从 KV 加载最新状态
             new_state = await self._load_state(user_id, session_id)
             if new_state is not None:
                 entry.agent.state = new_state
@@ -216,7 +214,7 @@ class SessionManager:
         """基于父会话创建分支，返回新会话 ID
 
         流程：
-        1. 从 Redis 拉取父会话 AgentState JSON，**值拷贝**到子会话 key
+        1. 从 KV 拉取父会话 AgentState JSON，**值拷贝**到子会话 key
            （完全独立，互不影响）
         2. 复制父会话 meta，追加 parent_session_id / forked_at 标记
         3. 若 storage (PostgresStorage) 可用，则落库插入 FORK 记录
@@ -230,12 +228,12 @@ class SessionManager:
             新生成的子会话 ID
 
         Raises:
-            ValueError: 父会话在 Redis 中无 state（无法 fork）
-            RuntimeError: Redis 未初始化
+            ValueError: 父会话在 KV 中无 state（无法 fork）
+            RuntimeError: KV 存储未初始化
         """
-        if self._redis is None:
+        if self._kv is None:
             raise RuntimeError(
-                "Redis 未初始化，无法 fork 会话；请先调用 initialize()"
+                "KV 存储未初始化，无法 fork 会话；请先调用 initialize()"
             )
 
         import asyncio
@@ -246,13 +244,13 @@ class SessionManager:
         # 1. 拷贝 AgentState JSON（直接值拷贝，无需反序列化）
         state_key_p = self._redis_key(user_id, parent_session_id)
         state_key_c = self._redis_key(user_id, child_session_id)
-        state_json = await self._redis.get(state_key_p)
+        state_json = await self._kv.get(state_key_p)
         if state_json is None:
             raise ValueError(
                 f"父会话没有可 fork 的状态: user={user_id} "
                 f"session={parent_session_id}"
             )
-        await self._redis.set(
+        await self._kv.set(
             state_key_c, state_json, ex=self._session_ttl
         )
 
@@ -276,7 +274,7 @@ class SessionManager:
             "last_active": now,
             "message_count": meta_p.get("message_count", 0),
         }
-        await self._redis.set(
+        await self._kv.set(
             self._redis_meta_key(user_id, child_session_id),
             json.dumps(meta_c, ensure_ascii=False),
             ex=self._session_ttl,
@@ -294,7 +292,7 @@ class SessionManager:
             except asyncio.CancelledError:
                 raise  # 不吞 CancelledError，保留协程取消语义
             except ValueError:
-                # 父会话不在 PG 中（8090 流程只写 Redis 不写 PG sessions 表），
+                # 父会话不在 PG 中（8090 流程只写 KV 不写 PG sessions 表），
                 # 先 upsert 父会话再重试 fork，确保 depth/parent 血缘落库
                 try:
                     from core.storage_models import (
@@ -338,7 +336,7 @@ class SessionManager:
         return child_session_id
 
     async def save(self, user_id: str, session_id: str) -> None:
-        """将指定会话的 AgentState 保存到 Redis。
+        """将指定会话的 AgentState 保存到 KV。
 
         应在每次 reply/reply_stream 完成后调用。
         同时保存会话元数据（标题、消息数等）。
@@ -368,14 +366,14 @@ class SessionManager:
             await self.save_session_meta(user_id, session_id, title, msg_count)
 
             # 正常 save（非断连场景）清除旧的 pending_reply 标记
-            if self._redis:
+            if self._kv:
                 try:
                     meta_key = self._redis_meta_key(user_id, session_id)
                     existing = await self._load_session_meta(user_id, session_id)
                     if existing and existing.get("reply_status"):
                         existing.pop("reply_status", None)
                         existing.pop("last_reply", None)
-                        await self._redis.set(
+                        await self._kv.set(
                             meta_key,
                             json.dumps(existing, ensure_ascii=False),
                             ex=self._session_ttl,
@@ -384,13 +382,13 @@ class SessionManager:
                     pass
 
     async def remove(self, user_id: str, session_id: str) -> bool:
-        """移除指定会话（同时清除 Redis 中的状态）"""
+        """移除指定会话（同时清除 KV 中的状态）"""
         key = (user_id, session_id)
         async with self._lock:
             entry = self._sessions.pop(key, None)
 
         if entry:
-            # 先保存最终状态到 Redis（可选：也可直接删除）
+            # 先保存最终状态到 KV（可选：也可直接删除）
             await self._save_state(user_id, session_id, entry.agent)
             logger.info("移除会话: user={} session={}", user_id, session_id)
             return True
@@ -419,9 +417,9 @@ class SessionManager:
             return result
 
     async def list_user_sessions(self, user_id: str) -> list[dict]:
-        """列出指定用户的所有会话（从 Redis 扫描）
+        """列出指定用户的所有会话（按 KV 后端扫描）
 
-        通过 SCAN 遍历 Redis 中该用户的所有 :meta key，
+        按 KV 后端扫描该用户的所有 :meta key（redis SCAN / jsonl 内存 glob），
         返回会话元数据列表，按 last_active 倒序排列。
 
         Args:
@@ -430,28 +428,21 @@ class SessionManager:
         Returns:
             会话元数据列表
         """
-        if not self._redis:
+        if not self._kv:
             return []
 
         meta_prefix = f"{self._redis_prefix}{user_id}:*:meta"
         sessions = []
 
         try:
-            cursor = 0
-            while True:
-                cursor, keys = await self._redis.scan(
-                    cursor=cursor, match=meta_prefix, count=50
-                )
-                for key in keys:
-                    try:
-                        meta_json = await self._redis.get(key)
-                        if meta_json:
-                            meta = json.loads(meta_json)
-                            sessions.append(meta)
-                    except Exception:
-                        logger.warning("解析会话元数据失败: {}", key)
-                if cursor == 0:
-                    break
+            keys = await self._kv.scan_keys(meta_prefix)
+            for key in keys:
+                try:
+                    meta_json = await self._kv.get(key)
+                    if meta_json:
+                        sessions.append(json.loads(meta_json))
+                except Exception:
+                    logger.warning("解析会话元数据失败: {}", key)
 
             # 按 last_active 倒序
             sessions.sort(key=lambda s: s.get("last_active", 0), reverse=True)
@@ -467,11 +458,11 @@ class SessionManager:
         title: str = "",
         message_count: int = 0,
     ) -> None:
-        """保存会话元数据到 Redis
+        """保存会话元数据到 KV
 
         元数据与 AgentState 使用相同的 TTL，独立 key 存储。
         """
-        if not self._redis:
+        if not self._kv:
             return
 
         key = self._redis_meta_key(user_id, session_id)
@@ -499,7 +490,7 @@ class SessionManager:
             }
 
         try:
-            await self._redis.set(
+            await self._kv.set(
                 key, json.dumps(meta, ensure_ascii=False), ex=self._session_ttl
             )
         except Exception:
@@ -518,7 +509,7 @@ class SessionManager:
             last_reply: 最后一条 assistant 回复文本
             reply_status: 回复状态（completed / partial / timeout / error）
         """
-        if not self._redis:
+        if not self._kv:
             return
 
         existing = await self._load_session_meta(user_id, session_id) or {}
@@ -533,23 +524,23 @@ class SessionManager:
 
         key = self._redis_meta_key(user_id, session_id)
         try:
-            await self._redis.set(
+            await self._kv.set(
                 key, json.dumps(meta, ensure_ascii=False), ex=self._session_ttl,
             )
         except Exception:
             logger.exception("保存回复元数据失败: user={} session={}", user_id, session_id)
 
     async def load_session_meta(self, user_id: str, session_id: str) -> dict | None:
-        """公开接口：从 Redis 加载会话元数据。"""
+        """公开接口：从 KV 加载会话元数据。"""
         return await self._load_session_meta(user_id, session_id)
 
     async def _load_session_meta(self, user_id: str, session_id: str) -> dict | None:
-        """从 Redis 加载会话元数据"""
-        if not self._redis:
+        """从 KV 加载会话元数据"""
+        if not self._kv:
             return None
         try:
             key = self._redis_meta_key(user_id, session_id)
-            meta_json = await self._redis.get(key)
+            meta_json = await self._kv.get(key)
             if meta_json:
                 return json.loads(meta_json)
         except Exception:
@@ -561,7 +552,7 @@ class SessionManager:
     ) -> list[dict] | None:
         """获取会话的消息历史
 
-        从 Redis 加载 AgentState，提取消息列表返回。
+        从 KV 加载 AgentState，提取消息列表返回。
         如果会话不存在返回 None。
 
         Returns:
@@ -615,7 +606,7 @@ class SessionManager:
         return messages
 
     async def delete_session(self, user_id: str, session_id: str) -> bool:
-        """彻底删除会话（内存 + Redis AgentState + Redis 元数据）
+        """彻底删除会话（内存 + KV AgentState + KV 元数据）
 
         Returns:
             是否成功删除
@@ -625,14 +616,14 @@ class SessionManager:
             self._sessions.pop(key, None)
 
         deleted = False
-        if self._redis:
+        if self._kv:
             try:
                 state_key = self._redis_key(user_id, session_id)
                 meta_key = self._redis_meta_key(user_id, session_id)
-                result = await self._redis.delete(state_key, meta_key)
+                result = await self._kv.delete(state_key, meta_key)
                 deleted = result > 0
             except Exception:
-                logger.exception("删除会话 Redis 数据失败: user={} session={}", user_id, session_id)
+                logger.exception("删除会话 KV 数据失败: user={} session={}", user_id, session_id)
 
         logger.info("删除会话: user={} session={} deleted={}", user_id, session_id, deleted)
         return deleted
@@ -652,7 +643,7 @@ class SessionManager:
         return len(self._sessions)
 
     # ------------------------------------------------------------------
-    # Redis 持久化
+    # KV 持久化
     # ------------------------------------------------------------------
 
     def _redis_key(self, user_id: str, session_id: str) -> str:
@@ -669,13 +660,13 @@ class SessionManager:
         session_id: str,
         agent: Agent,
     ) -> None:
-        """序列化 AgentState 并写入 Redis。"""
-        if not self._redis:
+        """序列化 AgentState 并写入 KV。"""
+        if not self._kv:
             return
         try:
             key = self._redis_key(user_id, session_id)
             state_json = agent.state.model_dump_json()
-            await self._redis.set(key, state_json, ex=self._session_ttl)
+            await self._kv.set(key, state_json, ex=self._session_ttl)
             logger.debug("状态已保存: {} ({} bytes)", key, len(state_json))
         except Exception:
             logger.exception("保存状态失败: user={} session={}", user_id, session_id)
@@ -685,15 +676,15 @@ class SessionManager:
         user_id: str,
         session_id: str,
     ) -> AgentState | None:
-        """从 Redis 反序列化 AgentState，未命中返回 None。"""
-        if not self._redis:
+        """从 KV 反序列化 AgentState，未命中返回 None。"""
+        if not self._kv:
             return None
         try:
             key = self._redis_key(user_id, session_id)
-            state_json = await self._redis.get(key)
+            state_json = await self._kv.get(key)
             if state_json:
                 state = AgentState.model_validate_json(state_json)
-                logger.debug("从 Redis 恢复状态: {}", key)
+                logger.debug("从 KV 恢复状态: {}", key)
                 return state
         except Exception:
             logger.exception("加载状态失败: user={} session={}", user_id, session_id)
@@ -707,7 +698,7 @@ class SessionManager:
     ) -> AgentState | None:
         """从 PG 加载历史消息，构造 AgentState 用于恢复上下文
 
-        当 Redis 未命中时调用，将 PG 中最近 N 条消息转为 Msg 列表
+        当 KV 未命中时调用，将 PG 中最近 N 条消息转为 Msg 列表
         注入 AgentState.context，使 Agent 能继续之前的对话。
 
         Args:
@@ -787,7 +778,7 @@ class SessionManager:
         ]
         for key in expired:
             uid, sid = key
-            # 过期前保存状态到 Redis（TTL 会续期）
+            # 过期前保存状态到 KV（TTL 会续期）
             entry = self._sessions.pop(key)
             await self._save_state(uid, sid, entry.agent)
             logger.info("清理过期会话: user={} session={}", uid, sid)

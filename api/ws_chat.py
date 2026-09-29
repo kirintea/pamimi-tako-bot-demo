@@ -466,7 +466,7 @@ async def _handle_chat(
     bus = getattr(ws.app.state, "message_bus", None)
     lock_ctx = (
         acquire_session_lock(bus, user_id, session_id)
-        if bus is not None else contextlib.nullasynccontext()
+        if bus is not None else contextlib.nullcontext()
     )
 
     # Redis 广播 key（断连后持续 publish，重连客户端可通过订阅收到实时更新）

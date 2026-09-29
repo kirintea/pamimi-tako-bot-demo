@@ -32,7 +32,8 @@ platform-server-8090/
 │   ├── storage.py             # PostgreSQL 存储层（Agent/Session/MCP/Skill/Message CRUD）
 │   ├── storage_models.py      # 数据模型定义（AgentRecord/MCPRecord/SkillRecord 等）
 │   ├── chat_service.py        # Chat 服务层（Fire-and-Forget 事件驱动模式）
-│   ├── session.py             # 会话管理器（Redis 持久化 + 元数据 + 消息历史 + fork）
+│   ├── session.py             # 会话管理器（KV 持久化 [redis/jsonl] + 元数据 + 消息历史 + fork）
+│   ├── kv/                    # KV 存储抽象（RedisKVStore / JsonlKVStore 开发用 JSONL）
 │   ├── redis_message_bus.py   # Redis 分布式消息总线（分布式锁 + Pub/Sub）
 │   ├── message_bus.py         # 消息总线抽象
 │   ├── formatter/             # 自定义 Formatter（SiliconFlow 兼容）
@@ -186,10 +187,11 @@ APP_ENV=dev
 ```
 SessionManager
   ├── 内存缓存: (user_id, session_id) → SessionEntry
-  └── Redis
+  └── KVStore（kv.backend: redis | jsonl，key 前缀/TTL 取自 redis 配置）
       ├── agentscope:session:{user_id}:{session_id}      → AgentState JSON (TTL 1800s)
       └── agentscope:session:{user_id}:{session_id}:meta → 会话元数据 JSON (TTL 1800s)
           {session_id, user_id, title, created_at, last_active, message_count}
+          # kv.backend=jsonl 时改落 ./data/kv/kv.jsonl（开发/资源受限，单进程，惰性 TTL）
 
 PostgresStorage (PostgreSQL / MySQL — 后端无关)
   └── DatabaseManager 连接池（PostgresBackend(asyncpg) / MySQLBackend(aiomysql)）
@@ -206,7 +208,7 @@ PostgresStorage (PostgreSQL / MySQL — 后端无关)
 1. **会话创建**: 先查 Redis，命中则恢复 AgentState，未命中则新建
 2. **会话回复**: reply/stream 完成后，调用 `session_mgr.save()` 同时写入 AgentState 与 `:meta` 元数据，异步写入 PG
 3. **会话过期**: 内存中 TTL 过期后清理，Redis 中 key 保留至 TTL 到期
-4. **会话列表**: `list_sessions()` 仅返回内存中活跃会话；`list_user_sessions()` 通过 SCAN 遍历 Redis `:meta` key 返回历史会话
+4. **会话列表**: `list_sessions()` 仅返回内存中活跃会话；`list_user_sessions()` 按 KV 后端扫描 `:meta` key（redis SCAN / jsonl 内存 glob）返回历史会话
 5. **消息历史**: `get_session_messages()` 从 Redis 加载 AgentState，提取 user/assistant 文本消息返回
 6. **会话删除**: `delete_session()` 彻底删除（内存 + Redis AgentState + Redis 元数据）
 
@@ -218,6 +220,17 @@ redis:
   key_prefix: "agentscope:session:"
   session_ttl: 1800    # 秒
 ```
+
+### KV 存储配置
+
+```yaml
+kv:
+  backend: "redis"                # redis / jsonl（jsonl 仅限开发/资源受限单进程场景）
+  jsonl_path: "./data/kv"         # jsonl 后端存储目录（已加入 .gitignore）
+  jsonl_compact_threshold: 5000   # 追加行数达到阈值时压缩重写
+```
+
+`backend=redis` 时行为与旧版完全一致；`backend=jsonl` 时会话状态/元数据写本地 JSONL 文件（无 Redis 依赖，惰性 TTL + 阈值压缩）。消息总线 / 多端状态广播仍需 Redis（缺失时自动降级单实例；该模式下 `/health` 的 redis 项仅提示 `unavailable`，不置 503）。
 
 ### 数据库配置（PostgreSQL / MySQL）
 

@@ -341,13 +341,13 @@ async def test_fork_session_raises_when_redis_not_initialized(cfg):
     """Redis 未初始化时 fork_session 不应静默返回 UUID，
     应抛 RuntimeError 避免调用方误以为 fork 成功。
     """
-    # 不调用 initialize()，self._redis 为 None
+    # 不调用 initialize()，self._kv 为 None
     mgr = SessionManager(cfg, session_ttl=1800, max_sessions=50)
     # 不初始化 Redis
     uid = "u_no_redis_01"
     parent_sid = "s_no_redis_parent_01"
 
-    with pytest.raises(RuntimeError, match="Redis 未初始化"):
+    with pytest.raises(RuntimeError, match="KV 存储未初始化"):
         await mgr.fork_session(uid, parent_sid)
 
 

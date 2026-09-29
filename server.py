@@ -41,6 +41,7 @@ from core.chat_service import ChatService
 from core.config import ConfigManager
 from core.database import DatabaseManager
 from core.db.base import DatabaseUnavailableError
+from core.message_bus import InMemoryMessageBus
 from core.redis_message_bus import RedisMessageBus
 from core.session import SessionManager
 from core.session_status import SessionStatusTracker
@@ -204,7 +205,9 @@ def create_app(config) -> FastAPI:
         # 创建消息总线（Redis 分布式实现，支持多实例无状态部署）
         # 注意：RedisMessageBus 构造函数当前仅接受 redis_url（见 core/redis_message_bus.py:36），
         # key_prefix / session_ttl 由 SessionManager 使用，此处无需传递。
-        # Redis 不可达时退避重试；仍失败则降级为 None，应用继续启动（/health 仍可用）。
+        # Redis 不可达时退避重试；仍失败则降级为 InMemoryMessageBus（单实例进程内总线），
+        # 应用继续启动：对话触发 / 锁 / 事件回放与订阅在无 Redis 时仍可用，
+        # 仅跨实例广播与多端状态跟踪不可用（Q4 降级单实例语义）。
         message_bus = RedisMessageBus(config.redis.url)
         _bus_ok = False
         for _attempt in range(3):
@@ -222,12 +225,15 @@ def create_app(config) -> FastAPI:
                 else:
                     logger.warning(
                         "Redis 消息总线不可用，应用降级运行"
-                        "（/health 仍可用，对话/会话的 Redis 依赖将不可用）: {}",
+                        "（/health 仍可用，跨实例广播不可用）: {}",
                         _bus_err,
                     )
-        app.state.message_bus = message_bus if _bus_ok else None
         if _bus_ok:
+            app.state.message_bus = message_bus
             logger.info("消息总线已就绪 (RedisMessageBus: {})", config.redis.url)
+        else:
+            app.state.message_bus = InMemoryMessageBus()
+            logger.warning("消息总线降级为 InMemoryMessageBus（单实例，无跨实例广播）")
 
         # 创建会话管理器（Agent 实例按需创建）
         session_mgr = SessionManager(
@@ -293,7 +299,9 @@ def create_app(config) -> FastAPI:
             app.state.session_status_tracker = None
             logger.info("会话状态跟踪器未启用（Redis 不可用）")
 
-        chat_service = ChatService(session_mgr, message_bus, status_tracker)
+        # 传入 app.state.message_bus（降级时为 InMemoryMessageBus），
+        # 避免 ChatService.run 持有 _redis=None 的 RedisMessageBus 而崩溃
+        chat_service = ChatService(session_mgr, app.state.message_bus, status_tracker)
         app.state.chat_service = chat_service
         logger.info("Chat 服务已就绪")
 
@@ -331,7 +339,10 @@ def create_app(config) -> FastAPI:
         await session_mgr.shutdown()
         logger.info("会话管理器已关闭")
 
-        await message_bus.aclose()
+        await app.state.message_bus.aclose()
+        if app.state.message_bus is not message_bus:
+            # 降级场景：关闭未使用的 Redis 实例（_redis=None 时 aclose 自行跳过）
+            await message_bus.aclose()
         logger.info("消息总线已关闭")
 
         await db_mgr.shutdown()

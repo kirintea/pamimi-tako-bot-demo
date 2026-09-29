@@ -143,6 +143,14 @@ redis:
   key_prefix: "agentscope:session:"
   session_ttl: 1800
 
+# KV 存储（会话状态 / 元数据持久化层）
+#   redis — 默认，与消息总线共用 Redis（多实例 / 生产）
+#   jsonl — 开发/资源受限：本地 JSONL 文件（./data/kv/kv.jsonl），单进程，无 Redis 依赖
+kv:
+  backend: "${KV_BACKEND:-redis}"            # redis / jsonl（可用环境变量临时切换）
+  jsonl_path: "${KV_JSONL_PATH:-./data/kv}"
+  jsonl_compact_threshold: 5000              # 追加行数达到阈值时压缩重写
+
 # 上下文回填配置（PG → Redis 恢复时使用）
 context:
   backfill_message_limit: 20        # 50 → 20，减少回填消息数
