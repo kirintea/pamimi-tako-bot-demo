@@ -21,8 +21,8 @@ from loguru import logger
 
 from core.config.schemas import DatabaseConfig
 from core.db.base import DatabaseBackend, DatabaseUnavailableError
-from core.db.ddl import DDL_POSTGRES
-from core.db.postgres_backend import PostgresBackend
+from core.db.ddl import get_ddl
+from core.db.factory import create_backend
 from core.db.statements import STATEMENTS
 
 
@@ -47,12 +47,16 @@ class DatabaseManager:
             logger.warning("DatabaseManager: 数据库 URL 未配置，跳过初始化")
             return
 
-        backend = PostgresBackend(self._config.url, pool_size=self._config.pool_size)
+        backend = create_backend(self._config)
         await backend.connect()
         if self._config.auto_create_tables:
-            await backend.run_ddl(DDL_POSTGRES)
-            logger.info("DatabaseManager: DDL 建表完成")
+            await backend.run_ddl(get_ddl(backend.dialect))
+            logger.info("DatabaseManager: DDL 建表完成 (dialect={})", backend.dialect)
         self._backend = backend
+        logger.info(
+            "DatabaseManager: 连接池已创建 (dialect={}, pool_size={})",
+            backend.dialect, self._config.pool_size,
+        )
 
     async def shutdown(self) -> None:
         """关闭连接池"""

@@ -62,3 +62,28 @@ async def test_is_initialized_reflects_backend():
     assert db.is_initialized is False
     db._backend = FakeBackend()
     assert db.is_initialized is True
+
+
+class TestInitializeViaFactory:
+    async def test_initialize_dispatches_via_factory(self, monkeypatch):
+        """initialize 经工厂创建后端，并按方言取 DDL（Task 6 接线）"""
+        from core.db.ddl import get_ddl
+
+        fake = FakeBackend(dialect="mysql")
+        monkeypatch.setattr("core.database.create_backend", lambda cfg: fake)
+        db = DatabaseManager(DatabaseConfig(url="mysql://u:p@localhost:3306/db"))
+        await db.initialize()
+        assert db.is_initialized is True
+        assert fake.connected is True
+        assert fake.ddl_run == get_ddl("mysql")
+
+    async def test_initialize_skips_ddl_when_disabled(self, monkeypatch):
+        fake = FakeBackend(dialect="mysql")
+        monkeypatch.setattr("core.database.create_backend", lambda cfg: fake)
+        db = DatabaseManager(DatabaseConfig(
+            url="mysql://u:p@localhost:3306/db",
+            auto_create_tables=False,
+        ))
+        await db.initialize()
+        assert db.is_initialized is True
+        assert fake.ddl_run == []
