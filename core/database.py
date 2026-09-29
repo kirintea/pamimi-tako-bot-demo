@@ -20,8 +20,12 @@ from __future__ import annotations
 from loguru import logger
 
 from core.config.schemas import DatabaseConfig
-from core.db.base import DatabaseBackend, DatabaseUnavailableError
-from core.db.ddl import get_ddl
+from core.db.base import (
+    DatabaseBackend,
+    DatabaseUnavailableError,
+    SchemaMissingError,
+)
+from core.db.ddl import REQUIRED_TABLES, get_ddl
 from core.db.factory import create_backend
 from core.db.statements import STATEMENTS
 
@@ -42,21 +46,52 @@ class DatabaseManager:
     # ------------------------------------------------------------------
 
     async def initialize(self) -> None:
-        """初始化连接池并执行 DDL 建表（Task 7 替换为 fail-fast 版本）"""
+        """初始化数据库连接
+
+        失败行为固定 fail-fast（D3 评审定案）：
+            连接失败 / DDL 失败 / 缺表（verify_tables=true）
+            → ERROR 日志（含根因与缺表清单）→ 关闭已建立的连接 → 抛出
+            → lifespan 异常 → uvicorn 启动失败退出（非零码）。
+        未配置 URL 时跳过初始化（有意的"无库运行"逃生口，/health 显示 not_configured）。
+        """
         if not self._config.url:
             logger.warning("DatabaseManager: 数据库 URL 未配置，跳过初始化")
             return
 
-        backend = create_backend(self._config)
-        await backend.connect()
-        if self._config.auto_create_tables:
-            await backend.run_ddl(get_ddl(backend.dialect))
-            logger.info("DatabaseManager: DDL 建表完成 (dialect={})", backend.dialect)
-        self._backend = backend
-        logger.info(
-            "DatabaseManager: 连接池已创建 (dialect={}, pool_size={})",
-            backend.dialect, self._config.pool_size,
-        )
+        backend: DatabaseBackend | None = None
+        try:
+            backend = create_backend(self._config)
+            await backend.connect()
+            logger.info(
+                "DatabaseManager: 连接池已创建 (dialect={}, pool_size={})",
+                backend.dialect, self._config.pool_size,
+            )
+            if self._config.auto_create_tables:
+                await backend.run_ddl(get_ddl(backend.dialect))
+                logger.info(
+                    "DatabaseManager: DDL 建表完成 (dialect={})", backend.dialect
+                )
+            if self._config.verify_tables:
+                missing = await backend.missing_tables(REQUIRED_TABLES)
+                if missing:
+                    raise SchemaMissingError(f"必需表缺失: {missing}")
+            self._backend = backend
+            logger.info(
+                "DatabaseManager: 初始化成功 (auto_create_tables={})",
+                self._config.auto_create_tables,
+            )
+        except Exception as e:
+            # fail-fast：关闭已建立的连接（不留半开连接），记 ERROR 日志后原样抛出
+            if backend is not None:
+                try:
+                    await backend.close()
+                except Exception as close_err:  # noqa: BLE001
+                    logger.warning("DatabaseManager: 关闭失败连接时出错: {}", close_err)
+            logger.error(
+                "DatabaseManager: 初始化失败，启动中止（进程退出）: {}: {}",
+                type(e).__name__, e,
+            )
+            raise
 
     async def shutdown(self) -> None:
         """关闭连接池"""
