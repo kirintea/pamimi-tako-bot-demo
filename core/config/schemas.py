@@ -228,6 +228,22 @@ class RedisConfig(BaseModel):
     session_ttl: int = Field(default=1800, description="会话 TTL (秒)")
 
 
+class KVConfig(BaseModel):
+    """KV 存储配置（会话状态 / 元数据的持久化层）"""
+    backend: str = Field(
+        default="redis",
+        description="KV 后端: redis / jsonl（jsonl 仅限开发/资源受限单进程场景）",
+    )
+    jsonl_path: str = Field(
+        default="./data/kv",
+        description="jsonl 后端存储目录（backend=jsonl 时生效）",
+    )
+    jsonl_compact_threshold: int = Field(
+        default=5000,
+        description="追加行数达到该值时触发文件压缩重写",
+    )
+
+
 class ContextBackfillConfig(BaseModel):
     """PG 回填配置"""
     backfill_message_limit: int = Field(default=20, description="回填消息条数上限")
@@ -375,6 +391,7 @@ class AppConfig(BaseModel):
 
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     redis: RedisConfig = Field(default_factory=RedisConfig)
+    kv: KVConfig = Field(default_factory=KVConfig, description="KV 存储配置（会话持久化后端）")
     context: ContextBackfillConfig = Field(
         default_factory=ContextBackfillConfig,
         description="上下文回填配置",
