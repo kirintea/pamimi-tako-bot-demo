@@ -200,9 +200,25 @@ class MCPConfig(BaseModel):
 
 
 class DatabaseConfig(BaseModel):
-    """数据库配置（预留）"""
-    url: str = Field(default="", description="数据库连接 URL")
+    """数据库配置（PostgreSQL / MySQL 双后端 + 建表/校验开关）"""
+    url: str = Field(default="", description="数据库连接 URL（postgresql:// 或 mysql://，按 scheme 识别后端）")
     pool_size: int = Field(default=10, description="连接池大小")
+    backend: str = Field(default="auto", description="数据库后端: auto / postgres / mysql")
+    auto_create_tables: bool = Field(
+        default=True,
+        description="启动时自动执行 DDL 建表（受限权限账号请关闭，由 DBA 预建表）",
+    )
+    verify_tables: bool = Field(
+        default=True,
+        description="初始化后校验必需表是否存在（关闭建表时强烈建议开启）",
+    )
+
+    @field_validator("backend")
+    @classmethod
+    def _validate_backend(cls, v: str) -> str:
+        if v not in ("auto", "postgres", "mysql"):
+            raise ValueError(f"backend 必须是 auto/postgres/mysql 之一，收到: {v!r}")
+        return v
 
 
 class RedisConfig(BaseModel):
