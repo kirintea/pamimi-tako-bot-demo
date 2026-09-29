@@ -12,6 +12,8 @@ import asyncio
 
 from utils import CheckReport, load_config
 
+from core.db.ddl import REQUIRED_TABLES  # 单一事实来源（7 张必需表）
+
 
 async def check_pg_connection(db_url: str, report: CheckReport):
     """检查 PostgreSQL 连接"""
@@ -28,14 +30,10 @@ async def check_pg_connection(db_url: str, report: CheckReport):
 
 async def check_pg_tables(conn, report: CheckReport):
     """检查核心表是否存在"""
-    # 必须与 core/database.py 的 DDL_STATEMENTS 完全一致（共 7 张表：
-    # conversations / sessions / mcps / skills / schedules / agents / messages）。
-    # 注意：不存在 users 表，故不列入。表缺失时本检查必须 FAIL（红），
-    # 以真实反映 storage 依赖（core/storage.py 读写 agents / messages）。
-    expected_tables = [
-        "conversations", "sessions", "mcps", "skills", "schedules",
-        "agents", "messages",
-    ]
+    # 与 core/db/ddl.py REQUIRED_TABLES 保持一致（单一事实来源）。
+    # 表缺失时本检查必须 FAIL（红），以真实反映 storage 依赖
+    # （core/storage.py 读写 agents / messages）。
+    expected_tables = REQUIRED_TABLES
     try:
         rows = await conn.fetch(
             "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
