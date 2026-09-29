@@ -18,6 +18,7 @@ class OTelConfig(BaseModel):
     service_name: str = Field(default="platform-agent", description="服务名称")
     service_version: str = Field(default="0.1.0", description="服务版本")
     environment: str = Field(description="运行环境 (development / production)")
+    channel: str = Field(default="web", description="消息渠道 Resource tag（web / feishu / wechat ...）")
     headers: dict[str, str] = Field(default_factory=dict, description="附加请求头")
 
 

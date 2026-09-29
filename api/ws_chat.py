@@ -106,7 +106,9 @@ async def _persist_conversation(
         # Redis AgentState 已在 _handle_chat 的 async with 锁内同步落库，
         # 此处仅负责 PG 历史双写（append-only，风险较低）。
         if db and db.is_initialized:
-            await db.insert_conversation(user_id, session_id, "user", user_message)
+            await db.insert_conversation(
+                user_id, session_id, "user", user_message, channel="web",
+            )
             # 构建 assistant 消息的 metadata
             metadata = {}
             if thinking:
@@ -118,6 +120,7 @@ async def _persist_conversation(
                 await db.insert_conversation(
                     user_id, session_id, "assistant", assistant_reply,
                     metadata=metadata or None,
+                    channel="web",
                 )
             title = user_message[:30] if user_message else None
             if title:

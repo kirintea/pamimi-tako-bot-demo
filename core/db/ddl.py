@@ -236,6 +236,20 @@ DDL_POSTGRES = [
     """
     ALTER TABLE sessions ALTER COLUMN parent_session_id TYPE VARCHAR(64)
     """,
+
+    # ============================================================
+    # 消息渠道 channel — 三表各 1 条（D11，Task 13）
+    # 存量行由列默认值 'web' 自动回填；IF NOT EXISTS 保证重复启动幂等。
+    # ============================================================
+    """
+    ALTER TABLE conversations ADD COLUMN IF NOT EXISTS channel VARCHAR(16) NOT NULL DEFAULT 'web'
+    """,
+    """
+    ALTER TABLE messages ADD COLUMN IF NOT EXISTS channel VARCHAR(16) NOT NULL DEFAULT 'web'
+    """,
+    """
+    ALTER TABLE sessions ADD COLUMN IF NOT EXISTS channel VARCHAR(16) NOT NULL DEFAULT 'web'
+    """,
 ]
 
 # ============================================================
@@ -244,7 +258,7 @@ DDL_POSTGRES = [
 # - 无部分索引（WHERE ...）→ 普通索引；CREATE INDEX 无 IF NOT EXISTS → 依赖 1061 幂等兜底
 # - TEXT/JSON 列不允许 DEFAULT → 需要默认值的列显式 NULL，读侧归一（见 storage._row_to_session）
 # - sessions.id 直接建为 VARCHAR(64)（PG 侧靠列宽迁移），无需 ALTER TYPE
-# - 无 legacy 表 → 所有列并入 CREATE TABLE，不写 ALTER ADD COLUMN
+# - 无 legacy 表 → 所有列并入 CREATE TABLE，不写 ALTER ADD COLUMN（例外：Task 13 的 channel 列用 ADD COLUMN + 1060 幂等）
 # ============================================================
 
 DDL_MYSQL = [
@@ -368,6 +382,13 @@ DDL_MYSQL = [
     """,
     "CREATE INDEX idx_messages_user_session ON messages(user_id, session_id)",
     "CREATE INDEX idx_messages_user_session_msg ON messages(user_id, session_id, msg_id)",
+
+    # 消息渠道 channel — 三表各 1 条（D11，Task 13）。
+    # MySQL 的 ADD COLUMN 无 IF NOT EXISTS → 依赖 1060（ER_DUP_FIELDNAME）幂等，
+    # 已在 MYSQL_IDEMPOTENT_ERRORS 中；存量行由列默认值 'web' 自动回填。
+    "ALTER TABLE conversations ADD COLUMN channel VARCHAR(16) NOT NULL DEFAULT 'web'",
+    "ALTER TABLE messages ADD COLUMN channel VARCHAR(16) NOT NULL DEFAULT 'web'",
+    "ALTER TABLE sessions ADD COLUMN channel VARCHAR(16) NOT NULL DEFAULT 'web'",
 ]
 
 # MySQL 幂等性错误码（可安全忽略）：

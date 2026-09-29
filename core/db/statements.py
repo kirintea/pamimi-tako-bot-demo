@@ -179,13 +179,13 @@ STATEMENTS: dict[str, Statement] = {
     # ---------------------------------------------------------------
     "insert_message": Statement(
         pg="""
-            INSERT INTO messages (user_id, session_id, msg_id, role, content, metadata)
-            VALUES ($1, $2, $3, $4, $5, $6)
+            INSERT INTO messages (user_id, session_id, msg_id, role, content, metadata, channel)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
             RETURNING id
         """,
         mysql="""
-            INSERT INTO messages (user_id, session_id, msg_id, role, content, metadata)
-            VALUES ($1, $2, $3, $4, $5, $6)
+            INSERT INTO messages (user_id, session_id, msg_id, role, content, metadata, channel)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
         """,
     ),
     # ---------------------------------------------------------------
@@ -193,13 +193,13 @@ STATEMENTS: dict[str, Statement] = {
     # ---------------------------------------------------------------
     "insert_conversation": Statement(
         pg="""
-            INSERT INTO conversations (user_id, session_id, role, content, metadata)
-            VALUES ($1, $2, $3, $4, $5)
+            INSERT INTO conversations (user_id, session_id, role, content, metadata, channel)
+            VALUES ($1, $2, $3, $4, $5, $6)
             RETURNING id
         """,
         mysql="""
-            INSERT INTO conversations (user_id, session_id, role, content, metadata)
-            VALUES ($1, $2, $3, $4, $5)
+            INSERT INTO conversations (user_id, session_id, role, content, metadata, channel)
+            VALUES ($1, $2, $3, $4, $5, $6)
         """,
     ),
     # ---------------------------------------------------------------

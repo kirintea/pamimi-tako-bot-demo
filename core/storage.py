@@ -525,10 +525,12 @@ class PostgresStorage:
         role: str,
         content: str,
         metadata: dict | None = None,
+        channel: str = "web",
     ) -> int:
         """持久化一条消息
 
         如果 session 中最后一条消息的 msg_id 相同则更新，否则追加。
+        channel 仅在插入分支写入（去重 UPDATE 不改渠道）。
         """
         # 检查最后一条消息
         last_sql = """
@@ -561,6 +563,7 @@ class PostgresStorage:
             role,
             content,
             json.dumps(metadata or {}),
+            channel,
         )
 
     async def list_messages(
