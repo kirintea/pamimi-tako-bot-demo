@@ -238,6 +238,154 @@ DDL_POSTGRES = [
     """,
 ]
 
+# ============================================================
+# MySQL DDL
+# - 无 JSONB → JSON；无 TIMESTAMPTZ → DATETIME(3)；无 BIGSERIAL → BIGINT AUTO_INCREMENT
+# - 无部分索引（WHERE ...）→ 普通索引；CREATE INDEX 无 IF NOT EXISTS → 依赖 1061 幂等兜底
+# - TEXT/JSON 列不允许 DEFAULT → 需要默认值的列显式 NULL，读侧归一（见 storage._row_to_session）
+# - sessions.id 直接建为 VARCHAR(64)（PG 侧靠列宽迁移），无需 ALTER TYPE
+# - 无 legacy 表 → 所有列并入 CREATE TABLE，不写 ALTER ADD COLUMN
+# ============================================================
+
+DDL_MYSQL = [
+    # 对话历史表（核心）
+    """
+    CREATE TABLE IF NOT EXISTS conversations (
+        id          BIGINT AUTO_INCREMENT PRIMARY KEY,
+        user_id     VARCHAR(64) NOT NULL,
+        session_id  VARCHAR(64) NOT NULL,
+        role        VARCHAR(16) NOT NULL,
+        content     TEXT NOT NULL,
+        metadata    JSON NULL,
+        status      VARCHAR(16) NOT NULL DEFAULT 'active',
+        created_at  DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3)
+    )
+    """,
+    # 索引：MySQL 不支持部分索引，去掉 WHERE 条件
+    "CREATE INDEX idx_conv_user_session ON conversations(user_id, session_id)",
+    "CREATE INDEX idx_conv_created ON conversations(created_at)",
+    "CREATE INDEX idx_conv_user_time ON conversations(user_id, created_at)",
+    "CREATE INDEX idx_conv_status ON conversations(status)",
+
+    # Session 会话表（fork 血缘列直接并入；state_json TEXT 允许 NULL）
+    """
+    CREATE TABLE IF NOT EXISTS sessions (
+        id                VARCHAR(64) PRIMARY KEY,
+        user_id           VARCHAR(64) NOT NULL,
+        agent_id          VARCHAR(32) NOT NULL,
+        source            VARCHAR(16) NOT NULL DEFAULT 'user',
+        team_id           VARCHAR(32) NULL,
+        config            JSON NULL,
+        state_json        TEXT NULL,
+        status            VARCHAR(16) NOT NULL DEFAULT 'active',
+        parent_session_id VARCHAR(64) NULL,
+        depth             INTEGER NOT NULL DEFAULT 0,
+        created_at        DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
+        updated_at        DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3)
+    )
+    """,
+    "CREATE INDEX idx_sessions_user_agent ON sessions(user_id, agent_id)",
+    "CREATE INDEX idx_sessions_team ON sessions(team_id)",
+    "CREATE INDEX idx_sessions_status ON sessions(status)",
+    "CREATE INDEX idx_sessions_parent ON sessions(parent_session_id)",
+
+    # MCP 已安装表（(user_id, name) 唯一冲突依赖此唯一键）
+    """
+    CREATE TABLE IF NOT EXISTS mcps (
+        id          VARCHAR(32) PRIMARY KEY,
+        user_id     VARCHAR(64) NOT NULL,
+        name        VARCHAR(128) NOT NULL,
+        transport   VARCHAR(16) NOT NULL DEFAULT 'stdio',
+        config      JSON NULL,
+        enabled     TINYINT(1) NOT NULL DEFAULT 1,
+        created_at  DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
+        updated_at  DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
+        UNIQUE KEY uniq_mcps_user_name (user_id, name)
+    )
+    """,
+    "CREATE INDEX idx_mcps_user ON mcps(user_id)",
+
+    # Skill 已安装表
+    """
+    CREATE TABLE IF NOT EXISTS skills (
+        id          VARCHAR(32) PRIMARY KEY,
+        user_id     VARCHAR(64) NOT NULL,
+        name        VARCHAR(128) NOT NULL,
+        data        JSON NULL,
+        enabled     TINYINT(1) NOT NULL DEFAULT 1,
+        created_at  DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
+        updated_at  DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
+        UNIQUE KEY uniq_skills_user_name (user_id, name)
+    )
+    """,
+    "CREATE INDEX idx_skills_user ON skills(user_id)",
+
+    # 定时任务表（prompt 由 upsert_schedule 始终传值，保持 NOT NULL 不设 DEFAULT）
+    """
+    CREATE TABLE IF NOT EXISTS schedules (
+        id          VARCHAR(32) PRIMARY KEY,
+        user_id     VARCHAR(64) NOT NULL,
+        agent_id    VARCHAR(32) NOT NULL,
+        session_id  VARCHAR(32) NULL,
+        name        VARCHAR(256) NOT NULL,
+        cron_expr   VARCHAR(64) NOT NULL,
+        prompt      TEXT NOT NULL,
+        source      VARCHAR(16) NOT NULL DEFAULT 'user',
+        enabled     TINYINT(1) NOT NULL DEFAULT 1,
+        last_run_at DATETIME(3) NULL,
+        next_run_at DATETIME(3) NULL,
+        created_at  DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
+        updated_at  DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3)
+    )
+    """,
+    "CREATE INDEX idx_schedules_user ON schedules(user_id)",
+
+    # Agent 记录表
+    """
+    CREATE TABLE IF NOT EXISTS agents (
+        id          VARCHAR(32) PRIMARY KEY,
+        user_id     VARCHAR(64) NOT NULL,
+        source      VARCHAR(16) NOT NULL DEFAULT 'user',
+        data        JSON NOT NULL,
+        created_at  DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
+        updated_at  DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3)
+    )
+    """,
+    "CREATE INDEX idx_agents_user ON agents(user_id)",
+
+    # Message 记录表（自增主键，upsert_message 的去重逻辑不依赖唯一约束）
+    """
+    CREATE TABLE IF NOT EXISTS messages (
+        id          BIGINT AUTO_INCREMENT PRIMARY KEY,
+        user_id     VARCHAR(64) NOT NULL,
+        session_id  VARCHAR(64) NOT NULL,
+        msg_id      VARCHAR(64) NOT NULL,
+        role        VARCHAR(16) NOT NULL,
+        content     TEXT NOT NULL,
+        metadata    JSON NULL,
+        created_at  DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3)
+    )
+    """,
+    "CREATE INDEX idx_messages_user_session ON messages(user_id, session_id)",
+    "CREATE INDEX idx_messages_user_session_msg ON messages(user_id, session_id, msg_id)",
+]
+
+# MySQL 幂等性错误码（可安全忽略）：
+#   1050 = ER_TABLE_EXISTS_ERROR（CREATE TABLE IF NOT EXISTS 兜底）
+#   1060 = ER_DUP_FIELDNAME（ADD COLUMN 重复，防 legacy 迁移语句）
+#   1061 = ER_DUP_KEYNAME（CREATE INDEX 无 IF NOT EXISTS，重复索引）
+MYSQL_IDEMPOTENT_ERRORS = {1050, 1060, 1061}
+
+
+def get_ddl(dialect: str) -> list[str]:
+    """按方言返回 DDL 语句列表"""
+    if dialect == "postgres":
+        return DDL_POSTGRES
+    if dialect == "mysql":
+        return DDL_MYSQL
+    raise ValueError(f"未知方言: {dialect!r}")
+
+
 # 服务端依赖的 7 张核心表（建表/校验/健康检查共用，单一事实来源）
 REQUIRED_TABLES = [
     "conversations",
