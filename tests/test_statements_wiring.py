@@ -166,7 +166,7 @@ async def test_upsert_message_insert_uses_registry():
     sql, args = _last(fake)
     assert sql == STATEMENTS["insert_message"].pick("mysql")
     assert result == 55
-    assert args == ("u1", "s1", "m1", "user", "你好", json.dumps({"k": "v"}))
+    assert args == ("u1", "s1", "m1", "user", "你好", json.dumps({"k": "v"}), "web")
 
 
 # ------------------------------------------------------------
@@ -181,7 +181,8 @@ async def test_insert_conversation_returns_id():
     assert sql == STATEMENTS["insert_conversation"].pick("mysql")
     assert result == 101
     assert args[:4] == ("u1", "s1", "user", "你好")
-    assert json.loads(args[-1]) == {"a": 1}
+    assert json.loads(args[-2]) == {"a": 1}
+    assert args[-1] == "web"
 
 
 async def test_upsert_session_title_mysql_json_merge_patch():

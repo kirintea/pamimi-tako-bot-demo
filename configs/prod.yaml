@@ -7,6 +7,7 @@ otel:
   service_name: "platform-agent"
   service_version: "0.1.0"
   environment: "production"
+  channel: "${OTEL_CHANNEL:-web}"
   headers:
     authorization: "Bearer ${OTEL_TOKEN}"
 

@@ -170,6 +170,7 @@ class DatabaseManager:
         role: str,
         content: str,
         metadata: dict | None = None,
+        channel: str = "web",
     ) -> int:
         """插入对话记录
 
@@ -179,6 +180,7 @@ class DatabaseManager:
             role: 角色 (user/assistant/system/tool)
             content: 消息内容
             metadata: 元数据（工具调用、token 用量等）
+            channel: 消息渠道（web / feishu / wechat ...，D11）
 
         Returns:
             插入记录的 ID
@@ -200,6 +202,7 @@ class DatabaseManager:
             role,
             content,
             json.dumps(metadata) if metadata is not None else None,
+            channel,
         )
 
     async def get_conversation_history(

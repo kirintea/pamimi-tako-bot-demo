@@ -109,7 +109,9 @@ async def _persist_conversation(
         # 此处仅负责 PG 历史双写（append-only，风险较低）。
         # 写 PG
         if db and db.is_initialized:
-            await db.insert_conversation(user_id, session_id, "user", user_message)
+            await db.insert_conversation(
+                user_id, session_id, "user", user_message, channel="web",
+            )
             metadata = {}
             if thinking:
                 metadata["thinking"] = thinking
@@ -120,6 +122,7 @@ async def _persist_conversation(
                 await db.insert_conversation(
                     user_id, session_id, "assistant", assistant_reply,
                     metadata=metadata or None,
+                    channel="web",
                 )
             # 自动创建/更新 sessions 记录（标题取首条用户消息前30字）
             title = user_message[:30] if user_message else None

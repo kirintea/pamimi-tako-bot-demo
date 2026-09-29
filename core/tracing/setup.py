@@ -13,6 +13,20 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from core.config.schemas import OTelConfig
 
 
+def _resource_attributes(config: OTelConfig) -> dict[str, str]:
+    """组装 Resource 属性
+
+    抽为独立函数便于单测（tests/test_message_channel.py），不触发全局 TracerProvider。
+    channel 为进程级渠道标识（D11）：一个进程一个渠道，飞书/微信接入 = 独立部署 + OTEL_CHANNEL。
+    """
+    return {
+        "service.name": config.service_name,
+        "service.version": config.service_version,
+        "deployment.environment": config.environment,
+        "channel": config.channel,
+    }
+
+
 class TracingSetup:
     """OTel 追踪初始化 — 供 AgentScope TracingMiddleware 使用
 
@@ -29,11 +43,7 @@ class TracingSetup:
         Returns:
             配置好的 TracerProvider
         """
-        resource = Resource.create({
-            "service.name": config.service_name,
-            "service.version": config.service_version,
-            "deployment.environment": config.environment,
-        })
+        resource = Resource.create(_resource_attributes(config))
 
         exporter = OTLPSpanExporter(
             endpoint=config.endpoint,

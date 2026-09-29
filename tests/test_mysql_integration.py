@@ -71,10 +71,10 @@ async def test_select_1(db_manager):
 async def test_insert_returning_id_incrementing(db_manager):
     """自增表 ID 走 lastrowid（Task 9 之前仅用注册表路径）"""
     id1 = await db_manager.insert_returning_id(
-        "insert_conversation", "it_user", "it_sess", "user", "你好", None,
+        "insert_conversation", "it_user", "it_sess", "user", "你好", None, "web",
     )
     id2 = await db_manager.insert_returning_id(
-        "insert_conversation", "it_user", "it_sess", "assistant", "嗨", None,
+        "insert_conversation", "it_user", "it_sess", "assistant", "嗨", None, "web",
     )
     assert isinstance(id1, int) and isinstance(id2, int)
     assert id2 > id1
@@ -162,6 +162,10 @@ async def test_storage_message_roundtrip(db_manager):
 
 async def test_get_user_sessions_with_title(db_manager):
     """get_user_sessions：JSON_UNQUOTE 取自定义标题 + message_count 聚合"""
+    # 清理历史累积（app_db 复用库 + 本测试可重跑，message_count 断言需确定性）
+    await db_manager.execute(
+        "DELETE FROM conversations WHERE user_id = 'it_user2' AND session_id = 'it-sess-us'",
+    )
     await db_manager.insert_conversation(
         "it_user2", "it-sess-us", "user", "第一条消息", None,
     )
@@ -173,3 +177,41 @@ async def test_get_user_sessions_with_title(db_manager):
     target = [s for s in sessions if s["session_id"] == "it-sess-us"]
     assert target and target[0]["title"] == "会话标题X"
     assert target[0]["message_count"] == 2
+
+
+# ============================================================
+# Task 13 — 消息渠道 channel（D11）
+# ============================================================
+
+async def test_channel_column_on_three_tables(db_manager):
+    """Task 13：三表均有 channel 列，默认值 'web'（信息_schema 中字符串默认值带引号，宽松断言）"""
+    rows = await db_manager.fetch(
+        # 显式别名同 test_tables_created：MySQL 8 服务端返回大写键，别名钉死小写键
+        "SELECT table_name AS table_name, column_default AS column_default "
+        "FROM information_schema.columns "
+        "WHERE table_schema = DATABASE() AND column_name = 'channel'"
+    )
+    by_table = {r["table_name"]: str(r["column_default"]) for r in rows}
+    for table in ("conversations", "messages", "sessions"):
+        assert table in by_table, f"{table} 缺 channel 列（ALTER 未生效？）"
+        assert "web" in by_table[table]
+
+
+async def test_insert_conversation_channel_roundtrip(db_manager):
+    """显式 channel 落库可读回；方法默认值写 'web'"""
+    id1 = await db_manager.insert_conversation(
+        "it_user4", "it-sess-ch", "user", "渠道消息", None, "feishu",
+    )
+    assert isinstance(id1, int)
+    row = await db_manager.fetchrow(
+        "SELECT channel FROM conversations WHERE id = %s", id1,
+    )
+    assert row["channel"] == "feishu"
+    # 未传 channel → 方法默认值 'web'
+    id2 = await db_manager.insert_conversation(
+        "it_user4", "it-sess-ch", "assistant", "默认渠道",
+    )
+    row2 = await db_manager.fetchrow(
+        "SELECT channel FROM conversations WHERE id = %s", id2,
+    )
+    assert row2["channel"] == "web"

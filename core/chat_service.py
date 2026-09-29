@@ -300,7 +300,10 @@ class ChatService:
                 if db and getattr(db, "is_initialized", False):
                     try:
                         stored_message = serialize_message_for_storage(message)
-                        await db.insert_conversation(user_id, session_id, "user", stored_message)
+                        await db.insert_conversation(
+                            user_id, session_id, "user", stored_message,
+                            channel="web",
+                        )
                         metadata = {}
                         if full_thinking:
                             metadata["thinking"] = full_thinking
@@ -310,6 +313,7 @@ class ChatService:
                             await db.insert_conversation(
                                 user_id, session_id, "assistant", full_reply,
                                 metadata=metadata or None,
+                                channel="web",
                             )
                         title = stored_message[:30] if stored_message else None
                         if title:
