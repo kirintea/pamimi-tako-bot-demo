@@ -74,7 +74,7 @@ docker-compose -f docker/deploy_yml/redis.yml up -d
 docker-compose -f docker/deploy_yml/postgres.yml up -d
 ```
 
-只想起单个也行，模块化的 compose 在 `docker/deploy_yml/`。默认连接：Redis 在 `redis://localhost:6379/0`，PostgreSQL 在 `postgresql://user:password@localhost:5432/ragdb`。
+只想起单个也行，模块化的 compose 在 `docker/deploy_yml/`。默认连接：Redis 在 `redis://localhost:6379/0`，PostgreSQL 在 `postgresql://user:password@localhost:5432/dmx_agent_db`。
 
 然后拉起服务：
 
@@ -239,7 +239,7 @@ Redis 中每个会话存储两类 key（共享 TTL）：
 
 ```yaml
 database:
-  url: "${DATABASE_URL:-postgresql://user:password@localhost:5432/ragdb}"
+  url: "${DATABASE_URL:-postgresql://user:password@localhost:5432/dmx_agent_db}"
   pool_size: 10
 ```
 
@@ -255,7 +255,7 @@ database:
 | `LLM_BASE_URL` | — | LLM 接口地址（必填，参考 `.env.example`） |
 | `LLM_MODEL_NAME` | `glm-5` | 模型名 |
 | `OTEL_ENDPOINT` | `http://localhost:4317` | OTel OTLP gRPC 端点 |
-| `DATABASE_URL` | `postgresql://user:password@localhost:5432/ragdb` | PostgreSQL 连接串 |
+| `DATABASE_URL` | `postgresql://user:password@localhost:5432/dmx_agent_db` | PostgreSQL 连接串 |
 | `REDIS_URL` | `redis://localhost:6379/0` | Redis 连接串 |
 | `APP_ENV` | `dev` | 环境（dev / prod） |
 

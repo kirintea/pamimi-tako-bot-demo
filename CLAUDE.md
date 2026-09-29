@@ -124,7 +124,7 @@ LLM_MODEL_NAME=glm-5
 OTEL_ENDPOINT=http://localhost:4317
 
 # 数据库（可选，默认连本地 PostgreSQL）
-DATABASE_URL=postgresql://user:password@localhost:5432/ragdb
+DATABASE_URL=postgresql://user:password@localhost:5432/dmx_agent_db
 
 # Redis（可选，默认本地）
 REDIS_URL=redis://localhost:6379/0
@@ -237,7 +237,7 @@ kv:
 ```yaml
 database:
   backend: "auto"               # auto / postgres / mysql（auto 按 URL scheme 推断）
-  url: "${DATABASE_URL:-postgresql://user:password@localhost:5432/ragdb}"
+  url: "${DATABASE_URL:-postgresql://user:password@localhost:5432/dmx_agent_db}"
   # MySQL 示例: mysql://user:password@localhost:3306/platform（需带库名，>= 5.7.22）
   pool_size: 10
   auto_create_tables: true      # 启动时执行幂等 DDL（受限账号场景设 false）

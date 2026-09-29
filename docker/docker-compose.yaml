@@ -119,13 +119,13 @@ services:
     environment:
       POSTGRESQL_USERNAME: user
       POSTGRESQL_PASSWORD: password
-      POSTGRESQL_DATABASE: ragdb
+      POSTGRESQL_DATABASE: dmx_agent_db
     ports:
       - "5432:5432"
     volumes:
       - postgres-shared-data:/bitnami/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U user -d ragdb"]
+      test: ["CMD-SHELL", "pg_isready -U user -d dmx_agent_db"]
       interval: 5s
       timeout: 3s
       retries: 20

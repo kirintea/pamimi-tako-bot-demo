@@ -1,6 +1,6 @@
 # PostgreSQL 关系数据库 - Bitnami 版本
 # 端口：5432（PostgreSQL 协议）
-# 默认账号：user / password，数据库名：ragdb
+# 默认账号：user / password，数据库名：dmx_agent_db
 
 services:
   postgres:
@@ -11,7 +11,7 @@ services:
       # 数据库密码（生产环境请修改为强密码）
       POSTGRESQL_PASSWORD: password
       # 自动创建的数据库名
-      POSTGRESQL_DATABASE: ragdb
+      POSTGRESQL_DATABASE: dmx_agent_db
     ports:
       - "5432:5432"  # PostgreSQL 协议端口，供应用程序连接
     volumes:

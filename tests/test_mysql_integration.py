@@ -162,7 +162,7 @@ async def test_storage_message_roundtrip(db_manager):
 
 async def test_get_user_sessions_with_title(db_manager):
     """get_user_sessions：JSON_UNQUOTE 取自定义标题 + message_count 聚合"""
-    # 清理历史累积（app_db 复用库 + 本测试可重跑，message_count 断言需确定性）
+    # 清理历史累积（dmx_agent_db 复用库 + 本测试可重跑，message_count 断言需确定性）
     await db_manager.execute(
         "DELETE FROM conversations WHERE user_id = 'it_user2' AND session_id = 'it-sess-us'",
     )
