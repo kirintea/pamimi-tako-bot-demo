@@ -401,7 +401,7 @@ async def chat_stream(request: Request, body: ChatRequest):
 
 @router.get("/health")
 async def health(request: Request):
-    """健康检查 — 验证 Redis / PostgreSQL 连通性"""
+    """健康检查 — 验证 Redis / 数据库（PostgreSQL / MySQL）连通性"""
     session_mgr = request.app.state.session_manager
     config = getattr(request.app.state, "config", None)
     checks = {}
@@ -418,17 +418,19 @@ async def health(request: Request):
         checks["redis"] = f"error: {e}"
         overall_ok = False
 
-    # PostgreSQL 检查
+    # 数据库检查（PostgreSQL / MySQL）
+    # 已初始化 → ping；运行期故障置 error + 503（进程不退出，见 Q2）；
+    # 未初始化（仅剩"URL 未配置"这一有意状态，初始化失败已在启动期退出进程）→ not_configured
     db = getattr(request.app.state, "database_manager", None)
     if db and db.is_initialized:
         try:
             result = await db.fetchval("SELECT 1")
-            checks["postgres"] = "ok" if result == 1 else f"unexpected: {result}"
+            checks["database"] = "ok" if result == 1 else f"unexpected: {result}"
         except Exception as e:
-            checks["postgres"] = f"error: {e}"
+            checks["database"] = f"error: {e}"
             overall_ok = False
     else:
-        checks["postgres"] = "not_configured"
+        checks["database"] = "not_configured"
 
     status_code = 200 if overall_ok else 503
     return JSONResponse(

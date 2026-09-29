@@ -23,8 +23,8 @@ from pathlib import Path
 from loguru import logger
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from api.chat import router as chat_router
@@ -40,6 +40,7 @@ from api.ws_chat import router as ws_chat_router
 from core.chat_service import ChatService
 from core.config import ConfigManager
 from core.database import DatabaseManager
+from core.db.base import DatabaseUnavailableError
 from core.redis_message_bus import RedisMessageBus
 from core.session import SessionManager
 from core.session_status import SessionStatusTracker
@@ -150,6 +151,16 @@ def _api_key_auth_middleware(app, *, auth_required: bool = False, api_key: str =
     return middleware
 
 
+async def _database_unavailable_handler(
+    request: Request, exc: DatabaseUnavailableError
+) -> JSONResponse:
+    """数据库不可用 → 503（未初始化/运行期故障下 /mcp /skill 等未守卫路由的统一响应）"""
+    return JSONResponse(
+        status_code=503,
+        content={"detail": f"数据库不可用: {exc}"},
+    )
+
+
 def create_app(config) -> FastAPI:
     """创建 FastAPI 应用实例
 
@@ -169,10 +180,18 @@ def create_app(config) -> FastAPI:
         # --- 启动 ---
         app.state.config = config
 
-        # 创建数据库管理器（PostgreSQL 连接池 + 自动建表）
+        # 创建数据库管理器（按 backend 分派 PostgreSQL/MySQL；建表/校验见 database.* 配置）。
+        # 初始化失败 fail-fast：initialize() 抛出 → lifespan 异常 → uvicorn 启动失败退出，
+        # 下方日志块不会执行（server.py 无需 try/except，异常自然冒泡即为启动失败）。
         db_mgr = DatabaseManager(config.database)
         await db_mgr.initialize()
         app.state.database_manager = db_mgr
+        if db_mgr.is_initialized:
+            logger.info("数据库已就绪 (backend={})", config.database.backend)
+        else:
+            logger.warning(
+                "数据库未配置（database.url 为空），跳过初始化；/health 显示 not_configured"
+            )
 
         # 应用配置对象（供 /context 等端点读取 request.app.state.config）
         app.state.config = config
@@ -332,6 +351,9 @@ def create_app(config) -> FastAPI:
         version="0.1.3",
         lifespan=lifespan,
     )
+
+    # 数据库不可用统一转 503（未初始化/运行期故障下 /mcp /skill 等路由不抛 500）
+    app.add_exception_handler(DatabaseUnavailableError, _database_unavailable_handler)
 
     # 仓库根目录（server.py 位于仓库根，故 parents[0] 即根目录）
     # 以绝对路径替代 os.getcwd()，避免进程 cwd 变化时静态 / webui 路径错位。
