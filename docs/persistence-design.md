@@ -465,7 +465,7 @@ redis:
   session_ttl: 1800    # 秒（30 分钟）
 
 database:
-  url: "${DATABASE_URL:-postgresql://user:password@localhost:5432/ragdb}"
+  url: "${DATABASE_URL:-postgresql://user:password@localhost:5432/dmx_agent_db}"
   pool_size: 10
 
 context:

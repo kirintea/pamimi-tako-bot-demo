@@ -57,7 +57,7 @@ python main.py
 environment:
   - APP_ENV=dev
   - REDIS_URL=redis://host.docker.internal:6390/0
-  - DATABASE_URL=postgresql://user:password@host.docker.internal:5432/ragdb
+  - DATABASE_URL=postgresql://user:password@host.docker.internal:5432/dmx_agent_db
   - OTEL_ENDPOINT=http://host.docker.internal:4317
 ```
 

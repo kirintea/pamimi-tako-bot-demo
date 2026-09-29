@@ -1,0 +1,92 @@
+# 临时数据库服务 - Redis + PostgreSQL + MySQL
+# 用于本地开发，一键启动三个数据库
+# 用法：docker compose -f temp_dbs.yml up -d
+
+services:
+  # ============================================
+  # Redis 内存数据库
+  # 端口：6379
+  # ============================================
+  redis:
+    image: redis:7-alpine
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - temp_redis_data:/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - 'PORT_HEX="$(printf ''%04X'' 6379)"; cat /proc/net/tcp /proc/net/tcp6 2>/dev/null | grep -q ":$${PORT_HEX} "'
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    stop_grace_period: 30s
+    restart: unless-stopped
+
+  # ============================================
+  # PostgreSQL 关系数据库
+  # 端口：5432
+  # 账号：user / password
+  # 数据库：dmx_agent_db
+  # ============================================
+  postgres:
+    image: bitnami/postgresql:latest
+    environment:
+      POSTGRESQL_USERNAME: user
+      POSTGRESQL_PASSWORD: password
+      POSTGRESQL_DATABASE: dmx_agent_db
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - temp_postgres_data:/bitnami/postgresql
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - 'PORT_HEX="$(printf ''%04X'' 5432)"; cat /proc/net/tcp /proc/net/tcp6 2>/dev/null | grep -q ":$${PORT_HEX} "'
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    stop_grace_period: 30s
+    restart: unless-stopped
+
+  # ============================================
+  # MySQL 关系数据库
+  # 端口：3306
+  # 账号：root / root123
+  # 数据库：dmx_agent_db
+  # 普通用户：app_user / app123
+  # ============================================
+  mysql:
+    image: mysql:8.0.26
+    environment:
+      MYSQL_ROOT_PASSWORD: root123
+      MYSQL_DATABASE: dmx_agent_db
+      MYSQL_USER: app_user
+      MYSQL_PASSWORD: app123
+    ports:
+      - "127.0.0.1:3306:3306"
+    volumes:
+      - temp_mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot123"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 30s
+    stop_grace_period: 30s
+    restart: unless-stopped
+
+volumes:
+  temp_redis_data:
+    name: temp_redis_data
+  temp_postgres_data:
+    name: temp_postgres_data
+  temp_mysql_data:
+    name: temp_mysql_data

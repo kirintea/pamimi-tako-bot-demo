@@ -2,7 +2,7 @@
 
 """Session Fork 血缘测试 — parent_session_id / depth / fork_session
 
-测试使用真实 PostgreSQL（ragdb），每个用例后按 user_id 清理 sessions 记录，
+测试使用真实 PostgreSQL（dmx_agent_db），每个用例后按 user_id 清理 sessions 记录，
 避免污染其他测试。
 """
 
@@ -15,7 +15,7 @@ from core.storage_models import SessionConfig, SessionSource
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
 
-DB_URL = "postgresql://user:password@localhost:5432/ragdb"
+DB_URL = "postgresql://user:password@localhost:5432/dmx_agent_db"
 
 
 async def _storage():

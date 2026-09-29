@@ -134,7 +134,7 @@ database:
   # 切勿使用默认账号/密码直连数据库。
   # ------------------------------------------------------------
   backend: "auto"
-  url: "${DATABASE_URL:-postgresql://user:password@localhost:5432/ragdb}"
+  url: "${DATABASE_URL:-postgresql://user:password@localhost:5432/dmx_agent_db}"
   pool_size: 10
   auto_create_tables: true
   verify_tables: true
