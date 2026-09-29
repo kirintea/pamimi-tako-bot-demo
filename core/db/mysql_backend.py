@@ -140,8 +140,10 @@ class MySQLBackend(DatabaseBackend):
                             raise
 
     async def missing_tables(self, required: list[str]) -> list[str]:
+        # 显式别名：MySQL 8 information_schema 返回列名 TABLE_NAME（大写），
+        # DictCursor 键随服务端返回的列名走，不加别名则 r["table_name"] KeyError
         rows = await self.fetch(
-            "SELECT table_name FROM information_schema.tables "
+            "SELECT table_name AS table_name FROM information_schema.tables "
             "WHERE table_schema = DATABASE()"
         )
         existing = {r["table_name"] for r in rows}

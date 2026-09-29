@@ -165,7 +165,7 @@ DDL_POSTGRES = [
     # Agent 记录表
     # 列: id(VARCHAR(32) PK, 对应 AgentRecord._generate_id 的 16 位 hex)
     #     user_id / source / data(JSONB, 存 AgentData) / created_at / updated_at
-    # upsert_agent 使用 ON CONFLICT (id) 更新，故 id 为主键。
+    # upsert_agent 按 id 主键冲突更新（双方言变体见 core/db/statements.py）
     """
     CREATE TABLE IF NOT EXISTS agents (
         id          VARCHAR(32) PRIMARY KEY,
