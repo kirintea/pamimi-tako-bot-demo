@@ -136,5 +136,5 @@ def test_factory_unknown_backend_raises():
 def test_kv_config_defaults():
     kv = KVConfig()
     assert kv.backend == "redis"
-    assert kv.jsonl_path == "./data/kv"
+    assert kv.jsonl_path == "workspaces/.history/kv_data"
     assert kv.jsonl_compact_threshold == 5000
