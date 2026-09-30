@@ -16,7 +16,7 @@ from aiomysql.cursors import DictCursor
 
 from core.db.base import DatabaseBackend
 from core.db.ddl import MYSQL_IDEMPOTENT_ERRORS
-from core.db.dialect import format_status, translate_placeholders
+from core.db.dialect import format_status, translate_identifiers, translate_placeholders
 from core.db.statements import Statement
 
 from loguru import logger
@@ -78,6 +78,7 @@ class MySQLBackend(DatabaseBackend):
 
     async def execute(self, sql: str, *args) -> str:
         sql2, args2 = translate_placeholders(sql, args)
+        sql2 = translate_identifiers(sql2)
         async with self._require().acquire() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(sql2, args2 or None)
@@ -85,6 +86,7 @@ class MySQLBackend(DatabaseBackend):
 
     async def fetch(self, sql: str, *args) -> list[dict]:
         sql2, args2 = translate_placeholders(sql, args)
+        sql2 = translate_identifiers(sql2)
         async with self._require().acquire() as conn:
             async with conn.cursor(DictCursor) as cur:
                 await cur.execute(sql2, args2 or None)
@@ -92,6 +94,7 @@ class MySQLBackend(DatabaseBackend):
 
     async def fetchrow(self, sql: str, *args) -> dict | None:
         sql2, args2 = translate_placeholders(sql, args)
+        sql2 = translate_identifiers(sql2)
         async with self._require().acquire() as conn:
             async with conn.cursor(DictCursor) as cur:
                 await cur.execute(sql2, args2 or None)
@@ -111,6 +114,7 @@ class MySQLBackend(DatabaseBackend):
         - 客户端主键表不经过本方法（调用方直接返回 record.id）
         """
         sql2, args2 = translate_placeholders(stmt.mysql, args)
+        sql2 = translate_identifiers(sql2)
         async with self._require().acquire() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(sql2, args2 or None)
@@ -119,6 +123,7 @@ class MySQLBackend(DatabaseBackend):
                         stmt.mysql_id_sql,
                         tuple(args[i - 1] for i in stmt.mysql_id_args),
                     )
+                    id_sql = translate_identifiers(id_sql)
                     await cur.execute(id_sql, id_args or None)
                     row = await cur.fetchone()
                     return row[0] if row else None
@@ -129,8 +134,8 @@ class MySQLBackend(DatabaseBackend):
             async with conn.cursor() as cur:
                 for ddl in statements:
                     try:
-                        # DDL 无占位符，args=None 跳过 % 插值
-                        await cur.execute(ddl)
+                        # DDL 无占位符，args=None 跳过 % 插值；翻译双引号标识符为反引号
+                        await cur.execute(translate_identifiers(ddl))
                     except Exception as e:
                         errno = e.args[0] if getattr(e, "args", None) else None
                         if errno in MYSQL_IDEMPOTENT_ERRORS:

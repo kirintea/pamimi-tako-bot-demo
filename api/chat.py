@@ -43,7 +43,7 @@ from loguru import logger
 from core.chat_service import acquire_session_lock, session_lock_key
 from core.session_status import SessionBusyError, SessionStatusTracker
 from core.token_counter import count_tokens
-from core.validators import coerce_id, is_auth_enabled, require_user_id
+from core.validators import coerce_id, coerce_id_strict, is_auth_enabled, require_user_id
 
 
 async def _stream_with_timeout(agen, timeout: int):
@@ -455,7 +455,10 @@ async def list_sessions(request: Request, user_id: str | None = None):
     """列出活跃会话（仅内存中）"""
     # 规范化用户标识（防止非法输入）；未提供 user_id 时保持 None 以列出全部会话。
     if user_id is not None:
-        user_id = coerce_id(user_id)
+        try:
+            user_id = coerce_id_strict(user_id, "user_id")
+        except ValueError as e:
+            raise HTTPException(400, str(e))
     session_mgr = request.app.state.session_manager
     sessions = await session_mgr.list_sessions(user_id)
     return {"sessions": sessions, "total": len(sessions)}
@@ -468,7 +471,10 @@ async def list_user_sessions(request: Request, user_id: str):
     返回会话元数据列表，包含标题、时间、消息数等信息。
     用于前端侧边栏展示。
     """
-    user_id = coerce_id(user_id)
+    try:
+        user_id = coerce_id_strict(user_id, "user_id")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     db = getattr(request.app.state, "database_manager", None)
     if not db or not db.is_initialized:
         raise HTTPException(503, "数据库未配置")
@@ -494,8 +500,11 @@ async def get_session_messages(
 
     用于前端切换会话时加载聊天记录，支持滚动加载更多。
     """
-    user_id = coerce_id(user_id)
-    session_id = coerce_id(session_id, default=str(uuid.uuid4()))
+    try:
+        user_id = coerce_id_strict(user_id, "user_id")
+        session_id = coerce_id_strict(session_id, "session_id")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     db = getattr(request.app.state, "database_manager", None)
     if not db or not db.is_initialized:
         raise HTTPException(503, "数据库未配置")
@@ -516,8 +525,11 @@ async def soft_delete_session(request: Request, user_id: str, session_id: str):
     - PG: 将 conversations 表中该会话所有消息标记为 deleted
     - Redis: 清除会话状态
     """
-    user_id = coerce_id(user_id)
-    session_id = coerce_id(session_id, default=str(uuid.uuid4()))
+    try:
+        user_id = coerce_id_strict(user_id, "user_id")
+        session_id = coerce_id_strict(session_id, "session_id")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     db = getattr(request.app.state, "database_manager", None)
     session_mgr = request.app.state.session_manager
 
@@ -553,8 +565,11 @@ async def rename_session(
 
     标题存储在 sessions 表的 config 字段中。
     """
-    user_id = coerce_id(user_id)
-    session_id = coerce_id(session_id, default=str(uuid.uuid4()))
+    try:
+        user_id = coerce_id_strict(user_id, "user_id")
+        session_id = coerce_id_strict(session_id, "session_id")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     db = getattr(request.app.state, "database_manager", None)
     if not db or not db.is_initialized:
         raise HTTPException(503, "数据库未配置")
@@ -579,8 +594,11 @@ class ForkSessionResponse(BaseModel):
 @router.post("/sessions/{user_id}/{session_id}/fork", response_model=ForkSessionResponse)
 async def fork_session(request: Request, user_id: str, session_id: str):
     """基于父会话创建分支，返回新会话信息"""
-    user_id = coerce_id(user_id)
-    session_id = coerce_id(session_id, default=str(uuid.uuid4()))
+    try:
+        user_id = coerce_id_strict(user_id, "user_id")
+        session_id = coerce_id_strict(session_id, "session_id")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     session_mgr = request.app.state.session_manager
     logger.info("Fork 请求: user={} session={}", user_id, session_id)
 

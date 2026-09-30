@@ -15,7 +15,7 @@ wheels/
 workspaces/
 
 # KV 存储（jsonl 后端，开发用）
-data/kv/
+workspaces/.history/kv_data/
 
 # 日志文件
 logs/

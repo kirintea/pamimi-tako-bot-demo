@@ -2,7 +2,7 @@
 
 """PostgreSQL 存储层 — 平台资源的持久化 CRUD
 
-提供 Agent、Session、MCP、Skill、Message、Schedule 的数据库操作。
+提供 Agent、Session、MCP、Skill、Schedule 的数据库操作。
 底层复用 DatabaseManager 的 asyncpg 连接池。
 
 使用方式：
@@ -21,7 +21,6 @@ from core.storage_models import (
     AgentData,
     AgentRecord,
     MCPRecord,
-    MessageRecord,
     ScheduleRecord,
     ScheduleSource,
     SessionConfig,
@@ -82,9 +81,9 @@ class PostgresStorage:
     async def list_agents(self, user_id: str) -> list[AgentRecord]:
         """列出用户的所有 Agent"""
         sql = """
-            SELECT id, user_id, source, data, created_at, updated_at
-            FROM agents WHERE user_id = $1
-            ORDER BY created_at DESC
+            SELECT "id", "user_id", "source", "data", "created_at", "updated_at"
+            FROM agents WHERE "user_id" = $1
+            ORDER BY "created_at" DESC
         """
         rows = await self._db.fetch(sql, user_id)
         return [self._row_to_agent(r) for r in rows]
@@ -96,15 +95,15 @@ class PostgresStorage:
     ) -> AgentRecord | None:
         """获取单个 Agent 记录"""
         sql = """
-            SELECT id, user_id, source, data, created_at, updated_at
-            FROM agents WHERE user_id = $1 AND id = $2
+            SELECT "id", "user_id", "source", "data", "created_at", "updated_at"
+            FROM agents WHERE "user_id" = $1 AND "id" = $2
         """
         row = await self._db.fetchrow(sql, user_id, agent_id)
         return self._row_to_agent(row) if row else None
 
     async def delete_agent(self, user_id: str, agent_id: str) -> bool:
         """删除 Agent 记录"""
-        sql = "DELETE FROM agents WHERE user_id = $1 AND id = $2"
+        sql = 'DELETE FROM agents WHERE "user_id" = $1 AND "id" = $2'
         result = await self._db.execute(sql, user_id, agent_id)
         return "DELETE 1" in result
 
@@ -210,9 +209,9 @@ class PostgresStorage:
             ValueError: 源会话不存在
         """
         row = await self._db.fetchrow(
-            """SELECT id, user_id, agent_id, config, state_json,
-                      parent_session_id, depth
-               FROM sessions WHERE id = $1 AND user_id = $2""",
+            """SELECT "id", "user_id", "agent_id", "config", "state_json",
+                      "parent_session_id", "depth"
+               FROM sessions WHERE "id" = $1 AND "user_id" = $2""",
             src_session_id,
             user_id,
         )
@@ -251,15 +250,15 @@ class PostgresStorage:
         if agent_id:
             sql = """
                 SELECT * FROM sessions
-                WHERE user_id = $1 AND agent_id = $2
-                ORDER BY updated_at DESC
+                WHERE "user_id" = $1 AND "agent_id" = $2
+                ORDER BY "updated_at" DESC
             """
             rows = await self._db.fetch(sql, user_id, agent_id)
         else:
             sql = """
                 SELECT * FROM sessions
-                WHERE user_id = $1
-                ORDER BY updated_at DESC
+                WHERE "user_id" = $1
+                ORDER BY "updated_at" DESC
             """
             rows = await self._db.fetch(sql, user_id)
         return [self._row_to_session(r) for r in rows]
@@ -273,7 +272,7 @@ class PostgresStorage:
         """获取单个 Session"""
         sql = """
             SELECT * FROM sessions
-            WHERE user_id = $1 AND id = $2
+            WHERE "user_id" = $1 AND "id" = $2
         """
         row = await self._db.fetchrow(sql, user_id, session_id)
         return self._row_to_session(row) if row else None
@@ -287,8 +286,8 @@ class PostgresStorage:
     ) -> None:
         """更新 Session 的 AgentState（热路径）"""
         sql = """
-            UPDATE sessions SET state_json = $1, updated_at = NOW()
-            WHERE user_id = $2 AND id = $3
+            UPDATE sessions SET "state_json" = $1, "updated_at" = NOW()
+            WHERE "user_id" = $2 AND "id" = $3
         """
         await self._db.execute(sql, state_json, user_id, session_id)
 
@@ -299,7 +298,7 @@ class PostgresStorage:
         session_id: str,
     ) -> bool:
         """删除 Session"""
-        sql = "DELETE FROM sessions WHERE user_id = $1 AND id = $2"
+        sql = 'DELETE FROM sessions WHERE "user_id" = $1 AND "id" = $2'
         result = await self._db.execute(sql, user_id, session_id)
         return "DELETE 1" in result
 
@@ -366,8 +365,8 @@ class PostgresStorage:
     async def list_mcps(self, user_id: str) -> list[MCPRecord]:
         """列出用户的所有 MCP"""
         sql = """
-            SELECT * FROM mcps WHERE user_id = $1
-            ORDER BY created_at DESC
+            SELECT * FROM mcps WHERE "user_id" = $1
+            ORDER BY "created_at" DESC
         """
         rows = await self._db.fetch(sql, user_id)
         return [self._row_to_mcp(r) for r in rows]
@@ -378,7 +377,7 @@ class PostgresStorage:
         mcp_id: str,
     ) -> MCPRecord | None:
         """获取单个 MCP"""
-        sql = "SELECT * FROM mcps WHERE user_id = $1 AND id = $2"
+        sql = 'SELECT * FROM mcps WHERE "user_id" = $1 AND "id" = $2'
         row = await self._db.fetchrow(sql, user_id, mcp_id)
         return self._row_to_mcp(row) if row else None
 
@@ -388,13 +387,13 @@ class PostgresStorage:
         name: str,
     ) -> MCPRecord | None:
         """按名称获取 MCP"""
-        sql = "SELECT * FROM mcps WHERE user_id = $1 AND name = $2"
+        sql = 'SELECT * FROM mcps WHERE "user_id" = $1 AND "name" = $2'
         row = await self._db.fetchrow(sql, user_id, name)
         return self._row_to_mcp(row) if row else None
 
     async def delete_mcp(self, user_id: str, mcp_id: str) -> bool:
         """删除 MCP"""
-        sql = "DELETE FROM mcps WHERE user_id = $1 AND id = $2"
+        sql = 'DELETE FROM mcps WHERE "user_id" = $1 AND "id" = $2'
         result = await self._db.execute(sql, user_id, mcp_id)
         return "DELETE 1" in result
 
@@ -462,7 +461,7 @@ class PostgresStorage:
 
     async def list_skills(self, user_id: str) -> list[SkillRecord]:
         """列出用户的所有 Skill"""
-        sql = "SELECT * FROM skills WHERE user_id = $1 ORDER BY created_at DESC"
+        sql = 'SELECT * FROM skills WHERE "user_id" = $1 ORDER BY "created_at" DESC'
         rows = await self._db.fetch(sql, user_id)
         return [self._row_to_skill(r) for r in rows]
 
@@ -472,7 +471,7 @@ class PostgresStorage:
         skill_id: str,
     ) -> SkillRecord | None:
         """获取单个 Skill"""
-        sql = "SELECT * FROM skills WHERE user_id = $1 AND id = $2"
+        sql = 'SELECT * FROM skills WHERE "user_id" = $1 AND "id" = $2'
         row = await self._db.fetchrow(sql, user_id, skill_id)
         return self._row_to_skill(row) if row else None
 
@@ -482,13 +481,13 @@ class PostgresStorage:
         name: str,
     ) -> SkillRecord | None:
         """按名称获取 Skill"""
-        sql = "SELECT * FROM skills WHERE user_id = $1 AND name = $2"
+        sql = 'SELECT * FROM skills WHERE "user_id" = $1 AND "name" = $2'
         row = await self._db.fetchrow(sql, user_id, name)
         return self._row_to_skill(row) if row else None
 
     async def delete_skill(self, user_id: str, skill_id: str) -> bool:
         """删除 Skill"""
-        sql = "DELETE FROM skills WHERE user_id = $1 AND id = $2"
+        sql = 'DELETE FROM skills WHERE "user_id" = $1 AND "id" = $2'
         result = await self._db.execute(sql, user_id, skill_id)
         return "DELETE 1" in result
 
@@ -511,128 +510,6 @@ class PostgresStorage:
             enabled=row["enabled"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
-        )
-
-    # ------------------------------------------------------------------
-    # Message CRUD
-    # ------------------------------------------------------------------
-
-    async def upsert_message(
-        self,
-        user_id: str,
-        session_id: str,
-        msg_id: str,
-        role: str,
-        content: str,
-        metadata: dict | None = None,
-        channel: str = "web",
-    ) -> int:
-        """持久化一条消息
-
-        如果 session 中最后一条消息的 msg_id 相同则更新，否则追加。
-        channel 仅在插入分支写入（去重 UPDATE 不改渠道）。
-        """
-        # 检查最后一条消息
-        last_sql = """
-            SELECT id, msg_id FROM messages
-            WHERE user_id = $1 AND session_id = $2
-            ORDER BY id DESC LIMIT 1
-        """
-        last = await self._db.fetchrow(last_sql, user_id, session_id)
-
-        if last and last["msg_id"] == msg_id:
-            # 更新已有消息
-            update_sql = """
-                UPDATE messages SET content = $1, metadata = $2
-                WHERE id = $3
-            """
-            await self._db.execute(
-                update_sql,
-                content,
-                json.dumps(metadata or {}),
-                last["id"],
-            )
-            return last["id"]
-
-        # 插入新消息（自增主键：MySQL 侧取 lastrowid）
-        return await self._db.insert_returning_id(
-            "insert_message",
-            user_id,
-            session_id,
-            msg_id,
-            role,
-            content,
-            json.dumps(metadata or {}),
-            channel,
-        )
-
-    async def list_messages(
-        self,
-        user_id: str,
-        session_id: str,
-        limit: int = 50,
-        before: str | None = None,
-    ) -> tuple[list[MessageRecord], bool]:
-        """获取会话的消息历史（游标分页）
-
-        Args:
-            user_id: 用户 ID
-            session_id: 会话 ID
-            limit: 最大返回数
-            before: 游标 — 返回此 ID 之前的消息
-
-        Returns:
-            (消息列表, 是否有更多)
-        """
-        if before:
-            sql = """
-                SELECT * FROM messages
-                WHERE user_id = $1 AND session_id = $2 AND msg_id < $3
-                ORDER BY id DESC
-                LIMIT $4
-            """
-            rows = await self._db.fetch(sql, user_id, session_id, before, limit + 1)
-        else:
-            sql = """
-                SELECT * FROM messages
-                WHERE user_id = $1 AND session_id = $2
-                ORDER BY id DESC
-                LIMIT $3
-            """
-            rows = await self._db.fetch(sql, user_id, session_id, limit + 1)
-
-        has_more = len(rows) > limit
-        rows = rows[:limit]
-        records = [self._row_to_message(r) for r in rows]
-        records.reverse()  # 恢复时间正序
-        return records, has_more
-
-    async def get_message(
-        self,
-        user_id: str,
-        session_id: str,
-        message_id: str,
-    ) -> MessageRecord | None:
-        """获取单条消息"""
-        sql = """
-            SELECT * FROM messages
-            WHERE user_id = $1 AND session_id = $2 AND msg_id = $3
-        """
-        row = await self._db.fetchrow(sql, user_id, session_id, message_id)
-        return self._row_to_message(row) if row else None
-
-    def _row_to_message(self, row) -> MessageRecord:
-        """将数据库行转换为 MessageRecord"""
-        meta = json.loads(row["metadata"]) if isinstance(row["metadata"], str) else row["metadata"]
-        return MessageRecord(
-            id=str(row["id"]),
-            user_id=row["user_id"],
-            session_id=row["session_id"],
-            msg_id=row["msg_id"],
-            role=row["role"],
-            content=row["content"],
-            metadata=meta or {},
-            created_at=row["created_at"],
         )
 
     # ------------------------------------------------------------------
@@ -669,7 +546,7 @@ class PostgresStorage:
 
     async def list_schedules(self, user_id: str) -> list[ScheduleRecord]:
         """列出用户的所有定时任务"""
-        sql = "SELECT * FROM schedules WHERE user_id = $1 ORDER BY created_at DESC"
+        sql = 'SELECT * FROM schedules WHERE "user_id" = $1 ORDER BY "created_at" DESC'
         rows = await self._db.fetch(sql, user_id)
         return [self._row_to_schedule(r) for r in rows]
 
@@ -679,19 +556,19 @@ class PostgresStorage:
         schedule_id: str,
     ) -> ScheduleRecord | None:
         """获取单个定时任务"""
-        sql = "SELECT * FROM schedules WHERE user_id = $1 AND id = $2"
+        sql = 'SELECT * FROM schedules WHERE "user_id" = $1 AND "id" = $2'
         row = await self._db.fetchrow(sql, user_id, schedule_id)
         return self._row_to_schedule(row) if row else None
 
     async def delete_schedule(self, user_id: str, schedule_id: str) -> bool:
         """删除定时任务"""
-        sql = "DELETE FROM schedules WHERE user_id = $1 AND id = $2"
+        sql = 'DELETE FROM schedules WHERE "user_id" = $1 AND "id" = $2'
         result = await self._db.execute(sql, user_id, schedule_id)
         return "DELETE 1" in result
 
     async def list_all_schedules(self) -> list[ScheduleRecord]:
         """列出所有定时任务（启动恢复用）"""
-        sql = "SELECT * FROM schedules WHERE enabled = TRUE ORDER BY created_at"
+        sql = 'SELECT * FROM schedules WHERE "enabled" = TRUE ORDER BY "created_at"'
         rows = await self._db.fetch(sql)
         return [self._row_to_schedule(r) for r in rows]
 

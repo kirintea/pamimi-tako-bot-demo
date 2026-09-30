@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import os
 
 from pydantic import ValidationError
@@ -78,6 +79,7 @@ class ConfigManager:
 
         yaml_path = self._get_config_path(env)
         resolved = YamlLoader.load(yaml_path)
+        self._resolve_module_paths(resolved)
         try:
             self._config = AppConfig(**resolved)
         except ValidationError as exc:
@@ -98,6 +100,21 @@ class ConfigManager:
     # ------------------------------------------------------------------
     # 内部
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _resolve_module_paths(data: dict) -> None:
+        """递归解析 {module_path, name} 引用为实际 Python 值。
+
+        YAML 中 ``system_prompt: {module_path: "configs.prompt", name: "SYSTEM_PROMPT"}``
+        会在运行时被替换为该模块属性的值。
+        """
+        for key, val in data.items():
+            if isinstance(val, dict):
+                if "module_path" in val and "name" in val:
+                    mod = importlib.import_module(val["module_path"])
+                    data[key] = getattr(mod, val["name"])
+                else:
+                    ConfigManager._resolve_module_paths(val)
 
     @staticmethod
     def _get_config_path(env: str) -> str:

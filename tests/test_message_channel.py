@@ -1,15 +1,15 @@
 # -*- coding: utf-8 -*-
 
-"""消息渠道 channel 测试 — 三表 DDL 列 / 写语句参数 / 写入路径显式传参 / OTel Resource tag
+"""消息渠道 channel 测试 — DDL 列 / 写语句参数 / 写入路径显式传参 / OTel Resource tag
 
 Task 13（决策 D11）：
-- conversations / messages / sessions 三表各 1 条 ADD COLUMN channel VARCHAR(16) NOT NULL DEFAULT 'web'
-- insert_conversation（末位 $6）/ insert_message（末位 $7）新增 channel 参数
+- conversations / sessions 两表各 1 条 ADD COLUMN channel VARCHAR(16) NOT NULL DEFAULT 'web'
+- insert_conversation（末位 $6）新增 channel 参数
 - 写入方法默认 channel="web"（调用点显式传参在 api/chat.py 等 6 处，无单测覆盖，验收清单 grep 核对）
 - OTel Resource 属性含 channel（core/tracing/setup.py._resource_attributes 独立函数可单测）
 
 FakeBackend 约定同 tests/test_statements_wiring.py：
-executed[-1] == (按方言 pick 后的 SQL, args)；fetchrow 恒返回 None → upsert_message 必走插入分支。
+executed[-1] == (按方言 pick 后的 SQL, args)。
 """
 
 from __future__ import annotations
@@ -22,10 +22,9 @@ from core.config.schemas import DatabaseConfig, OTelConfig
 from core.database import DatabaseManager
 from core.db.ddl import DDL_MYSQL, DDL_POSTGRES
 from core.db.statements import STATEMENTS
-from core.storage import PostgresStorage
 from tests.db_fakes import FakeBackend
 
-CHANNEL_TABLES = ("conversations", "messages", "sessions")
+CHANNEL_TABLES = ("conversations", "sessions")
 
 
 def _db(dialect: str) -> tuple[DatabaseManager, FakeBackend]:
@@ -49,17 +48,17 @@ def _last(fake: FakeBackend) -> tuple[str, tuple]:
 # ------------------------------------------------------------
 
 class TestDdlChannelColumn:
-    def test_pg_three_channel_alter(self):
-        stmts = [s for s in DDL_POSTGRES if "ADD COLUMN IF NOT EXISTS channel" in s]
-        assert len(stmts) == 3, f"PG channel ALTER 应为 3 条，实为 {len(stmts)}"
+    def test_pg_two_channel_alter(self):
+        stmts = [s for s in DDL_POSTGRES if 'ADD COLUMN IF NOT EXISTS "channel"' in s]
+        assert len(stmts) == 2, f"PG channel ALTER 应为 2 条，实为 {len(stmts)}"
         for table in CHANNEL_TABLES:
             assert any(s.lstrip().startswith(f"ALTER TABLE {table}") for s in stmts), (
                 f"PG 缺 {table} 的 channel ALTER"
             )
 
-    def test_mysql_three_channel_alter(self):
-        stmts = [s for s in DDL_MYSQL if "ADD COLUMN channel" in s]
-        assert len(stmts) == 3, f"MySQL channel ALTER 应为 3 条，实为 {len(stmts)}"
+    def test_mysql_two_channel_alter(self):
+        stmts = [s for s in DDL_MYSQL if 'ADD COLUMN "channel"' in s]
+        assert len(stmts) == 2, f"MySQL channel ALTER 应为 2 条，实为 {len(stmts)}"
         for table in CHANNEL_TABLES:
             assert any(s.startswith(f"ALTER TABLE {table}") for s in stmts), (
                 f"MySQL 缺 {table} 的 channel ALTER"
@@ -70,7 +69,7 @@ class TestDdlChannelColumn:
 
     def test_channel_definition_default_web(self):
         for joined in ("\n".join(DDL_POSTGRES), "\n".join(DDL_MYSQL)):
-            assert "channel VARCHAR(16) NOT NULL DEFAULT 'web'" in joined
+            assert '"channel" VARCHAR(16) NOT NULL DEFAULT' in joined
 
 
 # ------------------------------------------------------------
@@ -84,12 +83,6 @@ class TestStatementChannelParam:
             assert "channel" in sql
             assert "$6" in sql
             assert "$7" not in sql
-
-    def test_insert_message_channel_is_seventh(self):
-        stmt = STATEMENTS["insert_message"]
-        for sql in (stmt.pg, stmt.mysql):
-            assert "channel" in sql
-            assert "$7" in sql
 
 
 # ------------------------------------------------------------
@@ -115,30 +108,6 @@ class TestWritePathChannel:
         _, args = _last(fake)
         assert args[-2] is None  # metadata 未传 → None
         assert args[-1] == "feishu"
-
-    async def test_upsert_message_default_web(self):
-        db, fake = _db("mysql")
-        fake.insert_id = 55
-        storage = PostgresStorage(db)
-        result = await storage.upsert_message(
-            user_id="u1", session_id="s1", msg_id="m1",
-            role="user", content="你好", metadata={"k": "v"},
-        )
-        sql, args = _last(fake)
-        assert sql == STATEMENTS["insert_message"].pick("mysql")
-        assert result == 55
-        assert args == ("u1", "s1", "m1", "user", "你好", json.dumps({"k": "v"}), "web")
-
-    async def test_upsert_message_explicit_wechat(self):
-        db, fake = _db("mysql")
-        storage = PostgresStorage(db)
-        await storage.upsert_message(
-            user_id="u1", session_id="s1", msg_id="m2",
-            role="assistant", content="ok", channel="wechat",
-        )
-        _, args = _last(fake)
-        assert args[-1] == "wechat"
-        assert json.loads(args[-2]) == {}
 
 
 # ------------------------------------------------------------

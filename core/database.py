@@ -229,19 +229,19 @@ class DatabaseManager:
         """
         if before_id:
             sql = """
-                SELECT id, role, content, metadata, created_at
+                SELECT "id", "role", "content", "metadata", "created_at"
                 FROM conversations
-                WHERE user_id = $1 AND session_id = $2 AND status = 'active' AND id < $3
-                ORDER BY id DESC
+                WHERE "user_id" = $1 AND "session_id" = $2 AND "status" = 'active' AND "id" < $3
+                ORDER BY "id" DESC
                 LIMIT $4
             """
             rows = await self.fetch(sql, user_id, session_id, before_id, limit)
         else:
             sql = """
-                SELECT id, role, content, metadata, created_at
+                SELECT "id", "role", "content", "metadata", "created_at"
                 FROM conversations
-                WHERE user_id = $1 AND session_id = $2 AND status = 'active'
-                ORDER BY id DESC
+                WHERE "user_id" = $1 AND "session_id" = $2 AND "status" = 'active'
+                ORDER BY "id" DESC
                 LIMIT $3
             """
             rows = await self.fetch(sql, user_id, session_id, limit)
@@ -318,8 +318,8 @@ class DatabaseManager:
         """
         sql = """
             UPDATE conversations
-            SET status = 'deleted'
-            WHERE user_id = $1 AND session_id = $2 AND status = 'active'
+            SET "status" = 'deleted'
+            WHERE "user_id" = $1 AND "session_id" = $2 AND "status" = 'active'
         """
         result = await self.execute(sql, user_id, session_id)
         # 解析 "UPDATE N" 获取受影响行数
@@ -339,8 +339,8 @@ class DatabaseManager:
         """
         sql = """
             UPDATE conversations
-            SET status = 'deleted'
-            WHERE id = $1 AND status = 'active'
+            SET "status" = 'deleted'
+            WHERE "id" = $1 AND "status" = 'active'
         """
         result = await self.execute(sql, conversation_id)
         return "UPDATE 1" in result
