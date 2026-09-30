@@ -131,6 +131,35 @@ class ChatService:
         full_reply = ""
         full_thinking = ""
 
+        # v3 有序持久化：turn_id + turn_rows
+        turn_id = str(__import__("uuid").uuid4())
+        turn_rows: list[dict] = []
+        _turn_seq = 0
+        _current_text_buf = ""
+        _current_thinking_buf = ""
+
+        def _add_assistant_row(content: str, meta: dict | None = None) -> None:
+            nonlocal _turn_seq
+            turn_rows.append({
+                "turn_seq": _turn_seq,
+                "role": "assistant",
+                "content": content,
+                "metadata": meta,
+            })
+            _turn_seq += 1
+
+        def _flush_text() -> None:
+            nonlocal _current_text_buf
+            if _current_text_buf:
+                _add_assistant_row(_current_text_buf, {"type": "text"})
+                _current_text_buf = ""
+
+        def _flush_thinking() -> None:
+            nonlocal _current_thinking_buf
+            if _current_thinking_buf:
+                _add_assistant_row("", {"type": "thinking", "text": _current_thinking_buf})
+                _current_thinking_buf = ""
+
         # 获取 session lock（确保同一会话不会并发执行，且跨传输共享）
         async with acquire_session_lock(self._bus, user_id, session_id):
             try:
@@ -190,6 +219,8 @@ class ChatService:
                     match event.type:
                         case EventType.TEXT_BLOCK_DELTA:
                             full_reply += event.delta
+                            _current_text_buf += event.delta
+                            _flush_thinking()
                             await self._publish_event(events_key, {
                                 "type": "text_delta",
                                 "delta": event.delta,
@@ -197,6 +228,8 @@ class ChatService:
 
                         case EventType.THINKING_BLOCK_DELTA:
                             full_thinking += event.delta
+                            _current_thinking_buf += event.delta
+                            _flush_text()
                             await self._publish_event(events_key, {
                                 "type": "thinking_delta",
                                 "delta": event.delta,
@@ -227,6 +260,14 @@ class ChatService:
                                         args = json.loads(tool_info["args_buffer"])
                                     except (json.JSONDecodeError, TypeError):
                                         args = tool_info["args_buffer"]
+                                _flush_text()
+                                _flush_thinking()
+                                _add_assistant_row("", {
+                                    "type": "tool_call",
+                                    "tool_call_id": tool_call_id,
+                                    "tool_name": tool_info["name"],
+                                    "tool_args": args,
+                                })
                                 await self._publish_event(events_key, {
                                     "type": "tool_call",
                                     "tool_name": tool_info["name"],
@@ -253,6 +294,13 @@ class ChatService:
                             tool_call_id = getattr(event, "tool_call_id", "")
                             result_text = pending_tool_results.pop(tool_call_id, "")
                             state = str(getattr(event, "state", ""))
+                            # 回填到最近的同 id tool_call 行
+                            for _row in reversed(turn_rows):
+                                if (_row.get("metadata", {}).get("type") == "tool_call"
+                                        and _row["metadata"].get("tool_call_id") == tool_call_id):
+                                    _row["metadata"]["result"] = result_text
+                                    _row["metadata"]["state"] = state
+                                    break
                             await self._publish_event(events_key, {
                                 "type": "tool_result",
                                 "tool_call_id": tool_call_id,
@@ -295,6 +343,10 @@ class ChatService:
                 # （含 tool-only / 部分回复，agent state 已被回复过程改变）
                 await self._session_mgr.save(user_id, session_id)
 
+                # v3: flush 剩余缓冲区
+                _flush_text()
+                _flush_thinking()
+
                 # PG 双写（镜像 _persist_conversation）：user 消息始终写入，
                 # assistant 消息仅在 full_reply 非空时写入；标题按需 upsert。
                 if db and getattr(db, "is_initialized", False):
@@ -302,14 +354,26 @@ class ChatService:
                         stored_message = serialize_message_for_storage(message)
                         await db.insert_conversation(
                             user_id, session_id, "user", stored_message,
-                            channel="web",
+                            channel="web", turn_id=turn_id, turn_seq=0,
                         )
-                        metadata = {}
-                        if full_thinking:
-                            metadata["thinking"] = full_thinking
-                        if tool_call_records:
-                            metadata["tool_calls"] = list(tool_call_records.values())
-                        if full_reply:
+                        if turn_rows:
+                            # v3 新路径：逐行写入有序内容块
+                            for row in turn_rows:
+                                await db.insert_conversation(
+                                    user_id, session_id,
+                                    row["role"], row["content"],
+                                    metadata=row.get("metadata"),
+                                    channel="web",
+                                    turn_id=turn_id,
+                                    turn_seq=row["turn_seq"],
+                                )
+                        elif full_reply:
+                            # 降级：旧逻辑
+                            metadata = {}
+                            if full_thinking:
+                                metadata["thinking"] = full_thinking
+                            if tool_call_records:
+                                metadata["tool_calls"] = list(tool_call_records.values())
                             await db.insert_conversation(
                                 user_id, session_id, "assistant", full_reply,
                                 metadata=metadata or None,

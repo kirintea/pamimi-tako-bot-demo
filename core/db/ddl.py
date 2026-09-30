@@ -217,6 +217,24 @@ DDL_POSTGRES = [
     """
     ALTER TABLE sessions ADD COLUMN IF NOT EXISTS "channel" VARCHAR(16) NOT NULL DEFAULT 'web'
     """,
+
+    # ============================================================
+    # 有序持久化 — turn_id + turn_seq（v3 多行拆分）
+    # ============================================================
+    # turn_id：一轮对话唯一标识（UUID），同一轮所有行共享
+    """
+    ALTER TABLE conversations ADD COLUMN IF NOT EXISTS "turn_id" VARCHAR(36) DEFAULT NULL
+    """,
+    # turn_seq：轮内序号（0, 1, 2, ...），保序用
+    """
+    ALTER TABLE conversations ADD COLUMN IF NOT EXISTS "turn_seq" INT DEFAULT NULL
+    """,
+    # 索引：按 turn_id + turn_seq 查询（历史加载核心路径）
+    """
+    CREATE INDEX IF NOT EXISTS idx_conv_turn
+    ON conversations("turn_id", "turn_seq")
+    WHERE "turn_id" IS NOT NULL
+    """,
 ]
 
 # ============================================================
@@ -332,6 +350,11 @@ DDL_MYSQL = [
     # 消息渠道 channel
     'ALTER TABLE conversations ADD COLUMN "channel" VARCHAR(16) NOT NULL DEFAULT \'web\'',
     'ALTER TABLE sessions ADD COLUMN "channel" VARCHAR(16) NOT NULL DEFAULT \'web\'',
+
+    # 有序持久化 — turn_id + turn_seq（v3 多行拆分）
+    'ALTER TABLE conversations ADD COLUMN "turn_id" VARCHAR(36) DEFAULT NULL',
+    'ALTER TABLE conversations ADD COLUMN "turn_seq" INT DEFAULT NULL',
+    'CREATE INDEX idx_conv_turn ON conversations("turn_id", "turn_seq")',
 ]
 
 # MySQL 幂等性错误码（可安全忽略）：
