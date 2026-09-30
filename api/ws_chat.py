@@ -95,33 +95,44 @@ async def _persist_conversation(
     *,
     thinking: str | None = None,
     tool_calls: list[dict] | None = None,
+    turn_id: str | None = None,
+    turn_rows: list[dict] | None = None,
 ) -> None:
     """后台异步持久化对话历史（仅 PG 双写；Redis AgentState 已在锁内同步落库）。
 
-    Args:
-        thinking: 思考过程文本（仅前端展示，不注入 agent 上下文）
-        tool_calls: 工具调用记录列表（注入 agent 上下文用于自我排错）
+    v3: 支持 turn_rows 多行拆分写入（有序持久化）。
     """
     try:
-        # Redis AgentState 已在 _handle_chat 的 async with 锁内同步落库，
-        # 此处仅负责 PG 历史双写（append-only，风险较低）。
         if db and db.is_initialized:
+            # 写 user 消息（带 turn_id）
             await db.insert_conversation(
-                user_id, session_id, "user", user_message, channel="web",
+                user_id, session_id, "user", user_message,
+                channel="web", turn_id=turn_id, turn_seq=0,
             )
-            # 构建 assistant 消息的 metadata
-            metadata = {}
-            if thinking:
-                metadata["thinking"] = thinking
-            if tool_calls:
-                metadata["tool_calls"] = tool_calls
-            # assistant 消息仅在确有文本产出时写入（tool-only turn 跳过）
-            if assistant_reply:
+
+            if turn_rows:
+                # v3 新路径：逐行写入有序内容块
+                for row in turn_rows:
+                    await db.insert_conversation(
+                        user_id, session_id,
+                        row["role"], row["content"],
+                        metadata=row.get("metadata"),
+                        channel="web",
+                        turn_id=turn_id,
+                        turn_seq=row["turn_seq"],
+                    )
+            elif assistant_reply:
+                # 降级：旧逻辑
+                metadata = {}
+                if thinking:
+                    metadata["thinking"] = thinking
+                if tool_calls:
+                    metadata["tool_calls"] = tool_calls
                 await db.insert_conversation(
                     user_id, session_id, "assistant", assistant_reply,
-                    metadata=metadata or None,
-                    channel="web",
+                    metadata=metadata or None, channel="web",
                 )
+
             title = user_message[:30] if user_message else None
             if title:
                 existing = await db.get_session_title(user_id, session_id)
@@ -462,6 +473,35 @@ async def _handle_chat(
     reply_status = "partial"                 # 默认状态，finally 中根据实际情况更新
     _pending_save_count = 0                  # 断连后增量保存计数器
 
+    # v3 有序持久化：turn_id + turn_rows
+    turn_id = str(uuid.uuid4())
+    turn_rows: list[dict] = []
+    _turn_seq = 0
+    _current_text_buf = ""
+    _current_thinking_buf = ""
+
+    def _add_assistant_row(content: str, meta: dict | None = None) -> None:
+        nonlocal _turn_seq
+        turn_rows.append({
+            "turn_seq": _turn_seq,
+            "role": "assistant",
+            "content": content,
+            "metadata": meta,
+        })
+        _turn_seq += 1
+
+    def _flush_text() -> None:
+        nonlocal _current_text_buf
+        if _current_text_buf:
+            _add_assistant_row(_current_text_buf, {"type": "text"})
+            _current_text_buf = ""
+
+    def _flush_thinking() -> None:
+        nonlocal _current_thinking_buf
+        if _current_thinking_buf:
+            _add_assistant_row("", {"type": "thinking", "text": _current_thinking_buf})
+            _current_thinking_buf = ""
+
     # 注册到后台任务表（断连后任务继续运行时，重连可通过此表查询）
     bg_key = (user_id, session_id)
     _BACKGROUND_TASKS[bg_key] = asyncio.current_task()
@@ -567,6 +607,8 @@ async def _handle_chat(
                     match event.type:
                         case EventType.TEXT_BLOCK_DELTA:
                             full_reply += event.delta
+                            _current_text_buf += event.delta
+                            _flush_thinking()
                             # 断连后：增量写入元数据（每 10 个 delta 保存一次）
                             if not ws_alive:
                                 _pending_save_count += 1
@@ -582,6 +624,8 @@ async def _handle_chat(
                                 await _publish_event("text_delta", {"delta": event.delta})
                         case EventType.THINKING_BLOCK_DELTA:
                             full_thinking += event.delta
+                            _current_thinking_buf += event.delta
+                            _flush_text()
                             if not ws_alive:
                                 await _publish_event("thinking_delta", {"delta": event.delta})
                         case EventType.TOOL_CALL_START:
@@ -606,6 +650,14 @@ async def _handle_chat(
                                         args = json.loads(tool_info["args_buffer"])
                                     except (json.JSONDecodeError, TypeError):
                                         args = tool_info["args_buffer"]
+                                _flush_text()
+                                _flush_thinking()
+                                _add_assistant_row("", {
+                                    "type": "tool_call",
+                                    "tool_call_id": tool_call_id,
+                                    "tool_name": tool_info["name"],
+                                    "tool_args": args,
+                                })
                                 tool_call_records[tool_call_id] = {
                                     "tool_name": tool_info["name"],
                                     "tool_call_id": tool_call_id,
@@ -628,6 +680,13 @@ async def _handle_chat(
                             tool_call_id = getattr(event, "tool_call_id", "")
                             result_text = pending_tool_results.pop(tool_call_id, "")
                             state = str(getattr(event, "state", ""))
+                            # 回填到最近的同 id tool_call 行
+                            for _row in reversed(turn_rows):
+                                if (_row.get("metadata", {}).get("type") == "tool_call"
+                                        and _row["metadata"].get("tool_call_id") == tool_call_id):
+                                    _row["metadata"]["result"] = result_text
+                                    _row["metadata"]["state"] = state
+                                    break
                             if tool_call_id in tool_call_records:
                                 tool_call_records[tool_call_id]["result"] = result_text
                                 tool_call_records[tool_call_id]["state"] = state
@@ -720,6 +779,10 @@ async def _handle_chat(
             except Exception:
                 logger.debug("写入 pending_reply 元数据失败: user={} session={}", user_id, session_id)
 
+        # v3: flush 剩余缓冲区
+        _flush_text()
+        _flush_thinking()
+
         # PG 历史双写为 append-only 且风险较低，保留为 fire-and-forget；
         # Redis AgentState 已在上方锁内 awaited 落库（state-loss race 修复）。
         task = asyncio.create_task(_persist_conversation(
@@ -727,6 +790,8 @@ async def _handle_chat(
             serialize_message_for_storage(message), full_reply,
             thinking=full_thinking or None,
             tool_calls=list(tool_call_records.values()) or None,
+            turn_id=turn_id,
+            turn_rows=turn_rows or None,
         ))
         _PERSIST_TASKS.add(task)
         task.add_done_callback(_PERSIST_TASKS.discard)

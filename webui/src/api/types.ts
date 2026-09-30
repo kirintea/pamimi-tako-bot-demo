@@ -54,11 +54,21 @@ export interface SessionMessage {
 	content: string;
 	metadata?: MessageMetadata | null;
 	created_at?: string;
+	turn_id?: string | null;
+	turn_seq?: number | null;
 }
 
 export interface MessageMetadata {
 	thinking?: string;
 	tool_calls?: ToolCallRecord[];
+	// v3 有序持久化：行类型标记
+	type?: 'text' | 'thinking' | 'tool_call';
+	text?: string;              // type=thinking 时的思考内容
+	tool_call_id?: string;      // type=tool_call 时
+	tool_name?: string;
+	tool_args?: unknown;
+	result?: string;
+	state?: string;
 }
 
 export interface ToolCallRecord {

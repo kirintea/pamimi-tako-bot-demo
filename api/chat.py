@@ -102,28 +102,44 @@ async def _persist_conversation(
     *,
     thinking: str | None = None,
     tool_calls: list[dict] | None = None,
+    turn_id: str | None = None,
+    turn_rows: list[dict] | None = None,
 ) -> None:
-    """后台异步持久化对话历史（仅 PG 双写；Redis AgentState 已在锁内同步落库）。"""
+    """后台异步持久化对话历史（仅 PG 双写；Redis AgentState 已在锁内同步落库）。
+
+    v3: 支持 turn_rows 多行拆分写入（有序持久化）。
+    """
     try:
-        # Redis AgentState 已在 /chat/stream 的 async with 锁内同步落库，
-        # 此处仅负责 PG 历史双写（append-only，风险较低）。
-        # 写 PG
         if db and db.is_initialized:
+            # 写 user 消息（带 turn_id）
             await db.insert_conversation(
-                user_id, session_id, "user", user_message, channel="web",
+                user_id, session_id, "user", user_message,
+                channel="web", turn_id=turn_id, turn_seq=0,
             )
-            metadata = {}
-            if thinking:
-                metadata["thinking"] = thinking
-            if tool_calls:
-                metadata["tool_calls"] = tool_calls
-            # assistant 消息仅在确有文本产出时写入（tool-only turn 跳过）
-            if assistant_reply:
+
+            if turn_rows:
+                # v3 新路径：逐行写入有序内容块
+                for row in turn_rows:
+                    await db.insert_conversation(
+                        user_id, session_id,
+                        row["role"], row["content"],
+                        metadata=row.get("metadata"),
+                        channel="web",
+                        turn_id=turn_id,
+                        turn_seq=row["turn_seq"],
+                    )
+            elif assistant_reply:
+                # 降级：旧逻辑（无 turn_rows 时）
+                metadata = {}
+                if thinking:
+                    metadata["thinking"] = thinking
+                if tool_calls:
+                    metadata["tool_calls"] = tool_calls
                 await db.insert_conversation(
                     user_id, session_id, "assistant", assistant_reply,
-                    metadata=metadata or None,
-                    channel="web",
+                    metadata=metadata or None, channel="web",
                 )
+
             # 自动创建/更新 sessions 记录（标题取首条用户消息前30字）
             title = user_message[:30] if user_message else None
             if title:
@@ -223,6 +239,35 @@ async def chat_stream(request: Request, body: ChatRequest):
         full_reply = ""
         full_thinking = ""
 
+        # v3 有序持久化：turn_id + turn_rows
+        turn_id = str(uuid.uuid4())
+        turn_rows: list[dict] = []
+        _turn_seq = 0
+        _current_text_buf = ""
+        _current_thinking_buf = ""
+
+        def _add_assistant_row(content: str, meta: dict | None = None) -> None:
+            nonlocal _turn_seq
+            turn_rows.append({
+                "turn_seq": _turn_seq,
+                "role": "assistant",
+                "content": content,
+                "metadata": meta,
+            })
+            _turn_seq += 1
+
+        def _flush_text() -> None:
+            nonlocal _current_text_buf
+            if _current_text_buf:
+                _add_assistant_row(_current_text_buf, {"type": "text"})
+                _current_text_buf = ""
+
+        def _flush_thinking() -> None:
+            nonlocal _current_thinking_buf
+            if _current_thinking_buf:
+                _add_assistant_row("", {"type": "thinking", "text": _current_thinking_buf})
+                _current_thinking_buf = ""
+
         lock_ctx = (
             acquire_session_lock(bus, user_id, session_id)
             if bus is not None else contextlib.nullcontext()
@@ -280,10 +325,14 @@ async def chat_stream(request: Request, body: ChatRequest):
                         match event.type:
                             case EventType.TEXT_BLOCK_DELTA:
                                 full_reply += event.delta
+                                _current_text_buf += event.delta
+                                _flush_thinking()
                                 yield _sse_event("text_delta", {"delta": event.delta})
 
                             case EventType.THINKING_BLOCK_DELTA:
                                 full_thinking += event.delta
+                                _current_thinking_buf += event.delta
+                                _flush_text()
                                 yield _sse_event("thinking_delta", {"delta": event.delta})
 
                             case EventType.TOOL_CALL_START:
@@ -314,6 +363,14 @@ async def chat_stream(request: Request, body: ChatRequest):
                                         except (json.JSONDecodeError, TypeError):
                                             args = tool_info["args_buffer"]
                                     logger.info("TOOL_CALL_END: id={} name={} args={}", tool_call_id, tool_info["name"], str(args)[:200] if args else None)
+                                    _flush_text()
+                                    _flush_thinking()
+                                    _add_assistant_row("", {
+                                        "type": "tool_call",
+                                        "tool_call_id": tool_call_id,
+                                        "tool_name": tool_info["name"],
+                                        "tool_args": args,
+                                    })
                                     yield _sse_event("tool_call", {
                                         "tool_name": tool_info["name"],
                                         "tool_call_id": tool_call_id,
@@ -342,6 +399,13 @@ async def chat_stream(request: Request, body: ChatRequest):
                                 result_text = pending_tool_results.pop(tool_call_id, "")
                                 state = str(getattr(event, "state", ""))
                                 logger.info("TOOL_RESULT_END: id={} result={}", tool_call_id, result_text[:200] if result_text else "")
+                                # 回填到最近的同 id tool_call 行
+                                for _row in reversed(turn_rows):
+                                    if (_row.get("metadata", {}).get("type") == "tool_call"
+                                            and _row["metadata"].get("tool_call_id") == tool_call_id):
+                                        _row["metadata"]["result"] = result_text
+                                        _row["metadata"]["state"] = state
+                                        break
                                 yield _sse_event("tool_result", {
                                     "tool_call_id": tool_call_id,
                                     "state": state,
@@ -380,6 +444,10 @@ async def chat_stream(request: Request, body: ChatRequest):
             logger.exception("流式回复异常")
             yield _sse_event("error", {"message": str(e)})
         finally:
+            # v3: flush 剩余缓冲区
+            _flush_text()
+            _flush_thinking()
+
             # PG 历史双写为 append-only 且风险较低，保留为 fire-and-forget；
             # Redis AgentState 已在上方锁内 awaited 落库（state-loss race 修复）。
             task = asyncio.create_task(_persist_conversation(
@@ -387,6 +455,8 @@ async def chat_stream(request: Request, body: ChatRequest):
                 serialize_message_for_storage(body.message), full_reply,
                 thinking=full_thinking or None,
                 tool_calls=list(tool_call_records.values()) or None,
+                turn_id=turn_id,
+                turn_rows=turn_rows or None,
             ))
             _PERSIST_TASKS.add(task)
             task.add_done_callback(_PERSIST_TASKS.discard)

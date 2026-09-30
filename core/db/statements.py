@@ -182,13 +182,13 @@ STATEMENTS: dict[str, Statement] = {
     # ---------------------------------------------------------------
     "insert_conversation": Statement(
         pg="""
-            INSERT INTO conversations ("user_id", "session_id", "role", "content", "metadata", "channel")
-            VALUES ($1, $2, $3, $4, $5, $6)
+            INSERT INTO conversations ("user_id", "session_id", "role", "content", "metadata", "channel", "turn_id", "turn_seq")
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             RETURNING "id"
         """,
         mysql="""
-            INSERT INTO conversations ("user_id", "session_id", "role", "content", "metadata", "channel")
-            VALUES ($1, $2, $3, $4, $5, $6)
+            INSERT INTO conversations ("user_id", "session_id", "role", "content", "metadata", "channel", "turn_id", "turn_seq")
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         """,
     ),
     # ---------------------------------------------------------------
@@ -234,7 +234,7 @@ STATEMENTS: dict[str, Statement] = {
                 c."session_id",
                 MIN(c."created_at") AS created_at,
                 MAX(c."created_at") AS last_active,
-                COUNT(*) AS message_count,
+                COUNT(*) FILTER (WHERE c."role" = 'user') AS message_count,
                 s."config"->>'title' AS custom_title,
                 (
                     SELECT LEFT(x."content", 30)
@@ -258,7 +258,7 @@ STATEMENTS: dict[str, Statement] = {
                 c."session_id",
                 MIN(c."created_at") AS created_at,
                 MAX(c."created_at") AS last_active,
-                COUNT(*) AS message_count,
+                SUM(CASE WHEN c."role" = 'user' THEN 1 ELSE 0 END) AS message_count,
                 JSON_UNQUOTE(JSON_EXTRACT(s."config", '$.title')) AS custom_title,
                 (
                     SELECT LEFT(x."content", 30)
