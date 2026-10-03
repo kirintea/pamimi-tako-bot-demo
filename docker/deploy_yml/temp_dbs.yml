@@ -15,13 +15,13 @@ services:
       --maxmemory 256mb
       --maxmemory-policy allkeys-lru
     ports:
-      - "127.0.0.1:6379:6379"
+      - "127.0.0.1:16379:6379"
     volumes:
       - temp_redis_data:/data
     healthcheck:
       test:
         - CMD-SHELL
-        - 'PORT_HEX="$(printf ''%04X'' 6379)"; cat /proc/net/tcp /proc/net/tcp6 2>/dev/null | grep -q ":$${PORT_HEX} "'
+        - 'PORT_HEX="$(printf ''%04X'' 16379)"; cat /proc/net/tcp /proc/net/tcp6 2>/dev/null | grep -q ":$${PORT_HEX} "'
       interval: 5s
       timeout: 3s
       retries: 20
@@ -42,13 +42,13 @@ services:
       POSTGRESQL_PASSWORD: password
       POSTGRESQL_DATABASE: dmx_agent_db
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:15432:5432"
     volumes:
       - temp_postgres_data:/bitnami/postgresql
     healthcheck:
       test:
         - CMD-SHELL
-        - 'PORT_HEX="$(printf ''%04X'' 5432)"; cat /proc/net/tcp /proc/net/tcp6 2>/dev/null | grep -q ":$${PORT_HEX} "'
+        - 'PORT_HEX="$(printf ''%04X'' 15432)"; cat /proc/net/tcp /proc/net/tcp6 2>/dev/null | grep -q ":$${PORT_HEX} "'
       interval: 5s
       timeout: 3s
       retries: 20
@@ -65,13 +65,14 @@ services:
   # ============================================
   mysql:
     image: mysql:8.0.26
+    # command: --default-authentication-plugin=mysql_native_password
     environment:
       MYSQL_ROOT_PASSWORD: root123
       MYSQL_DATABASE: dmx_agent_db
       MYSQL_USER: app_user
       MYSQL_PASSWORD: app123
     ports:
-      - "127.0.0.1:3306:3306"
+      - "127.0.0.1:13306:3306"
     volumes:
       - temp_mysql_data:/var/lib/mysql
     healthcheck:

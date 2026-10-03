@@ -116,7 +116,7 @@ async def test_upsert_skill_pg_returning():
 
 
 # ------------------------------------------------------------
-# upsert_session / upsert_schedule / upsert_message
+# upsert_session / upsert_schedule
 # ------------------------------------------------------------
 
 async def test_upsert_session_mysql_sql_returns_record():
@@ -152,21 +152,6 @@ async def test_upsert_schedule_returns_record_id():
     assert "ON DUPLICATE KEY UPDATE" in sql
     assert result == "sch-1"
     assert args[0] == "sch-1" and args[1] == "u1"
-
-
-async def test_upsert_message_insert_uses_registry():
-    db, fake = _db("mysql")
-    fake.insert_id = 55
-    storage = PostgresStorage(db)
-    # FakeBackend.fetchrow 恒返回 None → 必走插入分支
-    result = await storage.upsert_message(
-        user_id="u1", session_id="s1", msg_id="m1",
-        role="user", content="你好", metadata={"k": "v"},
-    )
-    sql, args = _last(fake)
-    assert sql == STATEMENTS["insert_message"].pick("mysql")
-    assert result == 55
-    assert args == ("u1", "s1", "m1", "user", "你好", json.dumps({"k": "v"}), "web")
 
 
 # ------------------------------------------------------------

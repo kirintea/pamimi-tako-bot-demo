@@ -1,68 +1,46 @@
 /**
- * 对话主页面
+ * 对话主页面 — 新的 结构
  *
- * 布局：左侧会话列表 + 右侧消息区域
+ * 布局：绝对定位 ThreadHeader 悬浮层 + 三行 CSS Grid 视口
+ *   row1 = 消息滚动区（thread）/ HeroGreeting 空状态（hero）
+ *   row2 = composer dock（max-w-[58rem] 居中）
+ *   row3 = spacer
+ * 左侧 PromptRail 标记栏 + 右侧 PromptNavigator Sheet。
+ * 自动滚动用 stickToBottomRef 门控（距底 <80px 才跟随）。
  */
 
-import { format } from 'date-fns';
-import {
-	Ellipsis,
-	MessageSquareDashed,
-	Pencil,
-	Plus,
-	Trash2,
-} from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { ArrowDown } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 
 import { wsManager } from '@/api/ws';
-import { ChatInput } from '@/components/chat/ChatInput';
+import { ChatInput, type ChatInputHandle } from '@/components/chat/ChatInput';
 import { ContextIndicator } from '@/components/chat/ContextIndicator';
+import { HeroGreeting } from '@/components/chat/HeroGreeting';
 import { MessageBubble } from '@/components/chat/MessageBubble';
-import { Button } from '@/components/ui/button';
-import {
-	DropdownMenu,
-	DropdownMenuContent,
-	DropdownMenuItem,
-	DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
-import {
-	Empty,
-	EmptyDescription,
-	EmptyHeader,
-	EmptyMedia,
-	EmptyTitle,
-} from '@/components/ui/empty';
-import { Input } from '@/components/ui/input';
-import {
-	Sidebar,
-	SidebarContent,
-	SidebarGroup,
-	SidebarGroupContent,
-	SidebarGroupLabel,
-	SidebarMenu,
-	SidebarMenuAction,
-	SidebarMenuBadge,
-	SidebarMenuButton,
-	SidebarMenuItem,
-	SidebarProvider,
-} from '@/components/ui/sidebar';
+import { PromptNavigator } from '@/components/chat/PromptNavigator';
+import { PromptRail } from '@/components/chat/PromptRail';
+import { findPromptElement, promptTop } from '@/components/chat/promptNavigation';
+import { ThreadHeader } from '@/components/chat/ThreadHeader';
 import { Spinner } from '@/components/ui/spinner';
 import { useMessages } from '@/hooks/useMessages';
 import { useSessions } from '@/hooks/useSessions';
 import { cn } from '@/lib/utils';
 
+/** 距底小于该值视为"贴底"，跟随流式输出 */
+const STICK_THRESHOLD_PX = 80;
+
 export function ChatPage() {
 	const navigate = useNavigate();
 	const { sessionId: urlSessionId } = useParams<{ sessionId?: string }>();
 	const userId = wsManager.getUserId();
+	const { t } = useTranslation();
 
 	const {
 		sessions,
 		loading: sessionsLoading,
 		refresh: refreshSessions,
-		renameSession,
-		deleteSession,
 		forkSession,
 	} = useSessions(userId);
 
@@ -75,40 +53,13 @@ export function ChatPage() {
 		switchSession,
 	} = useMessages(userId, urlSessionId ?? null);
 
-	const [renameTarget, setRenameTarget] = useState<string | null>(null);
-	const [renameValue, setRenameValue] = useState('');
-	const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
-
-	// 选择会话
-	const handleSelectSession = (sessionId: string) => {
-		navigate(`/chat/${sessionId}`);
-		switchSession(sessionId);
-	};
-
-	// 新建会话 — 导航到 /chat 即可，useMessages 会自动重连（无 session_id → 后端自动分配）
-	const handleNewSession = () => {
-		navigate('/chat');
-	};
-
-	// 重命名
-	const handleRename = async () => {
-		if (renameTarget && renameValue.trim()) {
-			await renameSession(renameTarget, renameValue.trim());
-			setRenameTarget(null);
-			setRenameValue('');
+	// Sync session switch
+	useEffect(() => {
+		if (urlSessionId) {
+			switchSession(urlSessionId);
 		}
-	};
+	}, [urlSessionId, switchSession]);
 
-	// 删除
-	const handleDelete = async (sessionId: string) => {
-		await deleteSession(sessionId);
-		if (urlSessionId === sessionId) {
-			navigate('/chat');
-		}
-		setDeleteTarget(null);
-	};
-
-	// Fork 会话
 	const handleFork = useCallback(async () => {
 		if (!urlSessionId) return;
 		const newSessionId = await forkSession(urlSessionId);
@@ -118,149 +69,116 @@ export function ChatPage() {
 		}
 	}, [urlSessionId, forkSession, navigate, refreshSessions]);
 
-	// 当前会话标题
-	const currentTitle = urlSessionId
-		? sessions.find((s) => s.session_id === urlSessionId)?.title || urlSessionId.slice(0, 8)
-		: '新会话';
+	const hasMessages = messages.length > 0;
 
-	// 滚动到底部
+	// ---- 滚动：贴底门控 ----
+	const scrollRef = useRef<HTMLDivElement>(null);
+	const stickToBottomRef = useRef(true);
+	const [showScrollButton, setShowScrollButton] = useState(false);
+
+	const handleScroll = useCallback(() => {
+		const el = scrollRef.current;
+		if (!el) return;
+		const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+		const stick = distance < STICK_THRESHOLD_PX;
+		stickToBottomRef.current = stick;
+		setShowScrollButton(!stick);
+	}, []);
+
+	// 新消息到达且贴底时滚到底（上滚后自动停止跟随）
 	useEffect(() => {
-		const container = document.getElementById('chat-messages');
-		if (container) {
-			container.scrollTop = container.scrollHeight;
-		}
-	}, [messages]);
+		if (!hasMessages) return;
+		if (!stickToBottomRef.current) return;
+		const el = scrollRef.current;
+		if (el) el.scrollTop = el.scrollHeight;
+	}, [messages, hasMessages]);
+
+	const scrollToBottom = useCallback(() => {
+		const el = scrollRef.current;
+		if (!el) return;
+		stickToBottomRef.current = true;
+		setShowScrollButton(false);
+		el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+	}, []);
+
+	// ---- 提示词跳转 ----
+	const jumpToPrompt = useCallback((promptId: string) => {
+		const el = scrollRef.current;
+		if (!el) return;
+		const target = findPromptElement(el, promptId);
+		if (!target) return;
+		stickToBottomRef.current = false;
+		const top = promptTop(el, target) - 8;
+		el.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+	}, []);
+
+	useEffect(() => {
+		// 切换会话：重置贴底跟随 + 隐藏滚动按钮
+		stickToBottomRef.current = true;
+		setShowScrollButton(false);
+	}, [urlSessionId]);
+
+	const chatInputRef = useRef<ChatInputHandle>(null);
+
+	const composer = (
+		<ChatInput
+			ref={chatInputRef}
+			phase={phase}
+			hero={!hasMessages}
+			userId={userId}
+			onSend={sendMessage}
+			onInterrupt={cancelGeneration}
+		/>
+	);
+
+	const contextIndicator = (
+		<ContextIndicator
+			userId={userId}
+			sessionId={urlSessionId ?? null}
+			className="mx-auto w-full max-w-[49.5rem]"
+		/>
+	);
 
 	return (
-		<div className="flex h-full w-full p-2 gap-2">
-			<SidebarProvider defaultOpen>
-				{/* 会话列表侧边栏 */}
-				<Sidebar collapsible="none" className="rounded-[22px]">
-					<SidebarContent className="my-2 overflow-hidden">
-						<SidebarGroup className="px-2 py-0">
-							<SidebarGroupLabel className="justify-between">
-								会话
-								<span className="text-[10px] text-muted-foreground font-mono">
-									{sessions.length}
-								</span>
-							</SidebarGroupLabel>
-							<SidebarGroupContent>
-								<SidebarMenu className="mb-2">
-									<Button onClick={handleNewSession}>
-										<Plus />
-										新会话
-									</Button>
-								</SidebarMenu>
-							</SidebarGroupContent>
-						</SidebarGroup>
+		<div className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+			{/* 悬浮头部（右上 3 图标工具栏） */}
+			<ThreadHeader
+				connectionStatus={connectionStatus}
+				promptNavigatorAction={
+					<PromptNavigator messages={messages} onJumpToPrompt={jumpToPrompt} />
+				}
+			/>
 
-						<SidebarGroup className="min-h-0 flex-1 px-2 py-0">
-							<SidebarGroupContent className="flex min-h-0 flex-1 flex-col">
-								<div className="no-scrollbar min-h-0 flex-1 overflow-y-auto">
-									{sessions.length === 0 ? (
-										<Empty className="border-none py-4 min-h-50">
-											<EmptyHeader>
-												<EmptyMedia variant="icon">
-													<MessageSquareDashed />
-												</EmptyMedia>
-												<EmptyTitle>暂无会话</EmptyTitle>
-												<EmptyDescription>
-													点击上方按钮开始新对话
-												</EmptyDescription>
-											</EmptyHeader>
-										</Empty>
-									) : (
-										<SidebarMenu>
-											{sessions.map((session) => (
-												<SidebarMenuItem key={session.session_id}>
-													<SidebarMenuButton
-														className="text-muted-foreground hover:text-foreground group-has-data-[sidebar=menu-action]/menu-item:pr-16"
-														isActive={urlSessionId === session.session_id}
-														onClick={() => handleSelectSession(session.session_id)}
-													>
-														<span className="truncate">
-															{session.title || session.session_id.slice(0, 8)}
-														</span>
-													</SidebarMenuButton>
-													<SidebarMenuBadge className="max-md:hidden group-hover/menu-item:hidden text-muted-foreground font-mono">
-														{session.last_active > 0
-															? format(new Date(session.last_active * 1000), 'MM/dd')
-															: ''}
-													</SidebarMenuBadge>
-													<DropdownMenu>
-														<DropdownMenuTrigger asChild>
-															<SidebarMenuAction className="md:opacity-0 group-hover/menu-item:opacity-100">
-																<Ellipsis />
-															</SidebarMenuAction>
-														</DropdownMenuTrigger>
-														<DropdownMenuContent side="right" align="start">
-															<DropdownMenuItem
-																onClick={() => {
-																	setRenameTarget(session.session_id);
-																	setRenameValue(session.title || '');
-																}}
-															>
-																<Pencil />
-																重命名
-															</DropdownMenuItem>
-															<DropdownMenuItem
-																variant="destructive"
-																onClick={() => handleDelete(session.session_id)}
-															>
-																<Trash2 />
-																删除
-															</DropdownMenuItem>
-														</DropdownMenuContent>
-													</DropdownMenu>
-												</SidebarMenuItem>
-											))}
-										</SidebarMenu>
-									)}
-								</div>
-							</SidebarGroupContent>
-						</SidebarGroup>
-					</SidebarContent>
-				</Sidebar>
-
-				{/* 聊天主区域 */}
-				<div className="flex flex-1 min-w-0">
-					<div className="flex flex-col flex-1 rounded-[22px] bg-card shadow-panel overflow-hidden">
-						{/* Header */}
-						<div className="flex items-center justify-between px-6 py-3 border-b border-border">
-							<h2 className="text-sm font-medium truncate">{currentTitle}</h2>
-							<span
-								className={cn(
-									'text-xs px-2 py-0.5 rounded-full cursor-default',
-									connectionStatus === 'connected' && 'bg-green-500/10 text-green-500',
-									connectionStatus === 'connecting' && 'bg-yellow-500/10 text-yellow-500',
-									connectionStatus === 'disconnected' && 'bg-destructive/10 text-destructive',
-								)}
+			{/* 视口 */}
+			<div className="relative flex min-h-0 flex-1 overflow-hidden">
+				<div
+					className={cn(
+						'absolute inset-0',
+						hasMessages ? 'overflow-hidden' : 'overflow-y-auto [overflow-anchor:none]',
+					)}
+				>
+					<div
+						data-layout={hasMessages ? 'thread' : 'hero'}
+						className={cn(
+							'thread-layout mx-auto grid min-h-full w-full',
+							hasMessages
+								? 'h-full max-w-[64rem]'
+								: 'max-w-[72rem] px-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-6 sm:px-4 sm:py-12',
+						)}
+					>
+						{/* row 1：消息 / 空状态 */}
+						{hasMessages ? (
+							<div
+								ref={scrollRef}
+								onScroll={handleScroll}
+								className="row-start-1 flex min-h-0 min-w-0 flex-col overflow-y-auto overflow-x-hidden [overflow-anchor:none] px-3 pt-12 sm:px-4"
 							>
-								{connectionStatus === 'connected'
-									? '已连接'
-									: connectionStatus === 'connecting'
-										? '连接中...'
-										: '未连接'}
-							</span>
-						</div>
-
-						{/* Messages */}
-						<div id="chat-messages" className="flex-1 overflow-y-auto px-6 py-4">
-							{sessionsLoading && messages.length === 0 ? (
-								<div className="flex items-center justify-center h-full">
-									<Spinner className="size-5 text-muted-foreground" />
-								</div>
-							) : messages.length === 0 ? (
-								<div className="flex flex-col items-center justify-center h-full text-muted-foreground">
-									<span className="text-4xl mb-4">🤖</span>
-									<span className="text-lg">开始新的对话</span>
-								</div>
-							) : (
-								<div className="max-w-3xl mx-auto">
-									{messages.map((msg) => (
+								<div className="mx-auto flex w-full max-w-[var(--content-column-width)] flex-col">
+									{messages.map((msg, i) => (
 										<MessageBubble
 											key={msg.id}
 											message={msg}
+											className={i > 0 ? 'mt-5' : ''}
 											onFork={
 												urlSessionId && msg.role === 'assistant'
 													? handleFork
@@ -269,57 +187,81 @@ export function ChatPage() {
 										/>
 									))}
 									{phase === 'streaming' && (
-										<div className="flex gap-1 py-2">
+										<div className="mt-5 flex gap-1 py-2">
 											<span className="size-2 bg-muted-foreground rounded-full animate-bounce [animation-delay:-0.32s]" />
 											<span className="size-2 bg-muted-foreground rounded-full animate-bounce [animation-delay:-0.16s]" />
 											<span className="size-2 bg-muted-foreground rounded-full animate-bounce" />
 										</div>
 									)}
 								</div>
+								<div aria-hidden className="thread-message-end-gap shrink-0" />
+							</div>
+						) : (
+							<div className="row-start-1 flex min-h-0 w-full items-center justify-center sm:items-end sm:pb-11">
+								{sessionsLoading ? (
+									<div className="flex items-center justify-center">
+										<Spinner className="size-5 text-muted-foreground" />
+									</div>
+								) : (
+									<div className="flex w-full animate-in fade-in-0 slide-in-from-bottom-2 flex-col items-center [animation-duration:220ms] motion-reduce:animate-none">
+										<HeroGreeting text={t('chat.empty.title', { defaultValue: '今天想完成什么？' })} />
+									</div>
+								)}
+							</div>
+						)}
+
+						{/* row 2：composer dock */}
+						<div
+							className={cn(
+								'row-start-2 w-full',
+								hasMessages ? 'relative z-10' : 'relative self-center',
+							)}
+						>
+							{hasMessages && (
+								<div className="px-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:px-4">
+									{/* 滚动到底按钮 */}
+									{showScrollButton && (
+										<button
+											type="button"
+											aria-label={t('chat.scrollToBottom')}
+											title={t('chat.scrollToBottom')}
+											onClick={scrollToBottom}
+											className="absolute -top-11 left-1/2 z-20 flex size-9 -translate-x-1/2 items-center justify-center rounded-full border border-border/70 bg-card text-foreground/85 shadow-[0_3px_10px_rgba(15,23,42,0.14)] transition-transform hover:scale-105"
+										>
+											<ArrowDown className="size-4" />
+										</button>
+									)}
+									<div className="mx-auto w-full max-w-[58rem]">
+										{contextIndicator}
+										{composer}
+									</div>
+								</div>
+							)}
+							{!hasMessages && (
+								<div className="mx-auto w-full max-w-[720px]">
+									{composer}
+								</div>
 							)}
 						</div>
 
-						{/* Context indicator + Input */}
-						<ContextIndicator userId={userId} sessionId={urlSessionId ?? null} />
-						<ChatInput
-							phase={phase}
-							userId={userId}
-							onSend={sendMessage}
-							onInterrupt={cancelGeneration}
+						{/* row 3：spacer */}
+						<div
+							aria-hidden
+							className="thread-layout-spacer row-start-3 min-h-0 overflow-hidden"
 						/>
 					</div>
 				</div>
-			</SidebarProvider>
 
-			{/* 重命名对话框 */}
-			{renameTarget && (
-				<div
-					className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
-					onClick={() => setRenameTarget(null)}
-				>
-					<div
-						className="bg-card border border-border rounded-xl p-6 w-80"
-						onClick={(e) => e.stopPropagation()}
-					>
-						<h3 className="text-sm font-medium mb-4">重命名会话</h3>
-						<Input
-							value={renameValue}
-							onChange={(e) => setRenameValue(e.target.value)}
-							placeholder="输入新名称"
-							onKeyDown={(e) => e.key === 'Enter' && handleRename()}
-							autoFocus
-						/>
-						<div className="flex justify-end gap-2 mt-4">
-							<Button variant="outline" size="sm" onClick={() => setRenameTarget(null)}>
-								取消
-							</Button>
-							<Button size="sm" onClick={handleRename} disabled={!renameValue.trim()}>
-								确认
-							</Button>
-						</div>
-					</div>
-				</div>
-			)}
+				{/* 左侧提示词标记栏 */}
+				{hasMessages && (
+					<PromptRail
+						messages={messages}
+						scrollRef={scrollRef}
+						bottomOffset={96}
+						onJumpToPrompt={jumpToPrompt}
+					/>
+				)}
+			</div>
 		</div>
 	);
 }

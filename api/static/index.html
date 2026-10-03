@@ -3,51 +3,131 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AgentScope Chat</title>
-<link rel="stylesheet" href="/static/style.css">
+<title>Agent Chat</title>
+<link rel="icon" href="/static/favicon.svg?v=1" type="image/svg+xml">
+<link rel="stylesheet" href="/static/style.css?v=3">
+<!-- highlight.js — 代码高亮（浅色主题，本地 vendor，避免 CSP/CDN 与离线问题） -->
+<link rel="stylesheet" href="/static/vendor/github.min.css?v=2">
 </head>
 <body>
 
-<!-- ============ Sidebar ============ -->
-<aside class="sidebar" id="sidebar">
-  <div class="sidebar-header">
-    <div class="app-title">🤖 AgentScope</div>
-    <div class="user-row">
-      <input id="userId" type="text" value="user_001" placeholder="用户 ID">
-      <button class="btn-refresh" onclick="refreshSessions()" title="刷新会话列表">🔄</button>
-    </div>
-    <button class="btn-new-session" onclick="newSession()">
-      <span>＋</span> 新会话
-    </button>
-  </div>
-  <div class="session-list" id="sessionList">
-    <div class="session-list-empty">暂无历史会话</div>
-  </div>
-</aside>
+<!-- ============ Canvas + Shell ============ -->
+<div class="canvas">
+  <div class="shell">
 
-<!-- ============ Main ============ -->
-<div class="main">
-  <div class="header">
-    <div class="header-left">
-      <button class="btn-toggle-sidebar" onclick="toggleSidebar()" title="切换侧边栏">☰</button>
-      <h1>AgentScope Chat</h1>
-      <a href="/webui" class="btn-webui" title="打开新版 WebUI">🚀 新版 WebUI</a>
-    </div>
-    <div class="header-info">
-      <span><span class="dot"></span> 在线</span>
-      <span id="sessionInfo">会话: —</span>
-    </div>
-  </div>
+    <!-- ============ Sidebar ============ -->
+    <aside class="sidebar" id="sidebar">
+      <!-- Logo + collapse -->
+      <div class="sidebar-logo-row">
+        <div class="sidebar-logo">智</div>
+        <button class="btn-collapse" onclick="toggleSidebar()" title="收起侧边栏" id="btnCollapse">«</button>
+      </div>
 
-  <div class="messages" id="messages"></div>
+      <!-- New Chat -->
+      <button class="btn-new-chat" onclick="newSession()" title="新建对话">
+        <span>＋</span> <span class="sidebar-label">新建对话</span>
+      </button>
 
-  <div class="input-area">
-    <textarea id="input" placeholder="输入消息... (Enter 发送, Shift+Enter 换行)" rows="1"></textarea>
-    <button id="sendBtn" onclick="send()">发送</button>
-    <button id="stopBtn" onclick="stop()" style="display:none">停止</button>
+      <!-- Search -->
+      <div class="sidebar-search">
+        <span class="sidebar-search-icon">🔍</span>
+        <input id="sessionSearch" type="text" placeholder="搜索" oninput="filterSessions(this.value)">
+      </div>
+
+      <!-- Section: Recent -->
+      <div class="sidebar-section-title">最近</div>
+      <div class="session-list" id="sessionList">
+        <div class="session-list-empty">暂无会话</div>
+      </div>
+
+      <!-- Bottom -->
+      <div class="sidebar-bottom">
+        <a class="btn-webui" id="btnWebui" href="/webui" title="打开完整版 WebUI" target="_self">
+          <span>🖥️</span>
+          <span class="sidebar-label">完整版 WebUI</span>
+        </a>
+        <button class="btn-user" id="btnUser" onclick="showUserDialog()" title="切换用户">
+          <span>👤</span>
+          <span class="sidebar-label" id="userDisplay">user_001</span>
+        </button>
+        <button class="btn-settings" title="设置（规划中）">
+          <span>⚙️</span>
+          <span class="sidebar-label">设置</span>
+          <span class="settings-dot"></span>
+        </button>
+      </div>
+    </aside>
+
+    <!-- ============ Main ============ -->
+    <main class="main" id="mainArea">
+      <!-- HeroGreeting (empty state) -->
+      <div class="hero-area" id="heroArea">
+        <h1 class="hero-greeting" id="heroGreeting">今天想完成什么？</h1>
+      </div>
+
+      <!-- Messages (hidden initially) -->
+      <div class="messages-area" id="messagesArea" style="display:none">
+        <div class="messages-inner" id="messages"></div>
+      </div>
+
+      <!-- Composer -->
+      <div class="composer-wrap" id="composerWrap">
+        <div class="composer">
+          <textarea id="input" class="composer-textarea" placeholder="有什么可以帮你的？" rows="1"></textarea>
+          <div class="composer-footer">
+            <div class="composer-footer-right">
+              <span class="composer-model-name" id="modelName">GLM-5</span>
+              <button id="sendBtn" class="btn-send" onclick="send()" title="发送">↑</button>
+              <button id="stopBtn" class="btn-stop" onclick="stop()" title="停止生成" style="display:none">■</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
   </div>
 </div>
 
-<script src="/static/chat.js"></script>
+<!-- ============ User Switch Dialog ============ -->
+<div class="modal-overlay" id="userModal" style="display:none" onclick="closeUserDialog()">
+  <div class="modal-card" onclick="event.stopPropagation()">
+    <h3>切换用户</h3>
+    <p>当前用户: <span id="currentUserLabel" style="font-family:monospace">user_001</span></p>
+    <input id="newUserInput" class="modal-input" type="text" placeholder="输入新用户 ID" onkeydown="if(event.key==='Enter')doSwitchUser()">
+    <div class="modal-btns">
+      <button class="btn-modal-cancel" onclick="closeUserDialog()">取消</button>
+      <button class="btn-modal-confirm" onclick="doSwitchUser()">切换</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ Rename Dialog ============ -->
+<div class="modal-overlay" id="renameModal" style="display:none" onclick="closeRenameDialog()">
+  <div class="modal-card" onclick="event.stopPropagation()">
+    <h3>重命名会话</h3>
+    <input id="renameInput" class="modal-input" type="text" placeholder="输入新名称" onkeydown="if(event.key==='Enter')doRename()">
+    <div class="modal-btns">
+      <button class="btn-modal-cancel" onclick="closeRenameDialog()">取消</button>
+      <button class="btn-modal-confirm" onclick="doRename()">确认</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ Delete Confirm Dialog ============ -->
+<div class="modal-overlay" id="deleteModal" style="display:none" onclick="closeDeleteDialog()">
+  <div class="modal-card" onclick="event.stopPropagation()">
+    <h3>删除会话</h3>
+    <p>确定删除会话「<span id="deleteTitle"></span>」？<br><small style="color:var(--text-tertiary)">此操作不可撤销</small></p>
+    <div class="modal-btns">
+      <button class="btn-modal-cancel" onclick="closeDeleteDialog()">取消</button>
+      <button class="btn-modal-danger" onclick="doDelete()">删除</button>
+    </div>
+  </div>
+</div>
+
+<!-- Dependencies（本地 vendor，同源加载，符合页面 CSP） -->
+<script src="/static/vendor/marked.min.js?v=2"></script>
+<script src="/static/vendor/highlight.min.js?v=2"></script>
+<script src="/static/chat.js?v=2"></script>
 </body>
 </html>

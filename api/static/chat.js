@@ -1,376 +1,451 @@
 // -*- coding: utf-8 -*-
 /**
- * AgentScope Chat 前端逻辑
+ * AgentScope Chat 前端逻辑 — v2 浅色主题（参考 WebUI）
  */
 
-const messagesEl = document.getElementById('messages');
-const inputEl = document.getElementById('input');
-const sendBtn = document.getElementById('sendBtn');
-const stopBtn = document.getElementById('stopBtn');
-const userIdEl = document.getElementById('userId');
-const sessionInfoEl = document.getElementById('sessionInfo');
-const sessionListEl = document.getElementById('sessionList');
-const sidebarEl = document.getElementById('sidebar');
+// ============ DOM Elements ============
+var messagesEl, messagesAreaEl, heroAreaEl, inputEl, sendBtn, stopBtn;
+var userDisplayEl, sessionListEl, sidebarEl, btnCollapse;
+var sessionSearchEl, modelNameEl;
 
-let currentSessionId = '';
-let isStreaming = false;
-let currentAbortController = null;
-let hasMoreMessages = false;
-let oldestMessageId = null;
+// ============ State ============
+var currentUserId = localStorage.getItem('user_id') || 'user_001';
+var currentSessionId = '';
+var isStreaming = false;
+var currentAbortController = null;
+var hasMoreMessages = false;
+var oldestMessageId = null;
+var allSessions = [];
+var renderPending = false;
 
-// ============ Sidebar ============
-
-function toggleSidebar() {
-  sidebarEl.classList.toggle('collapsed');
+// ============ Markdown Setup ============
+function setupMarked() {
+  if (typeof marked === 'undefined') return;
+  try {
+    marked.setOptions({
+      breaks: true,
+      gfm: true,
+    });
+  } catch (e) {
+    console.warn('marked.setOptions failed:', e);
+  }
 }
 
-async function loadSessionList() {
-  const userId = userIdEl.value.trim() || 'anonymous';
-  try {
-    const resp = await fetch(`/sessions/${encodeURIComponent(userId)}`);
-    const data = await resp.json();
-    renderSessionList(data.sessions || []);
-  } catch (err) {
-    console.error('加载会话列表失败:', err);
+function renderMarkdown(text) {
+  if (typeof marked !== 'undefined') {
+    try {
+      return marked.parse(text);
+    } catch (e) {
+      console.warn('marked.parse failed:', e);
+    }
   }
+  return escapeHtml(text);
+}
+
+/** 对已渲染的 DOM 中的 <pre><code> 块应用 highlight.js */
+function highlightCodeBlocks(container) {
+  if (typeof hljs === 'undefined') return;
+  var blocks = container.querySelectorAll('pre code');
+  for (var i = 0; i < blocks.length; i++) {
+    if (!blocks[i].dataset.highlighted) {
+      try { hljs.highlightElement(blocks[i]); } catch (e) { /* ignore */ }
+    }
+  }
+}
+
+// ============ Init ============
+function init() {
+  // Cache DOM refs
+  messagesEl = document.getElementById('messages');
+  messagesAreaEl = document.getElementById('messagesArea');
+  heroAreaEl = document.getElementById('heroArea');
+  inputEl = document.getElementById('input');
+  sendBtn = document.getElementById('sendBtn');
+  stopBtn = document.getElementById('stopBtn');
+  userDisplayEl = document.getElementById('userDisplay');
+  sessionListEl = document.getElementById('sessionList');
+  sidebarEl = document.getElementById('sidebar');
+  btnCollapse = document.getElementById('btnCollapse');
+  sessionSearchEl = document.getElementById('sessionSearch');
+  modelNameEl = document.getElementById('modelName');
+
+  setupMarked();
+  userDisplayEl.textContent = currentUserId;
+  updateModelName();
+  loadSessionList();
+  setupComposerEvents();
+
+  // Hero greeting random
+  var greetings = ['今天想完成什么？', '有什么可以帮你的？', '开始一个新的对话', '告诉我你的想法'];
+  document.getElementById('heroGreeting').textContent = greetings[Math.floor(Math.random() * greetings.length)];
+}
+
+function updateModelName() {
+  var name = localStorage.getItem('llm_model_name') || 'GLM-5';
+  modelNameEl.textContent = name;
+}
+
+// ============ Sidebar ============
+function toggleSidebar() {
+  sidebarEl.classList.toggle('collapsed');
+  btnCollapse.textContent = sidebarEl.classList.contains('collapsed') ? '»' : '«';
+}
+
+// ============ Session List ============
+function loadSessionList() {
+  fetch('/sessions/' + encodeURIComponent(currentUserId))
+    .then(function (resp) { return resp.json(); })
+    .then(function (data) {
+      allSessions = data.sessions || [];
+      renderSessionList(allSessions);
+    })
+    .catch(function (err) {
+      console.error('加载会话列表失败:', err);
+    });
 }
 
 function renderSessionList(sessions) {
   if (!sessions.length) {
-    sessionListEl.innerHTML = '<div class="session-list-empty">暂无历史会话</div>';
+    var emptyMsg = (sessionSearchEl && sessionSearchEl.value.trim()) ? '无匹配会话' : '暂无会话';
+    sessionListEl.innerHTML = '<div class="session-list-empty">' + emptyMsg + '</div>';
     return;
   }
 
-  const userId = userIdEl.value.trim() || 'anonymous';
-
-  sessionListEl.innerHTML = sessions.map(s => {
-    const isActive = s.session_id === currentSessionId;
-    const title = escapeHtml(s.title || '新会话');
-    const time = formatTime(s.last_active);
-    const msgCount = s.message_count || 0;
-    return `
-      <div class="session-item ${isActive ? 'active' : ''}"
-           onclick="switchSession('${userId}', '${s.session_id}')"
-           title="${escapeHtml(s.session_id)}">
-        <span class="session-icon">💬</span>
-        <div class="session-info">
-          <div class="session-title">${title}</div>
-          <div class="session-meta">${time} · ${msgCount} 条消息</div>
-        </div>
-        <div class="session-actions">
-          <button class="btn-rename" onclick="event.stopPropagation(); renameSession('${userId}', '${s.session_id}', '${title}')" title="重命名">✏️</button>
-          <button class="btn-delete" onclick="event.stopPropagation(); confirmDelete('${userId}', '${s.session_id}', '${title}')" title="删除会话">✕</button>
-        </div>
-      </div>
-    `;
-  }).join('');
+  var html = '';
+  for (var i = 0; i < sessions.length; i++) {
+    var s = sessions[i];
+    var isActive = s.session_id === currentSessionId;
+    var title = escapeHtml(s.title || s.session_id.slice(0, 8));
+    html += '<div class="session-item ' + (isActive ? 'active' : '') + '"' +
+      ' onclick="switchSession(\'' + currentUserId + '\',\'' + s.session_id + '\')"' +
+      ' title="' + escapeHtml(s.session_id) + '">' +
+      '<span class="session-item-title">' + title + '</span>' +
+      '<span class="session-item-actions">' +
+      '<button onclick="event.stopPropagation();showRenameDialog(\'' + s.session_id + '\',\'' + escapeHtml(s.title || '') + '\')" title="重命名">✏️</button>' +
+      '<button class="btn-sess-delete" onclick="event.stopPropagation();showDeleteDialog(\'' + s.session_id + '\',\'' + escapeHtml(s.title || '') + '\')" title="删除">✕</button>' +
+      '</span></div>';
+  }
+  sessionListEl.innerHTML = html;
 }
 
-async function switchSession(userId, sessionId) {
+function filterSessions(query) {
+  var q = query.trim().toLowerCase();
+  if (!q) {
+    renderSessionList(allSessions);
+    return;
+  }
+  var filtered = [];
+  for (var i = 0; i < allSessions.length; i++) {
+    var s = allSessions[i];
+    if ((s.title || '').toLowerCase().indexOf(q) !== -1 ||
+      s.session_id.toLowerCase().indexOf(q) !== -1) {
+      filtered.push(s);
+    }
+  }
+  renderSessionList(filtered);
+}
+
+// ============ Session Switch ============
+function switchSession(userId, sessionId) {
   if (isStreaming) return;
   if (sessionId === currentSessionId) return;
 
   currentSessionId = sessionId;
-  sessionInfoEl.textContent = `会话: ${sessionId.slice(0, 8)}...`;
   messagesEl.innerHTML = '';
-
-  // 重置分页状态
   hasMoreMessages = false;
   oldestMessageId = null;
 
-  // 加载消息历史
-  try {
-    const resp = await fetch(`/sessions/${encodeURIComponent(userId)}/${encodeURIComponent(sessionId)}/messages?limit=50`);
+  showMessagesView();
 
-    if (!resp.ok) {
-      const errBody = await resp.json().catch(() => ({}));
-      addMessage('error', `加载会话失败 (${resp.status}): ${errBody.detail || resp.statusText}`);
-      return;
-    }
-
-    const data = await resp.json();
-
-    const messages = data.messages || [];
-    if (messages.length === 0) {
-      addSystemMessage('会话无历史消息');
-    } else {
-      for (const msg of messages) {
-        const role = msg.role === 'user' ? 'user' : 'agent';
-        addMessage(role, msg.content);
+  // Load history
+  fetch('/sessions/' + encodeURIComponent(userId) + '/' + encodeURIComponent(sessionId) + '/messages?limit=50')
+    .then(function (resp) {
+      if (!resp.ok) {
+        return resp.json().catch(function () { return {}; }).then(function (errBody) {
+          addMessage('error', '加载会话失败 (' + resp.status + '): ' + (errBody.detail || resp.statusText));
+          return null;
+        });
       }
-    }
+      return resp.json();
+    })
+    .then(function (data) {
+      if (!data) return;
+      var messages = data.messages || [];
 
-    // 更新分页状态
-    hasMoreMessages = data.has_more || false;
-    oldestMessageId = data.oldest_id || null;
+      if (messages.length === 0) {
+        addSystemMessage('会话无历史消息');
+      } else {
+        for (var i = 0; i < messages.length; i++) {
+          var msg = messages[i];
+          var role = msg.role === 'user' ? 'user' : 'agent';
+          addMessage(role, msg.content);
+        }
+      }
 
-    // 如果有更多消息，添加加载更多按钮
-    if (hasMoreMessages) {
-      addLoadMoreButton(userId, sessionId);
-    }
-  } catch (err) {
-    addMessage('error', `加载会话失败: ${err.message}`);
-  }
+      hasMoreMessages = data.has_more || false;
+      oldestMessageId = data.oldest_id || null;
 
-  // 更新侧边栏高亮
+      if (hasMoreMessages) {
+        addLoadMoreButton(userId, sessionId);
+      }
+    })
+    .catch(function (err) {
+      addMessage('error', '加载会话失败: ' + err.message);
+    });
+
   updateSessionListHighlight();
   inputEl.focus();
 }
 
 function addLoadMoreButton(userId, sessionId) {
-  // 移除已有的加载更多按钮
-  const existing = messagesEl.querySelector('.load-more-btn');
+  var existing = messagesEl.querySelector('.load-more-btn');
   if (existing) existing.remove();
 
-  const btn = document.createElement('div');
+  var btn = document.createElement('div');
   btn.className = 'load-more-btn';
-  btn.innerHTML = '<button onclick="loadMoreMessages(\'' + userId + '\', \'' + sessionId + '\', this)">加载更多历史消息</button>';
+  btn.innerHTML = '<button onclick="loadMoreMessages(\'' + userId + '\',\'' + sessionId + '\',this)">加载更多历史消息</button>';
   messagesEl.insertBefore(btn, messagesEl.firstChild);
 }
 
-async function loadMoreMessages(userId, sessionId, btn) {
+function loadMoreMessages(userId, sessionId, btn) {
   if (!hasMoreMessages || !oldestMessageId) return;
-
   btn.textContent = '加载中...';
   btn.disabled = true;
 
-  try {
-    const resp = await fetch(`/sessions/${encodeURIComponent(userId)}/${encodeURIComponent(sessionId)}/messages?before_id=${oldestMessageId}&limit=50`);
-    const data = await resp.json();
+  fetch('/sessions/' + encodeURIComponent(userId) + '/' + encodeURIComponent(sessionId) + '/messages?before_id=' + oldestMessageId + '&limit=50')
+    .then(function (resp) { return resp.json(); })
+    .then(function (data) {
+      var messages = data.messages || [];
+      if (messages.length > 0) {
+        var fragment = document.createDocumentFragment();
+        for (var i = 0; i < messages.length; i++) {
+          var msg = messages[i];
+          var role = msg.role === 'user' ? 'user' : 'agent';
+          var div = document.createElement('div');
+          div.className = 'msg ' + role;
+          if (role === 'agent') {
+            div.innerHTML = '<div class="markdown-body">' + renderMarkdown(msg.content) + '</div>';
+            highlightCodeBlocks(div);
+          } else {
+            div.textContent = msg.content;
+          }
+          fragment.appendChild(div);
+        }
+        btn.parentElement.remove();
+        messagesEl.insertBefore(fragment, messagesEl.firstChild);
 
-    const messages = data.messages || [];
-    if (messages.length > 0) {
-      // 在现有消息前插入
-      const fragment = document.createDocumentFragment();
-      for (const msg of messages) {
-        const role = msg.role === 'user' ? 'user' : 'agent';
-        const div = document.createElement('div');
-        div.className = `msg ${role}`;
-        div.textContent = msg.content;
-        fragment.appendChild(div);
+        hasMoreMessages = data.has_more || false;
+        oldestMessageId = data.oldest_id || null;
+
+        if (hasMoreMessages) addLoadMoreButton(userId, sessionId);
       }
-
-      // 移除加载更多按钮
-      btn.parentElement.remove();
-
-      // 插入新消息
-      messagesEl.insertBefore(fragment, messagesEl.firstChild);
-
-      // 更新分页状态
-      hasMoreMessages = data.has_more || false;
-      oldestMessageId = data.oldest_id || null;
-
-      // 如果还有更多，重新添加按钮
-      if (hasMoreMessages) {
-        addLoadMoreButton(userId, sessionId);
-      }
-    }
-  } catch (err) {
-    btn.textContent = '加载失败，点击重试';
-    btn.disabled = false;
-  }
+    })
+    .catch(function () {
+      btn.textContent = '加载失败，点击重试';
+      btn.disabled = false;
+    });
 }
 
 function updateSessionListHighlight() {
-  const items = sessionListEl.querySelectorAll('.session-item');
-  items.forEach(item => {
-    // 通过 onclick 属性判断是否是当前会话
-    const onclick = item.getAttribute('onclick') || '';
-    if (onclick.includes(`'${currentSessionId}'`) && onclick.startsWith('switchSession')) {
+  var items = sessionListEl.querySelectorAll('.session-item');
+  for (var i = 0; i < items.length; i++) {
+    var item = items[i];
+    var onclick = item.getAttribute('onclick') || '';
+    if (onclick.indexOf("'" + currentSessionId + "'") !== -1 && onclick.indexOf('switchSession') === 0) {
       item.classList.add('active');
     } else {
       item.classList.remove('active');
     }
-  });
+  }
 }
 
-// ============ Confirm Dialog ============
-
-function confirmDelete(userId, sessionId, title) {
-  const overlay = document.createElement('div');
-  overlay.className = 'confirm-overlay';
-  overlay.innerHTML = `
-    <div class="confirm-dialog">
-      <p>确定删除会话「${title}」？<br><small style="color:var(--text-dim)">此操作不可撤销</small></p>
-      <div class="btn-group">
-        <button class="btn-cancel" onclick="this.closest('.confirm-overlay').remove()">取消</button>
-        <button class="btn-confirm-delete" onclick="doDelete('${userId}', '${sessionId}', this)">删除</button>
-      </div>
-    </div>
-  `;
-  document.body.appendChild(overlay);
+// ============ View Toggle ============
+function showMessagesView() {
+  heroAreaEl.style.display = 'none';
+  messagesAreaEl.style.display = 'flex';
+  document.getElementById('composerWrap').className = 'composer-wrap';
+  inputEl.placeholder = '输入消息... (Enter 发送)';
 }
 
-function renameSession(userId, sessionId, currentTitle) {
-  const overlay = document.createElement('div');
-  overlay.className = 'confirm-overlay';
-  overlay.innerHTML = `
-    <div class="confirm-dialog">
-      <p>重命名会话</p>
-      <input type="text" class="rename-input" value="${escapeHtml(currentTitle)}" maxlength="100" placeholder="输入新标题">
-      <div class="btn-group">
-        <button class="btn-cancel" onclick="this.closest('.confirm-overlay').remove()">取消</button>
-        <button class="btn-confirm" onclick="doRename('${userId}', '${sessionId}', this)">确定</button>
-      </div>
-    </div>
-  `;
-  document.body.appendChild(overlay);
-
-  // 聚焦输入框并选中文本
-  const input = overlay.querySelector('.rename-input');
-  input.focus();
-  input.select();
-
-  // 回车确认
-  input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      doRename(userId, sessionId, overlay.querySelector('.btn-confirm'));
-    }
-  });
+function showHeroView() {
+  heroAreaEl.style.display = 'flex';
+  messagesAreaEl.style.display = 'none';
+  document.getElementById('composerWrap').className = 'composer-wrap hero-composer-wrap';
+  inputEl.placeholder = '有什么可以帮你的？';
 }
 
-async function doRename(userId, sessionId, btn) {
-  const overlay = btn.closest('.confirm-overlay');
-  const input = overlay.querySelector('.rename-input');
-  const newTitle = input.value.trim();
+// ============ User Switch Dialog ============
+function showUserDialog() {
+  document.getElementById('currentUserLabel').textContent = currentUserId;
+  document.getElementById('newUserInput').value = currentUserId;
+  document.getElementById('userModal').style.display = 'flex';
+  setTimeout(function () { document.getElementById('newUserInput').focus(); }, 50);
+}
 
-  if (!newTitle) {
-    input.focus();
+function closeUserDialog() {
+  document.getElementById('userModal').style.display = 'none';
+}
+
+function doSwitchUser() {
+  var newId = document.getElementById('newUserInput').value.trim();
+  if (!newId || newId === currentUserId) {
+    closeUserDialog();
     return;
   }
-
-  try {
-    await fetch(`/sessions/${encodeURIComponent(userId)}/${encodeURIComponent(sessionId)}/rename`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: newTitle }),
-    });
-    overlay.remove();
-    await loadSessionList();
-  } catch (err) {
-    overlay.remove();
-    addMessage('error', `重命名失败: ${err.message}`);
-  }
-}
-
-async function doDelete(userId, sessionId, btn) {
-  const overlay = btn.closest('.confirm-overlay');
-  try {
-    await fetch(`/sessions/${encodeURIComponent(userId)}/${encodeURIComponent(sessionId)}/delete`, {
-      method: 'POST',
-    });
-    overlay.remove();
-
-    // 如果删除的是当前会话，清空聊天
-    if (sessionId === currentSessionId) {
-      currentSessionId = '';
-      messagesEl.innerHTML = '';
-      sessionInfoEl.textContent = '会话: —';
-      addSystemMessage('会话已删除');
-    }
-
-    await loadSessionList();
-  } catch (err) {
-    overlay.remove();
-    addMessage('error', `删除失败: ${err.message}`);
-  }
-}
-
-// ============ Time Format ============
-
-function formatTime(timestamp) {
-  if (!timestamp) return '';
-
-  // 支持 ISO 8601 格式和 timestamp
-  let date;
-  if (typeof timestamp === 'string' && timestamp.includes('T')) {
-    date = new Date(timestamp);
-  } else {
-    date = new Date(timestamp * 1000);
-  }
-
-  const now = new Date();
-  const isToday = date.toDateString() === now.toDateString();
-
-  if (isToday) {
-    return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
-  }
-
-  const yesterday = new Date(now);
-  yesterday.setDate(yesterday.getDate() - 1);
-  if (date.toDateString() === yesterday.toDateString()) {
-    return '昨天 ' + date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
-  }
-
-  return date.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' }) +
-    ' ' + date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
-}
-
-// ============ Session Management ============
-
-function refreshSessions() {
-  // 切换用户时清空当前会话
+  currentUserId = newId;
+  localStorage.setItem('user_id', newId);
+  userDisplayEl.textContent = newId;
   currentSessionId = '';
   messagesEl.innerHTML = '';
-  sessionInfoEl.textContent = '会话: —';
+  showHeroView();
+  closeUserDialog();
   loadSessionList();
 }
 
+// ============ Rename Dialog ============
+var renameTargetSessionId = '';
+
+function showRenameDialog(sessionId, currentTitle) {
+  renameTargetSessionId = sessionId;
+  document.getElementById('renameInput').value = currentTitle;
+  document.getElementById('renameModal').style.display = 'flex';
+  setTimeout(function () {
+    var inp = document.getElementById('renameInput');
+    inp.focus();
+    inp.select();
+  }, 50);
+}
+
+function closeRenameDialog() {
+  document.getElementById('renameModal').style.display = 'none';
+  renameTargetSessionId = '';
+}
+
+function doRename() {
+  var newTitle = document.getElementById('renameInput').value.trim();
+  if (!newTitle || !renameTargetSessionId) {
+    closeRenameDialog();
+    return;
+  }
+
+  fetch('/sessions/' + encodeURIComponent(currentUserId) + '/' + encodeURIComponent(renameTargetSessionId) + '/rename', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title: newTitle }),
+  })
+    .then(function () {
+      closeRenameDialog();
+      loadSessionList();
+    })
+    .catch(function (err) {
+      closeRenameDialog();
+      addMessage('error', '重命名失败: ' + err.message);
+    });
+}
+
+// ============ Delete Dialog ============
+var deleteTargetSessionId = '';
+
+function showDeleteDialog(sessionId, title) {
+  deleteTargetSessionId = sessionId;
+  document.getElementById('deleteTitle').textContent = title || sessionId.slice(0, 8);
+  document.getElementById('deleteModal').style.display = 'flex';
+}
+
+function closeDeleteDialog() {
+  document.getElementById('deleteModal').style.display = 'none';
+  deleteTargetSessionId = '';
+}
+
+function doDelete() {
+  if (!deleteTargetSessionId) { closeDeleteDialog(); return; }
+
+  fetch('/sessions/' + encodeURIComponent(currentUserId) + '/' + encodeURIComponent(deleteTargetSessionId) + '/delete', {
+    method: 'POST',
+  })
+    .then(function () {
+      closeDeleteDialog();
+      if (deleteTargetSessionId === currentSessionId) {
+        currentSessionId = '';
+        messagesEl.innerHTML = '';
+        showHeroView();
+      }
+      loadSessionList();
+    })
+    .catch(function (err) {
+      closeDeleteDialog();
+      addMessage('error', '删除失败: ' + err.message);
+    });
+}
+
+// ============ New Session ============
 function newSession() {
   currentSessionId = '';
   messagesEl.innerHTML = '';
-  sessionInfoEl.textContent = '会话: —';
-  addSystemMessage('已创建新会话，输入消息开始对话');
+  showHeroView();
   updateSessionListHighlight();
   inputEl.focus();
 }
 
 // ============ Messages ============
-
 function addMessage(role, text, extra) {
-  const div = document.createElement('div');
-  div.className = `msg ${role}`;
+  // Switch to messages view if in hero
+  if (heroAreaEl.style.display !== 'none') {
+    showMessagesView();
+  }
+
+  var div = document.createElement('div');
+  div.className = 'msg ' + role;
+  div.style.animation = 'fadeIn 0.2s ease';
+
   if (role === 'tool') {
-    div.innerHTML = `<div class="msg-label">🔧 ${escapeHtml(extra || '工具调用')}</div><pre class="tool-content">${escapeHtml(text)}</pre>`;
+    div.innerHTML = '<div class="msg-label">🔧 ' + escapeHtml(extra || '工具调用') + '</div><pre class="tool-content">' + escapeHtml(text) + '</pre>';
   } else if (role === 'tool-result') {
-    div.innerHTML = `<div class="msg-label">📋 工具结果</div><pre class="tool-content">${escapeHtml(text)}</pre>`;
+    div.innerHTML = '<div class="msg-label">📋 工具结果</div><pre class="tool-content">' + escapeHtml(text) + '</pre>';
   } else if (role === 'error') {
     div.textContent = text;
+  } else if (role === 'agent') {
+    div.innerHTML = '<div class="markdown-body">' + renderMarkdown(text) + '</div>';
+    highlightCodeBlocks(div);
   } else {
     div.textContent = text;
   }
+
   messagesEl.appendChild(div);
-  messagesEl.scrollTop = messagesEl.scrollHeight;
+  scrollToBottom();
   return div;
 }
 
 function addSystemMessage(text) {
-  const div = document.createElement('div');
-  div.style.cssText = 'text-align:center;color:#666;font-size:12px;padding:8px;';
+  var div = document.createElement('div');
+  div.className = 'msg-system';
   div.textContent = text;
   messagesEl.appendChild(div);
-  messagesEl.scrollTop = messagesEl.scrollHeight;
+  scrollToBottom();
+}
+
+function scrollToBottom() {
+  var area = messagesAreaEl;
+  area.scrollTop = area.scrollHeight;
 }
 
 function escapeHtml(str) {
-  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 // ============ SSE Event Handling ============
-
 function handleSSEEvent(eventType, data, state) {
   switch (eventType) {
     case 'session':
       if (data.session_id && !currentSessionId) {
         currentSessionId = data.session_id;
-        sessionInfoEl.textContent = `会话: ${currentSessionId.slice(0, 8)}...`;
       }
       break;
 
     case 'text_delta':
       if (data.delta) {
         state.agentText += data.delta;
-        updateAgentMessage(state);
+        scheduleRender(state);
       }
       break;
 
@@ -385,207 +460,222 @@ function handleSSEEvent(eventType, data, state) {
       break;
 
     case 'tool_call':
-      console.log('Tool call event:', data);
       if (data.tool_name) {
-        const toolInfo = data.tool_args ? `${data.tool_name}\n${JSON.stringify(data.tool_args, null, 2)}` : data.tool_name;
+        var toolInfo = data.tool_args ? data.tool_name + '\n' + JSON.stringify(data.tool_args, null, 2) : data.tool_name;
         addMessage('tool', toolInfo, data.tool_name);
       }
       break;
 
     case 'tool_result':
-      console.log('Tool result event:', data);
       if (data.result) {
         addMessage('tool-result', typeof data.result === 'string' ? data.result : JSON.stringify(data.result, null, 2));
       }
       break;
 
     case 'reply_end':
-      // 回复结束
+      // Final render
+      renderAgentMessage(state);
       break;
 
     case 'error':
       if (data.message) {
-        addMessage('error', `错误: ${data.message}`);
+        addMessage('error', '错误: ' + data.message);
       }
       break;
   }
-  messagesEl.scrollTop = messagesEl.scrollHeight;
+  scrollToBottom();
 }
 
-function updateAgentMessage(state) {
-  const { agentDiv, label, thinkingBlock, agentText } = state;
-  // 清空并重建内容
-  agentDiv.innerHTML = '';
-  agentDiv.appendChild(label);
+/** rAF 节流渲染 — 避免每个 delta 都重建 DOM */
+function scheduleRender(state) {
+  if (renderPending) return;
+  renderPending = true;
+  requestAnimationFrame(function () {
+    renderPending = false;
+    renderAgentMessage(state);
+  });
+}
 
-  // 如果有思考内容，添加到前面
-  if (thinkingBlock) {
-    agentDiv.appendChild(thinkingBlock);
+function renderAgentMessage(state) {
+  var agentDiv = state.agentDiv;
+  agentDiv.innerHTML = '';
+
+  if (state.thinkingBlock) {
+    agentDiv.appendChild(state.thinkingBlock);
   }
 
-  // 添加正文
-  const textNode = document.createTextNode(agentText);
-  agentDiv.appendChild(textNode);
+  var contentDiv = document.createElement('div');
+  contentDiv.className = 'markdown-body';
+  contentDiv.innerHTML = renderMarkdown(state.agentText);
+  agentDiv.appendChild(contentDiv);
+
+  // Apply syntax highlighting
+  highlightCodeBlocks(contentDiv);
 }
 
 function createThinkingBlock() {
-  const details = document.createElement('details');
+  var details = document.createElement('details');
   details.className = 'thinking-block';
   details.open = true;
 
-  const summary = document.createElement('summary');
+  var summary = document.createElement('summary');
   summary.className = 'thinking-header';
   summary.innerHTML = '<span class="thinking-icon">💭</span> <span class="thinking-title">思考过程</span>';
 
-  const content = document.createElement('div');
+  var content = document.createElement('div');
   content.className = 'thinking-content';
 
   details.appendChild(summary);
   details.appendChild(content);
 
-  // 自动收起：3秒后折叠
-  setTimeout(() => {
-    details.open = false;
-  }, 3000);
-
+  // Auto-collapse after 3s
+  setTimeout(function () { details.open = false; }, 3000);
   return details;
 }
 
 function updateThinkingContent(thinkingBlock, content) {
-  const contentDiv = thinkingBlock.querySelector('.thinking-content');
-  if (contentDiv) {
-    contentDiv.textContent = content;
-  }
+  var contentDiv = thinkingBlock.querySelector('.thinking-content');
+  if (contentDiv) contentDiv.textContent = content;
 }
 
 // ============ Send Message ============
-
-async function send() {
-  const text = inputEl.value.trim();
+function send() {
+  var text = inputEl.value.trim();
   if (!text || isStreaming) return;
-
-  const userId = userIdEl.value.trim() || 'anonymous';
 
   addMessage('user', text);
   inputEl.value = '';
   inputEl.style.height = 'auto';
+  sendBtn.disabled = true;
 
   isStreaming = true;
   sendBtn.style.display = 'none';
-  stopBtn.style.display = 'inline-block';
+  stopBtn.style.display = 'flex';
 
-  // 添加中止控制器
-  const abortController = new AbortController();
+  var abortController = new AbortController();
   currentAbortController = abortController;
-  const timeoutId = setTimeout(() => abortController.abort(), 300000); // 5分钟超时
+  var timeoutId = setTimeout(function () { abortController.abort(); }, 300000);
 
-  const agentDiv = addMessage('agent', '');
-  const label = document.createElement('div');
-  label.className = 'msg-label';
-  label.textContent = '🤖 Agent';
-  agentDiv.prepend(label);
+  // Add streaming dots
+  var dotsDiv = document.createElement('div');
+  dotsDiv.className = 'streaming-dots';
+  dotsDiv.innerHTML = '<span></span><span></span><span></span>';
+  messagesEl.appendChild(dotsDiv);
+  scrollToBottom();
 
-  // 使用状态对象管理流式回复
-  const state = {
-    agentDiv,
-    label,
+  var agentDiv = addMessage('agent', '');
+  var state = {
+    agentDiv: agentDiv,
     agentText: '',
     thinkingBlock: null,
-    thinkingContent: ''
+    thinkingContent: '',
   };
 
-  try {
-    const resp = await fetch('/chat/stream', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        message: text,
-        user_id: userId,
-        session_id: currentSessionId || undefined,
-      }),
-      signal: abortController.signal,
-    });
+  fetch('/chat/stream', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      message: text,
+      user_id: currentUserId,
+      session_id: currentSessionId || undefined,
+    }),
+    signal: abortController.signal,
+  })
+    .then(function (resp) {
+      if (!resp.ok) throw new Error('HTTP ' + resp.status + ': ' + resp.statusText);
 
-    if (!resp.ok) {
-      throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
-    }
+      // Remove streaming dots
+      if (dotsDiv.parentNode) dotsDiv.remove();
 
-    const reader = resp.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let currentEventType = '';
+      var reader = resp.body.getReader();
+      var decoder = new TextDecoder();
+      var buffer = '';
+      var currentEventType = '';
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+      function read() {
+        return reader.read().then(function (result) {
+          if (result.done) return;
 
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
+          buffer += decoder.decode(result.value, { stream: true });
+          var lines = buffer.split('\n');
+          buffer = lines.pop() || '';
 
-      for (const line of lines) {
-        if (line.startsWith('event: ')) {
-          currentEventType = line.slice(7).trim();
-          continue;
-        }
-        if (line.startsWith('data: ')) {
-          try {
-            const data = JSON.parse(line.slice(6));
-            handleSSEEvent(currentEventType, data, state);
-            currentEventType = '';
-          } catch {}
-        }
+          for (var i = 0; i < lines.length; i++) {
+            var line = lines[i];
+            if (line.indexOf('event: ') === 0) {
+              currentEventType = line.slice(7).trim();
+              continue;
+            }
+            if (line.indexOf('data: ') === 0) {
+              try {
+                var data = JSON.parse(line.slice(6));
+                handleSSEEvent(currentEventType, data, state);
+                currentEventType = '';
+              } catch (e) { /* ignore parse errors */ }
+            }
+          }
+
+          return read();
+        });
       }
-    }
-  } catch (err) {
-    if (err.name === 'AbortError') {
-      addSystemMessage('⏹️ 已停止生成');
-    } else {
-      addMessage('error', `请求失败: ${err.message}`);
-    }
-  }
 
-  clearTimeout(timeoutId);
-  currentAbortController = null;
-  isStreaming = false;
-  sendBtn.style.display = 'inline-block';
-  stopBtn.style.display = 'none';
+      return read();
+    })
+    .catch(function (err) {
+      // Remove streaming dots on error
+      if (dotsDiv.parentNode) dotsDiv.remove();
 
-  // 消息发送完成后刷新会话列表
-  await loadSessionList();
-  inputEl.focus();
+      if (err.name === 'AbortError') {
+        addSystemMessage('⏹️ 已停止生成');
+      } else {
+        addMessage('error', '请求失败: ' + err.message);
+      }
+    })
+    .then(function () {
+      clearTimeout(timeoutId);
+      currentAbortController = null;
+      isStreaming = false;
+      sendBtn.style.display = 'flex';
+      stopBtn.style.display = 'none';
+      sendBtn.disabled = !inputEl.value.trim();
+
+      loadSessionList();
+      inputEl.focus();
+    });
 }
 
 function stop() {
-  if (currentAbortController) {
-    currentAbortController.abort();
-  }
+  if (currentAbortController) currentAbortController.abort();
 }
 
-// ============ Input Events ============
+// ============ Composer Events ============
+function setupComposerEvents() {
+  inputEl.addEventListener('input', function () {
+    inputEl.style.height = 'auto';
+    inputEl.style.height = Math.min(inputEl.scrollHeight, 150) + 'px';
+    sendBtn.disabled = !inputEl.value.trim();
+  });
 
-inputEl.addEventListener('input', () => {
-  inputEl.style.height = 'auto';
-  inputEl.style.height = Math.min(inputEl.scrollHeight, 200) + 'px';
-});
+  inputEl.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      send();
+    }
+  });
+}
 
-inputEl.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault();
-    send();
+// ============ Keyboard shortcuts for modals ============
+document.addEventListener('keydown', function (e) {
+  if (e.key === 'Escape') {
+    closeUserDialog();
+    closeRenameDialog();
+    closeDeleteDialog();
   }
 });
 
-// 用户 ID 变更时清空当前会话并重新加载列表
-userIdEl.addEventListener('change', () => {
-  currentSessionId = '';
-  messagesEl.innerHTML = '';
-  sessionInfoEl.textContent = '会话: —';
-  loadSessionList();
-});
-
-// ============ Init ============
-
-addSystemMessage('欢迎使用 AgentScope Chat，输入消息开始对话');
-loadSessionList();
-inputEl.focus();
+// ============ Init on DOM ready ============
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  init();
+}

@@ -29,7 +29,7 @@ platform-server-8090/
 │   │   └── resolver.py        # 环境变量解析器
 │   ├── database.py            # 数据库管理器（后端分派 + fail-fast 初始化 + 便捷方法）
 │   ├── db/                    # 后端实现（base/factory/dialect/statements/postgres/mysql/ddl）
-│   ├── storage.py             # PostgreSQL 存储层（Agent/Session/MCP/Skill/Message CRUD）
+│   ├── storage.py             # PostgreSQL 存储层（Agent/Session/MCP/Skill CRUD）
 │   ├── storage_models.py      # 数据模型定义（AgentRecord/MCPRecord/SkillRecord 等）
 │   ├── chat_service.py        # Chat 服务层（Fire-and-Forget 事件驱动模式）
 │   ├── session.py             # 会话管理器（KV 持久化 [redis/jsonl] + 元数据 + 消息历史 + fork）
@@ -191,7 +191,7 @@ SessionManager
       ├── agentscope:session:{user_id}:{session_id}      → AgentState JSON (TTL 1800s)
       └── agentscope:session:{user_id}:{session_id}:meta → 会话元数据 JSON (TTL 1800s)
           {session_id, user_id, title, created_at, last_active, message_count}
-          # kv.backend=jsonl 时改落 ./data/kv/kv.jsonl（开发/资源受限，单进程，惰性 TTL）
+          # kv.backend=jsonl 时改落 workspaces/.history/kv_data/kv.jsonl（开发/资源受限，单进程，惰性 TTL）
 
 PostgresStorage (PostgreSQL / MySQL — 后端无关)
   └── DatabaseManager 连接池（PostgresBackend(asyncpg) / MySQLBackend(aiomysql)）
@@ -226,7 +226,7 @@ redis:
 ```yaml
 kv:
   backend: "redis"                # redis / jsonl（jsonl 仅限开发/资源受限单进程场景）
-  jsonl_path: "./data/kv"         # jsonl 后端存储目录（已加入 .gitignore）
+  jsonl_path: "workspaces/.history/kv_data"         # jsonl 后端存储目录（已加入 .gitignore）
   jsonl_compact_threshold: 5000   # 追加行数达到阈值时压缩重写
 ```
 
@@ -244,7 +244,7 @@ database:
   verify_tables: true           # 连接后校验必需表（禁用 DDL 时尤其重要）
 ```
 
-`DatabaseManager` 在 `server.py` lifespan 中初始化，按 `backend`/URL scheme 分派 `PostgresBackend`（asyncpg）或 `MySQLBackend`（aiomysql）。`auto_create_tables=true` 时执行幂等 DDL（PG 32 条 / MySQL 24 条），`verify_tables=true` 时校验 `core/db/ddl.py REQUIRED_TABLES` 的 7 张必需表。初始化失败固定 fail-fast（ERROR 日志 + 抛出 → 启动中止进程退出；`verify_tables` 缺表时日志列出缺表清单）。未配置 URL（空串）时跳过初始化。提供 `execute / fetch / fetchrow / fetchval` 通用接口、`execute_named / fetch_named / fetchval_named`（按方言取注册表 SQL）、`insert_returning_id`（PG RETURNING / MySQL lastrowid 或回查），以及 `insert_conversation / get_conversation_history` 便捷方法（消息写入显式携带 `channel` 列，默认 `web`，为飞书/微信渠道预留；OTel Resource 同步上报 `channel` tag，配置项 `otel.channel`）。未初始化（URL 未配置）时访问 `/mcp` `/skill` 等未守卫路由返回 **503**（`DatabaseUnavailableError` 统一处理器）；启动后的运行期数据库故障由 `/health` 503 与各路由异常覆盖，进程不退出。
+`DatabaseManager` 在 `server.py` lifespan 中初始化，按 `backend`/URL scheme 分派 `PostgresBackend`（asyncpg）或 `MySQLBackend`（aiomysql）。`auto_create_tables=true` 时执行幂等 DDL，`verify_tables=true` 时校验 `core/db/ddl.py REQUIRED_TABLES` 的 6 张必需表。初始化失败固定 fail-fast（ERROR 日志 + 抛出 → 启动中止进程退出；`verify_tables` 缺表时日志列出缺表清单）。未配置 URL（空串）时跳过初始化。提供 `execute / fetch / fetchrow / fetchval` 通用接口、`execute_named / fetch_named / fetchval_named`（按方言取注册表 SQL）、`insert_returning_id`（PG RETURNING / MySQL lastrowid 或回查），以及 `insert_conversation / get_conversation_history` 便捷方法（消息写入显式携带 `channel` 列，默认 `web`，为飞书/微信渠道预留；OTel Resource 同步上报 `channel` tag，配置项 `otel.channel`）。未初始化（URL 未配置）时访问 `/mcp` `/skill` 等未守卫路由返回 **503**（`DatabaseUnavailableError` 统一处理器）；启动后的运行期数据库故障由 `/health` 503 与各路由异常覆盖，进程不退出。
 
 ## 健康检查
 

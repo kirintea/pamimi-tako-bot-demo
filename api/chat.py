@@ -43,7 +43,7 @@ from loguru import logger
 from core.chat_service import acquire_session_lock, session_lock_key
 from core.session_status import SessionBusyError, SessionStatusTracker
 from core.token_counter import count_tokens
-from core.validators import coerce_id, is_auth_enabled, require_user_id
+from core.validators import coerce_id, coerce_id_strict, is_auth_enabled, require_user_id
 
 
 async def _stream_with_timeout(agen, timeout: int):
@@ -102,28 +102,44 @@ async def _persist_conversation(
     *,
     thinking: str | None = None,
     tool_calls: list[dict] | None = None,
+    turn_id: str | None = None,
+    turn_rows: list[dict] | None = None,
 ) -> None:
-    """后台异步持久化对话历史（仅 PG 双写；Redis AgentState 已在锁内同步落库）。"""
+    """后台异步持久化对话历史（仅 PG 双写；Redis AgentState 已在锁内同步落库）。
+
+    v3: 支持 turn_rows 多行拆分写入（有序持久化）。
+    """
     try:
-        # Redis AgentState 已在 /chat/stream 的 async with 锁内同步落库，
-        # 此处仅负责 PG 历史双写（append-only，风险较低）。
-        # 写 PG
         if db and db.is_initialized:
+            # 写 user 消息（带 turn_id）
             await db.insert_conversation(
-                user_id, session_id, "user", user_message, channel="web",
+                user_id, session_id, "user", user_message,
+                channel="web", turn_id=turn_id, turn_seq=0,
             )
-            metadata = {}
-            if thinking:
-                metadata["thinking"] = thinking
-            if tool_calls:
-                metadata["tool_calls"] = tool_calls
-            # assistant 消息仅在确有文本产出时写入（tool-only turn 跳过）
-            if assistant_reply:
+
+            if turn_rows:
+                # v3 新路径：逐行写入有序内容块
+                for row in turn_rows:
+                    await db.insert_conversation(
+                        user_id, session_id,
+                        row["role"], row["content"],
+                        metadata=row.get("metadata"),
+                        channel="web",
+                        turn_id=turn_id,
+                        turn_seq=row["turn_seq"],
+                    )
+            elif assistant_reply:
+                # 降级：旧逻辑（无 turn_rows 时）
+                metadata = {}
+                if thinking:
+                    metadata["thinking"] = thinking
+                if tool_calls:
+                    metadata["tool_calls"] = tool_calls
                 await db.insert_conversation(
                     user_id, session_id, "assistant", assistant_reply,
-                    metadata=metadata or None,
-                    channel="web",
+                    metadata=metadata or None, channel="web",
                 )
+
             # 自动创建/更新 sessions 记录（标题取首条用户消息前30字）
             title = user_message[:30] if user_message else None
             if title:
@@ -223,6 +239,35 @@ async def chat_stream(request: Request, body: ChatRequest):
         full_reply = ""
         full_thinking = ""
 
+        # v3 有序持久化：turn_id + turn_rows
+        turn_id = str(uuid.uuid4())
+        turn_rows: list[dict] = []
+        _turn_seq = 0
+        _current_text_buf = ""
+        _current_thinking_buf = ""
+
+        def _add_assistant_row(content: str, meta: dict | None = None) -> None:
+            nonlocal _turn_seq
+            turn_rows.append({
+                "turn_seq": _turn_seq,
+                "role": "assistant",
+                "content": content,
+                "metadata": meta,
+            })
+            _turn_seq += 1
+
+        def _flush_text() -> None:
+            nonlocal _current_text_buf
+            if _current_text_buf:
+                _add_assistant_row(_current_text_buf, {"type": "text"})
+                _current_text_buf = ""
+
+        def _flush_thinking() -> None:
+            nonlocal _current_thinking_buf
+            if _current_thinking_buf:
+                _add_assistant_row("", {"type": "thinking", "text": _current_thinking_buf})
+                _current_thinking_buf = ""
+
         lock_ctx = (
             acquire_session_lock(bus, user_id, session_id)
             if bus is not None else contextlib.nullcontext()
@@ -280,10 +325,14 @@ async def chat_stream(request: Request, body: ChatRequest):
                         match event.type:
                             case EventType.TEXT_BLOCK_DELTA:
                                 full_reply += event.delta
+                                _current_text_buf += event.delta
+                                _flush_thinking()
                                 yield _sse_event("text_delta", {"delta": event.delta})
 
                             case EventType.THINKING_BLOCK_DELTA:
                                 full_thinking += event.delta
+                                _current_thinking_buf += event.delta
+                                _flush_text()
                                 yield _sse_event("thinking_delta", {"delta": event.delta})
 
                             case EventType.TOOL_CALL_START:
@@ -314,6 +363,14 @@ async def chat_stream(request: Request, body: ChatRequest):
                                         except (json.JSONDecodeError, TypeError):
                                             args = tool_info["args_buffer"]
                                     logger.info("TOOL_CALL_END: id={} name={} args={}", tool_call_id, tool_info["name"], str(args)[:200] if args else None)
+                                    _flush_text()
+                                    _flush_thinking()
+                                    _add_assistant_row("", {
+                                        "type": "tool_call",
+                                        "tool_call_id": tool_call_id,
+                                        "tool_name": tool_info["name"],
+                                        "tool_args": args,
+                                    })
                                     yield _sse_event("tool_call", {
                                         "tool_name": tool_info["name"],
                                         "tool_call_id": tool_call_id,
@@ -342,6 +399,13 @@ async def chat_stream(request: Request, body: ChatRequest):
                                 result_text = pending_tool_results.pop(tool_call_id, "")
                                 state = str(getattr(event, "state", ""))
                                 logger.info("TOOL_RESULT_END: id={} result={}", tool_call_id, result_text[:200] if result_text else "")
+                                # 回填到最近的同 id tool_call 行
+                                for _row in reversed(turn_rows):
+                                    if (_row.get("metadata", {}).get("type") == "tool_call"
+                                            and _row["metadata"].get("tool_call_id") == tool_call_id):
+                                        _row["metadata"]["result"] = result_text
+                                        _row["metadata"]["state"] = state
+                                        break
                                 yield _sse_event("tool_result", {
                                     "tool_call_id": tool_call_id,
                                     "state": state,
@@ -380,6 +444,10 @@ async def chat_stream(request: Request, body: ChatRequest):
             logger.exception("流式回复异常")
             yield _sse_event("error", {"message": str(e)})
         finally:
+            # v3: flush 剩余缓冲区
+            _flush_text()
+            _flush_thinking()
+
             # PG 历史双写为 append-only 且风险较低，保留为 fire-and-forget；
             # Redis AgentState 已在上方锁内 awaited 落库（state-loss race 修复）。
             task = asyncio.create_task(_persist_conversation(
@@ -387,6 +455,8 @@ async def chat_stream(request: Request, body: ChatRequest):
                 serialize_message_for_storage(body.message), full_reply,
                 thinking=full_thinking or None,
                 tool_calls=list(tool_call_records.values()) or None,
+                turn_id=turn_id,
+                turn_rows=turn_rows or None,
             ))
             _PERSIST_TASKS.add(task)
             task.add_done_callback(_PERSIST_TASKS.discard)
@@ -455,7 +525,10 @@ async def list_sessions(request: Request, user_id: str | None = None):
     """列出活跃会话（仅内存中）"""
     # 规范化用户标识（防止非法输入）；未提供 user_id 时保持 None 以列出全部会话。
     if user_id is not None:
-        user_id = coerce_id(user_id)
+        try:
+            user_id = coerce_id_strict(user_id, "user_id")
+        except ValueError as e:
+            raise HTTPException(400, str(e))
     session_mgr = request.app.state.session_manager
     sessions = await session_mgr.list_sessions(user_id)
     return {"sessions": sessions, "total": len(sessions)}
@@ -468,7 +541,10 @@ async def list_user_sessions(request: Request, user_id: str):
     返回会话元数据列表，包含标题、时间、消息数等信息。
     用于前端侧边栏展示。
     """
-    user_id = coerce_id(user_id)
+    try:
+        user_id = coerce_id_strict(user_id, "user_id")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     db = getattr(request.app.state, "database_manager", None)
     if not db or not db.is_initialized:
         raise HTTPException(503, "数据库未配置")
@@ -494,8 +570,11 @@ async def get_session_messages(
 
     用于前端切换会话时加载聊天记录，支持滚动加载更多。
     """
-    user_id = coerce_id(user_id)
-    session_id = coerce_id(session_id, default=str(uuid.uuid4()))
+    try:
+        user_id = coerce_id_strict(user_id, "user_id")
+        session_id = coerce_id_strict(session_id, "session_id")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     db = getattr(request.app.state, "database_manager", None)
     if not db or not db.is_initialized:
         raise HTTPException(503, "数据库未配置")
@@ -516,8 +595,11 @@ async def soft_delete_session(request: Request, user_id: str, session_id: str):
     - PG: 将 conversations 表中该会话所有消息标记为 deleted
     - Redis: 清除会话状态
     """
-    user_id = coerce_id(user_id)
-    session_id = coerce_id(session_id, default=str(uuid.uuid4()))
+    try:
+        user_id = coerce_id_strict(user_id, "user_id")
+        session_id = coerce_id_strict(session_id, "session_id")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     db = getattr(request.app.state, "database_manager", None)
     session_mgr = request.app.state.session_manager
 
@@ -553,8 +635,11 @@ async def rename_session(
 
     标题存储在 sessions 表的 config 字段中。
     """
-    user_id = coerce_id(user_id)
-    session_id = coerce_id(session_id, default=str(uuid.uuid4()))
+    try:
+        user_id = coerce_id_strict(user_id, "user_id")
+        session_id = coerce_id_strict(session_id, "session_id")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     db = getattr(request.app.state, "database_manager", None)
     if not db or not db.is_initialized:
         raise HTTPException(503, "数据库未配置")
@@ -579,8 +664,11 @@ class ForkSessionResponse(BaseModel):
 @router.post("/sessions/{user_id}/{session_id}/fork", response_model=ForkSessionResponse)
 async def fork_session(request: Request, user_id: str, session_id: str):
     """基于父会话创建分支，返回新会话信息"""
-    user_id = coerce_id(user_id)
-    session_id = coerce_id(session_id, default=str(uuid.uuid4()))
+    try:
+        user_id = coerce_id_strict(user_id, "user_id")
+        session_id = coerce_id_strict(session_id, "session_id")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     session_mgr = request.app.state.session_manager
     logger.info("Fork 请求: user={} session={}", user_id, session_id)
 

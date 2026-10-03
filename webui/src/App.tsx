@@ -5,6 +5,7 @@ import { Toaster } from 'sonner';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { ChatPage } from '@/pages/chat';
 import { MCPPage } from '@/pages/mcp';
+import { SettingsPage } from '@/pages/settings';
 import { SetupPage } from '@/pages/setup';
 import { SkillPage } from '@/pages/skill';
 
@@ -29,6 +30,7 @@ const router = createBrowserRouter(
 				{ path: '/chat/:sessionId?', element: <ChatPage /> },
 				{ path: '/mcp', element: <MCPPage /> },
 				{ path: '/skill', element: <SkillPage /> },
+				{ path: '/settings/:section?', element: <SettingsPage /> },
 			],
 		},
 		{ path: '/setup', element: <SetupPageRoute /> },
