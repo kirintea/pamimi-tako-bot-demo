@@ -1,6 +1,9 @@
 # 开发环境配置
 # 通过 APP_ENV=dev 加载 (默认)
 
+# OpenTelemetry 追踪（可选，开发默认关闭）
+# endpoint: OTLP gRPC 上报地址（Jaeger / OTEL Collector）
+# channel:  消息渠道 Resource tag，多渠道部署时按实例区分（web / feishu / wechat）
 otel:
   enabled: false
   endpoint: "${OTEL_ENDPOINT:-http://localhost:4317}"
@@ -10,6 +13,10 @@ otel:
   channel: "${OTEL_CHANNEL:-web}"
   headers: {}
 
+# LLM 模型配置（* 必填 api_key / base_url / model）
+# provider:  openai（兼容接口）/ dashscope 
+# stream:    是否默认流式输出
+# timeout:   调用超时（秒），流式模式下为空闲无事件超时
 llm:
   provider: "openai"
   api_key: "${LLM_API_KEY}"
@@ -20,6 +27,9 @@ llm:
   max_tokens: 4096
   temperature: 0.7
 
+# API 认证（开发默认关闭；生产必须 required: true）
+# required: true 时，HTTP Header 需携带 Authorization: Bearer <api_key>
+# 代码中也可通过 AUTH_REQUIRED=true 环境变量强制开启
 auth:
   required: false
   api_key: "${API_KEY:-}"
@@ -34,30 +44,10 @@ server:
 
 agent:
   name: "platform_agent"
-  system_prompt: |
-    你是一个能够处理复杂任务的 AI 助手，具备文件操作、代码编写、命令执行等能力。
-
-    ## 工作原则
-
-    **对于复杂任务，你必须：**
-    1. 先用 TaskCreate 创建任务计划，将大任务拆解为可执行的子任务
-    2. 按顺序逐个完成子任务，每完成一个用 TaskUpdate 标记为 completed
-    3. 遇到问题时分析原因，调整方案，不要轻易放弃
-    4. 如果发现新的子任务，随时用 TaskCreate 追加
-
-    **对于简单任务（1-2 步即可完成），直接执行即可，不需要创建任务列表。**
-
-    ## 能力范围
-    - 读写编辑文件（Read/Write/Edit）
-    - 执行命令（Bash）
-    - 搜索文件（Glob）和内容（Grep）
-    - 任务规划与跟踪（TaskCreate/TaskList/TaskGet/TaskUpdate）
-
-    ## 注意事项
-    - 执行危险命令前先确认（如 rm -rf、格式化等）
-    - 写文件前先读取目标文件了解现有内容
-    - 长时间运行的命令注意超时
-    - 遇到不确定的操作，向用户确认
+  # 系统提示词（从 configs/prompt.py 加载，修改提示词编辑该文件即可）
+  system_prompt:
+    module_path: "configs.prompt"
+    name: "SYSTEM_PROMPT"
   max_iters: 50
   # trigger_ratio: 压缩触发阈值，默认 0.6（~76K tokens 时触发）。
   # 生产环境可调至 0.5 进一步提前触发，减少单次请求 token 消耗。
@@ -80,7 +70,8 @@ agent:
   permission_mode: "bypass"
   # 沙箱配置（三个均启用时：workspaces/{user_id}/ + 独立 skills/ + 独立 mcp/）
   sandbox_dir: "workspaces"
-  sandbox_skills: false      # true 时 skills 从 sandbox_dir/skills/ 加载
+  sandbox_skills: false      # true 时 skills 从 sandbox_dir/{user_id}/skills/ 加载
+                             # ⚠ 若同时用 docker 沙箱，需同步调整顶层 sandbox.extra_mounts 的 host 路径
   sandbox_mcp: false         # true 时 MCP 配置从 sandbox_dir/mcp/ 加载
   sandbox_per_user: true    # true 时沙箱路径追加 user_id 层级（workspaces/{user_id}/）
   tool_guard:
@@ -106,7 +97,7 @@ agent:
   tool_manager:
     config_path: "configs/tools.yaml"
 
-# MCP 服务列表 (可选)
+# MCP 服务列表（可选，取消注释即启用；对应 API Key 见 .env.example 第 8 节）
 mcp_servers:
   # - name: "baidu-maps"
   #   transport: "http"
@@ -146,24 +137,32 @@ redis:
 
 # KV 存储（会话状态 / 元数据持久化层）
 #   redis — 默认，与消息总线共用 Redis（多实例 / 生产）
-#   jsonl — 开发/资源受限：本地 JSONL 文件（./data/kv/kv.jsonl），单进程，无 Redis 依赖
+#   jsonl — 开发/资源受限：本地 JSONL 文件（workspaces/.history/kv_data/kv.jsonl），单进程，无 Redis 依赖
 kv:
   backend: "${KV_BACKEND:-redis}"            # redis / jsonl（可用环境变量临时切换）
-  jsonl_path: "${KV_JSONL_PATH:-./data/kv}"
+  jsonl_path: "${KV_JSONL_PATH:-workspaces/.history/kv_data}"
   jsonl_compact_threshold: 5000              # 追加行数达到阈值时压缩重写
 
-# 上下文回填配置（PG → Redis 恢复时使用）
+# 上下文回填配置
+# 当会话从 PG 恢复到 Redis 时（用户重连 / 跨实例迁移），
+# 控制回填多少条历史消息和 token 预算，避免一次性加载过多。
 context:
-  backfill_message_limit: 20        # 50 → 20，减少回填消息数
-  backfill_token_budget: 15000      # 回填 token 上限
+  backfill_message_limit: 20        # 回填消息条数上限
+  backfill_token_budget: 15000      # 回填 token 预算
 
 # 中间件配置
+# budget_control: 回复预算控制 — 单次回复加权 token 超限时自动收尾
+#   input_weight / output_weight: 加权公式 = input*weight + output*weight
+# rate_limit: 速率限制（默认 10 req/min per-user，未配置则使用 schema 默认值）
 middleware:
   budget_control:
     enabled: true
     token_budget: 80000             # 单次回复加权 token 预算
     input_weight: 1
     output_weight: 2                # 输出 token 成本更高
+  # rate_limit:
+  #   enabled: true
+  #   requests_per_minute: 10
 
 # 沙箱配置
 # backend: "local" = 直接本机执行（默认），"docker" = 转发到沙箱容器
@@ -174,12 +173,16 @@ sandbox:
   backend: "docker"
   container: "platform-sandbox"
   project_root: "/workspace"
+  # 额外挂载（宿主机路径 → 容器内路径）
+  # ⚠ host 路径需与 agent.sandbox_skills 的实际加载路径一致：
+  #   sandbox_skills=false 时 → host: "skills"（项目根，当前配置）
+  #   sandbox_skills=true + per_user=true 时 → 需按 user_id 动态挂载
   extra_mounts:
     - host: "skills"
       container: "/workspace/skills"
       readonly: true
 
-# 对象存储配置（图片上传等）
+# 对象存储配置（图片上传等；S3/OSS 环境变量见 .env.example 第 9 节）
 object_storage:
   backend: "local"              # local / s3 / aliyun_oss
   prefix: "images/"             # 对象 key 前缀

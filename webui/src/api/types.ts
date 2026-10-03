@@ -54,11 +54,21 @@ export interface SessionMessage {
 	content: string;
 	metadata?: MessageMetadata | null;
 	created_at?: string;
+	turn_id?: string | null;
+	turn_seq?: number | null;
 }
 
 export interface MessageMetadata {
 	thinking?: string;
 	tool_calls?: ToolCallRecord[];
+	// v3 有序持久化：行类型标记
+	type?: 'text' | 'thinking' | 'tool_call';
+	text?: string;              // type=thinking 时的思考内容
+	tool_call_id?: string;      // type=tool_call 时
+	tool_name?: string;
+	tool_args?: unknown;
+	result?: string;
+	state?: string;
 }
 
 export interface ToolCallRecord {
@@ -91,6 +101,8 @@ export interface ChatMessage {
 	toolCalls?: ToolCallInfo[];
 	/** 图片 key 列表（用户消息中的图片） */
 	images?: string[];
+	/** 创建时间（epoch ms）— PromptNavigator 时间戳用 */
+	createdAt?: number;
 }
 
 export interface ToolCallInfo {
@@ -112,9 +124,26 @@ export interface WsMessage {
 
 export interface McpInfo {
 	id: string;
+	user_id?: string;
 	name: string;
 	display_name?: string;
-	transport: 'stdio' | 'sse';
+	/** 后端自由字符串：stdio / http / streamable_http / sse */
+	transport: string;
+	command?: string | null;
+	args?: string[];
+	url?: string | null;
+	headers?: Record<string, string>;
+	description?: string;
+	enabled?: boolean;
+	created_at?: string;
+	updated_at?: string;
+}
+
+export interface CreateMcpRequest {
+	name: string;
+	display_name?: string;
+	/** stdio / http / streamable_http / sse */
+	transport: string;
 	command?: string;
 	args?: string[];
 	url?: string;
@@ -122,27 +151,27 @@ export interface McpInfo {
 	description?: string;
 }
 
-export interface CreateMcpRequest {
-	name: string;
-	display_name?: string;
-	transport: 'stdio' | 'sse';
-	command?: string;
-	args?: string[];
-	url?: string;
-	headers?: Record<string, string>;
-	description?: string;
+export interface McpListResponse {
+	mcps: McpInfo[];
+	total: number;
 }
 
 // ========== Skill ==========
 
 export interface SkillInfo {
 	id: string;
+	user_id?: string;
 	name: string;
 	display_name?: string;
 	description?: string;
 	markdown?: string;
 	tags?: string[];
 	author?: string;
+	/** 版本（设计稿卡片右上角 Ver badge） */
+	version?: string | null;
+	enabled?: boolean;
+	created_at?: string;
+	updated_at?: string;
 }
 
 export interface CreateSkillRequest {
@@ -152,6 +181,18 @@ export interface CreateSkillRequest {
 	markdown?: string;
 	tags?: string[];
 	author?: string;
+}
+
+export interface UpdateSkillRequest {
+	name?: string;
+	enabled?: boolean;
+	display_name?: string;
+	description?: string;
+}
+
+export interface SkillListResponse {
+	skills: SkillInfo[];
+	total: number;
 }
 
 // ========== Health ==========

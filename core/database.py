@@ -171,6 +171,8 @@ class DatabaseManager:
         content: str,
         metadata: dict | None = None,
         channel: str = "web",
+        turn_id: str | None = None,
+        turn_seq: int | None = None,
     ) -> int:
         """插入对话记录
 
@@ -181,6 +183,8 @@ class DatabaseManager:
             content: 消息内容
             metadata: 元数据（工具调用、token 用量等）
             channel: 消息渠道（web / feishu / wechat ...，D11）
+            turn_id: 一轮对话唯一标识（v3 多行拆分）
+            turn_seq: 轮内序号（v3 多行拆分）
 
         Returns:
             插入记录的 ID
@@ -203,6 +207,8 @@ class DatabaseManager:
             content,
             json.dumps(metadata) if metadata is not None else None,
             channel,
+            turn_id,
+            turn_seq,
         )
 
     async def get_conversation_history(
@@ -229,19 +235,19 @@ class DatabaseManager:
         """
         if before_id:
             sql = """
-                SELECT id, role, content, metadata, created_at
+                SELECT "id", "role", "content", "metadata", "created_at", "turn_id", "turn_seq"
                 FROM conversations
-                WHERE user_id = $1 AND session_id = $2 AND status = 'active' AND id < $3
-                ORDER BY id DESC
+                WHERE "user_id" = $1 AND "session_id" = $2 AND "status" = 'active' AND "id" < $3
+                ORDER BY "id" DESC
                 LIMIT $4
             """
             rows = await self.fetch(sql, user_id, session_id, before_id, limit)
         else:
             sql = """
-                SELECT id, role, content, metadata, created_at
+                SELECT "id", "role", "content", "metadata", "created_at", "turn_id", "turn_seq"
                 FROM conversations
-                WHERE user_id = $1 AND session_id = $2 AND status = 'active'
-                ORDER BY id DESC
+                WHERE "user_id" = $1 AND "session_id" = $2 AND "status" = 'active'
+                ORDER BY "id" DESC
                 LIMIT $3
             """
             rows = await self.fetch(sql, user_id, session_id, limit)
@@ -263,6 +269,8 @@ class DatabaseManager:
                     "content": row["content"],
                     "metadata": _json.loads(row["metadata"]) if row["metadata"] else None,
                     "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+                    "turn_id": row["turn_id"],
+                    "turn_seq": row["turn_seq"],
                 }
                 for row in messages
             ],
@@ -318,8 +326,8 @@ class DatabaseManager:
         """
         sql = """
             UPDATE conversations
-            SET status = 'deleted'
-            WHERE user_id = $1 AND session_id = $2 AND status = 'active'
+            SET "status" = 'deleted'
+            WHERE "user_id" = $1 AND "session_id" = $2 AND "status" = 'active'
         """
         result = await self.execute(sql, user_id, session_id)
         # 解析 "UPDATE N" 获取受影响行数
@@ -339,8 +347,8 @@ class DatabaseManager:
         """
         sql = """
             UPDATE conversations
-            SET status = 'deleted'
-            WHERE id = $1 AND status = 'active'
+            SET "status" = 'deleted'
+            WHERE "id" = $1 AND "status" = 'active'
         """
         result = await self.execute(sql, conversation_id)
         return "UPDATE 1" in result

@@ -15,6 +15,19 @@ from urllib.parse import urlparse
 # 匹配 $1 / $10 形式的占位符（$.title 等 JSON 路径的 $ 后是 .，不会命中）
 _PLACEHOLDER_RE = re.compile(r"\$(\d+)")
 
+# 匹配 PG 风格双引号标识符 "column_name"（不匹配 JSON 字符串内的双引号）
+_IDENTIFIER_RE = re.compile(r'"([A-Za-z_][A-Za-z0-9_]*)"')
+
+
+def translate_identifiers(sql: str) -> str:
+    """将 PG 风格双引号标识符 "col" 翻译为 MySQL 反引号 `col`
+
+    - 仅匹配合法标识符（字母/下划线开头，仅含字母数字下划线）
+    - 不匹配 JSON 路径中的单引号字符串（如 '$.title'）
+    - 不匹配空字符串引号（如 '{}'）
+    """
+    return _IDENTIFIER_RE.sub(r"`\1`", sql)
+
 
 def translate_placeholders(sql: str, args: tuple) -> tuple[str, tuple]:
     """将 $N 占位符翻译为 %s，并按占位符出现顺序重排参数

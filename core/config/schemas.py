@@ -236,7 +236,7 @@ class KVConfig(BaseModel):
         description="KV 后端: redis / jsonl（jsonl 仅限开发/资源受限单进程场景）",
     )
     jsonl_path: str = Field(
-        default="./data/kv",
+        default="workspaces/.history/kv_data",
         description="jsonl 后端存储目录（backend=jsonl 时生效）",
     )
     jsonl_compact_threshold: int = Field(

@@ -180,24 +180,6 @@ class SkillRecord(_RecordBase):
 
 
 # ============================================================
-# Message 记录
-# ============================================================
-
-class MessageRecord(_RecordBase):
-    """消息持久化记录"""
-
-    user_id: str = Field(description="所属用户 ID")
-    session_id: str = Field(description="所属会话 ID")
-    msg_id: str = Field(description="消息 ID（AgentScope Msg.id）")
-    role: str = Field(description="角色: user / assistant / system / tool")
-    content: str = Field(description="消息文本内容")
-    metadata: dict[str, Any] = Field(
-        default_factory=dict,
-        description="元数据（工具调用、token 用量等）",
-    )
-
-
-# ============================================================
 # Schedule 记录
 # ============================================================
 

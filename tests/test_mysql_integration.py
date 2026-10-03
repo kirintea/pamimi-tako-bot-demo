@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import json
 import os
-import uuid
 
 import pytest
 import pytest_asyncio
@@ -133,33 +132,6 @@ async def test_storage_mcp_name_conflict_returns_same_id(db_manager):
     assert len([m for m in all_mcps if m.name == "it-mcp"]) == 1
 
 
-async def test_storage_message_roundtrip(db_manager):
-    """upsert_message 插入返回自增 id；内容/元数据读回一致"""
-    from core.storage import PostgresStorage
-
-    storage = PostgresStorage(db_manager)
-    msg_id = uuid.uuid4().hex
-    id1 = await storage.upsert_message(
-        user_id="it_user", session_id="it-sess-msg", msg_id=msg_id,
-        role="user", content="集成消息", metadata={"n": 1},
-    )
-    assert isinstance(id1, int)
-    rows = await db_manager.fetch(
-        "SELECT content, metadata FROM messages WHERE msg_id = %s", msg_id,
-    )
-    assert rows[0]["content"] == "集成消息"
-    assert json.loads(rows[0]["metadata"]) == {"n": 1}
-    # 同 msg_id 再写 → 去重走 UPDATE 分支，不产生新行
-    await storage.upsert_message(
-        user_id="it_user", session_id="it-sess-msg", msg_id=msg_id,
-        role="user", content="集成消息-更新", metadata={"n": 2},
-    )
-    again = await db_manager.fetchval(
-        "SELECT content FROM messages WHERE msg_id = %s", msg_id,
-    )
-    assert again == "集成消息-更新"
-
-
 async def test_get_user_sessions_with_title(db_manager):
     """get_user_sessions：JSON_UNQUOTE 取自定义标题 + message_count 聚合"""
     # 清理历史累积（dmx_agent_db 复用库 + 本测试可重跑，message_count 断言需确定性）
@@ -183,8 +155,8 @@ async def test_get_user_sessions_with_title(db_manager):
 # Task 13 — 消息渠道 channel（D11）
 # ============================================================
 
-async def test_channel_column_on_three_tables(db_manager):
-    """Task 13：三表均有 channel 列，默认值 'web'（信息_schema 中字符串默认值带引号，宽松断言）"""
+async def test_channel_column_on_tables(db_manager):
+    """Task 13：conversations/sessions 均有 channel 列，默认值 'web'（信息_schema 中字符串默认值带引号，宽松断言）"""
     rows = await db_manager.fetch(
         # 显式别名同 test_tables_created：MySQL 8 服务端返回大写键，别名钉死小写键
         "SELECT table_name AS table_name, column_default AS column_default "
@@ -192,7 +164,7 @@ async def test_channel_column_on_three_tables(db_manager):
         "WHERE table_schema = DATABASE() AND column_name = 'channel'"
     )
     by_table = {r["table_name"]: str(r["column_default"]) for r in rows}
-    for table in ("conversations", "messages", "sessions"):
+    for table in ("conversations", "sessions"):
         assert table in by_table, f"{table} 缺 channel 列（ALTER 未生效？）"
         assert "web" in by_table[table]
 
