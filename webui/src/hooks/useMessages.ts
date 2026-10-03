@@ -261,6 +261,7 @@ export function useMessages(userId: string, sessionId: string | null) {
 							role: 'user',
 							content: userContent,
 							images: userImages,
+							createdAt: m.created_at ? Date.parse(m.created_at) || undefined : undefined,
 						});
 					} else {
 						const meta = m.metadata;
@@ -318,6 +319,7 @@ export function useMessages(userId: string, sessionId: string | null) {
 						role: 'user',
 						content: userContent,
 						images: userImages,
+						createdAt: m.created_at ? Date.parse(m.created_at) || undefined : undefined,
 					});
 				} else {
 					const meta = m.metadata;
@@ -379,7 +381,7 @@ export function useMessages(userId: string, sessionId: string | null) {
 			if (!content.trim()) return;
 			setMessages(prev => [
 				...prev,
-				{ id: `msg-${Date.now()}`, role: 'user', content: content.trim() },
+				{ id: `msg-${Date.now()}`, role: 'user', content: content.trim(), createdAt: Date.now() },
 			]);
 			setPhase('streaming');
 			wsManager.send({
@@ -404,6 +406,7 @@ export function useMessages(userId: string, sessionId: string | null) {
 				role: 'user',
 				content: displayText,
 				images: imageParts.map(p => p.key),
+				createdAt: Date.now(),
 			},
 		]);
 		setPhase('streaming');

@@ -93,13 +93,13 @@ export function ContextIndicator({ userId, sessionId, className }: Props) {
 	return (
 		<div
 			className={cn(
-				'flex items-center gap-3 px-4 py-1.5 text-xs text-muted-foreground',
+				'flex items-center gap-3 px-5 py-1.5 text-[12px] text-muted-foreground',
 				className,
 			)}
 		>
 			{/* 进度条 */}
 			<div className="flex-1 flex items-center gap-2">
-				<div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
+				<div className="flex-1 h-0.5 bg-muted rounded-full overflow-hidden">
 					<div
 						className={cn(
 							'h-full rounded-full transition-all duration-300',
@@ -133,7 +133,7 @@ export function ContextIndicator({ userId, sessionId, className }: Props) {
 				<Button
 					variant="outline"
 					size="sm"
-					className="h-6 px-2 text-xs"
+					className="h-6 px-2.5 text-xs rounded-full"
 					onClick={handleCompress}
 					disabled={compressing}
 				>
