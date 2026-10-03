@@ -75,6 +75,9 @@ def _security_headers_middleware(app):
             await app(scope, receive, send)
             return
 
+        # 静态前端资源不加强缓存，避免改完 CSS/JS 仍命中旧缓存
+        _no_cache_static = scope.get("path", "").startswith("/static/")
+
         sent_start = False
 
         async def send_wrapper(message):
@@ -86,6 +89,10 @@ def _security_headers_middleware(app):
                 for key, val in _SEC_HEADERS.items():
                     if key not in existing:
                         headers.append((key, val))
+                if _no_cache_static:
+                    _cc = b"cache-control"
+                    headers = [(k, v) for k, v in headers if k.lower() != _cc]
+                    headers.append((_cc, b"no-cache"))
                 message["headers"] = headers
             await send(message)
 
