@@ -6,6 +6,7 @@
 - GET    /skill               — 列出已安装 Skill
 - POST   /skill               — 添加 Skill
 - GET    /skill/{skill_id}    — 获取单个 Skill
+- PATCH  /skill/{skill_id}    — 更新 Skill（启用/禁用、改名）
 - DELETE /skill/{skill_id}    — 删除 Skill
 """
 
@@ -36,6 +37,14 @@ class CreateSkillRequest(BaseModel):
     author: str | None = Field(default=None, description="作者")
 
 
+class UpdateSkillRequest(BaseModel):
+    """更新 Skill 请求"""
+    name: str | None = Field(default=None, description="新名称")
+    enabled: bool | None = Field(default=None, description="启用/禁用")
+    display_name: str | None = Field(default=None, description="显示名称")
+    description: str | None = Field(default=None, description="描述")
+
+
 class SkillResponse(BaseModel):
     """Skill 响应"""
     id: str
@@ -46,6 +55,7 @@ class SkillResponse(BaseModel):
     markdown: str
     tags: list[str]
     author: str | None
+    version: str | None = None
     enabled: bool
     created_at: str
     updated_at: str
@@ -71,6 +81,7 @@ def _skill_to_response(record: SkillRecord) -> SkillResponse:
         markdown=record.markdown,
         tags=record.tags,
         author=record.author,
+        version=record.version,
         enabled=record.enabled,
         created_at=record.created_at.isoformat(),
         updated_at=record.updated_at.isoformat(),
@@ -149,6 +160,39 @@ async def get_skill(
             detail=f"Skill '{skill_id}' 不存在",
         )
     return _skill_to_response(record)
+
+
+@router.patch("/{skill_id}", response_model=SkillResponse)
+async def update_skill(
+    request: Request,
+    skill_id: str,
+    body: UpdateSkillRequest,
+    user_id: str = "anonymous",
+):
+    """更新 Skill"""
+    config = getattr(request.app.state, "config", None)
+    user_id = require_user_id(user_id, is_auth_enabled(config))
+    storage = request.app.state.storage
+    existing = await storage.get_skill(user_id, skill_id)
+    if not existing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Skill '{skill_id}' 不存在",
+        )
+
+    # 应用更新
+    if body.name is not None:
+        existing.name = body.name
+    if body.enabled is not None:
+        existing.enabled = body.enabled
+    if body.display_name is not None:
+        existing.display_name = body.display_name
+    if body.description is not None:
+        existing.description = body.description
+
+    await storage.upsert_skill(user_id, existing)
+    updated = await storage.get_skill(user_id, skill_id)
+    return _skill_to_response(updated)
 
 
 @router.delete("/{skill_id}", status_code=status.HTTP_204_NO_CONTENT)
