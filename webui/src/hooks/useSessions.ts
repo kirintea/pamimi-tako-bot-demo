@@ -46,16 +46,23 @@ export function useSessions(userId: string) {
 		}
 	}, [userId, refresh]);
 
-	const forkSession = useCallback(async (sessionId: string) => {
-		try {
-			const res = await sessionApi.fork(userId, sessionId);
-			await refresh();
-			return res.session_id;
-		} catch (e) {
-			console.error('Fork 失败:', e);
-			return null;
-		}
-	}, [userId, refresh]);
+	const forkSession = useCallback(
+		async (sessionId: string, branchAfterMessageId?: number | string | null) => {
+			try {
+				const res = await sessionApi.fork(
+					userId,
+					sessionId,
+					branchAfterMessageId != null ? Number(branchAfterMessageId) : null,
+				);
+				await refresh();
+				return res.session_id;
+			} catch (e) {
+				console.error('Fork 失败:', e);
+				return null;
+			}
+		},
+		[userId, refresh],
+	);
 
 	return {
 		sessions,

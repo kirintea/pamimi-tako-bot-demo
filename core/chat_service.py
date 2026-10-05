@@ -356,10 +356,11 @@ class ChatService:
                             user_id, session_id, "user", stored_message,
                             channel="web", turn_id=turn_id, turn_seq=0,
                         )
+                        internal_conv_ids: list[int] = []
                         if turn_rows:
                             # v3 新路径：逐行写入有序内容块
                             for row in turn_rows:
-                                await db.insert_conversation(
+                                rid = await db.insert_conversation(
                                     user_id, session_id,
                                     row["role"], row["content"],
                                     metadata=row.get("metadata"),
@@ -367,6 +368,9 @@ class ChatService:
                                     turn_id=turn_id,
                                     turn_seq=row["turn_seq"],
                                 )
+                                mtype = (row.get("metadata") or {}).get("type")
+                                if mtype in ("thinking", "tool_call") and rid:
+                                    internal_conv_ids.append(rid)
                         elif full_reply:
                             # 降级：旧逻辑
                             metadata = {}
@@ -379,6 +383,19 @@ class ChatService:
                                 metadata=metadata or None,
                                 channel="web",
                             )
+
+                        # 轮内压缩（用户建议 a）：归档 thinking/tool_call 内部行，
+                        # 使其退出 UI 与 PG 回填（软删 status='archived'，可经
+                        # UPDATE 回 'active' 恢复）。等价于 隐藏/内部消息剔除。
+                        if internal_conv_ids:
+                            try:
+                                await db.archive_conversation_rows(internal_conv_ids)
+                            except Exception:
+                                logger.warning(
+                                    "归档内部消息行失败: user={} session={}",
+                                    user_id, session_id,
+                                )
+
                         title = stored_message[:30] if stored_message else None
                         if title:
                             existing = await db.get_session_title(user_id, session_id)

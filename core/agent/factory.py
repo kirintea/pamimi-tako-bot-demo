@@ -11,6 +11,8 @@
 
 from __future__ import annotations
 
+import os
+
 from agentscope.agent import Agent, ContextConfig, InjectionConfig, ReActConfig
 from agentscope.formatter import (
     AnthropicChatFormatter,
@@ -40,7 +42,7 @@ from core.workspace import LocalWorkspaceManager
 from middleware.tool_guard import ToolGuardMiddleware
 from middleware.command_guard import CommandGuardMiddleware
 from middleware.tool_manager import ToolManagerMiddleware
-from middleware.path_guard import PathGuardMiddleware
+from middleware.path_guard import PathGuardMiddleware, build_sandbox_rules
 from middleware.docker_sandbox_proxy import DockerSandboxProxy
 from middleware.tracing_context import TracingContextMiddleware
 
@@ -57,13 +59,15 @@ class AgentFactory:
         config: AppConfig,
         state: AgentState | None = None,
         user_id: str | None = None,
+        role: str = "normal",
     ) -> Agent:
         """根据配置创建完整的 Agent 实例
 
         Args:
             config: 应用配置
             state: 已有的 AgentState（从 Redis 恢复时使用），为 None 则创建新状态
-            user_id: 用户标识（sandbox_per_user 启用时用于拼接沙箱路径）
+            user_id: 用户标识（用于拼接用户私有域路径 user_spaces/{user_id}）
+            role: 用户角色（'normal' / 'root'）；root 可写 agent_space 并拥有更宽路径域
 
         Returns:
             配置好的 Agent 实例
@@ -95,19 +99,31 @@ class AgentFactory:
                 e,
             )
 
+        # 4. 创建工作区管理器（同时作为 Offloader）— 提前计算双域路径
+        import os
+        sandbox_base = os.path.abspath(config.agent.sandbox_dir)
+        workspace_manager = LocalWorkspaceManager(base_dir=sandbox_base)
+        # 双域路径（权限隔离）：用户私有域 user_spaces/{user_id}（rw），
+        # Agent 共享域 agent_space（普通用户 ro / root rw）
+        if user_id:
+            user_space_dir = workspace_manager.get_user_space_dir(user_id)
+        else:
+            user_space_dir = sandbox_base
+        agent_space_dir = workspace_manager.agent_space_dir
+
         # 2. 创建 Toolkit
-        toolkit = AgentFactory._create_toolkit(config, user_id=user_id)
+        toolkit = AgentFactory._create_toolkit(
+            config, user_id=user_id, agent_space_dir=agent_space_dir,
+        )
 
         # 3. 创建中间件列表
-        middlewares = AgentFactory._create_middlewares(config, user_id=user_id)
-
-        # 4. 创建工作区管理器（同时作为 Offloader）
-        import os
-        sandbox_dir = os.path.abspath(config.agent.sandbox_dir)
-        if config.agent.sandbox_per_user and user_id:
-            # 防止 user_id="/" 或 "../../" 等越界输入折叠沙箱根目录
-            sandbox_dir = os.path.join(sandbox_dir, coerce_id(user_id))
-        workspace_manager = LocalWorkspaceManager(base_dir=sandbox_dir)
+        middlewares = AgentFactory._create_middlewares(
+            config,
+            user_id=user_id,
+            user_space_dir=user_space_dir,
+            agent_space_dir=agent_space_dir,
+            role=role,
+        )
 
         # 5. 创建 Agent 配置
         react_config = ReActConfig(
@@ -259,6 +275,7 @@ class AgentFactory:
     def _create_toolkit(
         config: AppConfig,
         user_id: str | None = None,
+        agent_space_dir: str | None = None,
     ) -> Toolkit:
         """组装 Toolkit：配置驱动的工具 + MCP + Skills"""
         import os
@@ -267,23 +284,16 @@ class AgentFactory:
         tool_manager = ToolManagerMiddleware(config.agent.tool_manager.config_path)
         tools = tool_manager.load_tools()
 
-        # 沙箱根目录（按需追加 user_id，coerce_id 防止越界）
-        sandbox_dir = os.path.abspath(config.agent.sandbox_dir)
-        if config.agent.sandbox_per_user and user_id:
-            sandbox_dir = os.path.join(sandbox_dir, coerce_id(user_id))
-
-        # MCP 客户端
+        # MCP 客户端（当前统一来自 config.mcp_servers；per-user sandbox MCP 预留）
         if config.agent.sandbox_mcp:
-            # 预留：从 sandbox_dir/mcp/ 加载用户级 MCP 配置。
-            # 当前 MCP 配置仍统一来自 config.mcp_servers（yaml），
-            # 此分支为保留位，暂不执行任何操作。
+            # 预留：从 agent_space/mcp/ 加载用户级 MCP 配置，暂未实现
             pass  # reserved: per-user sandbox MCP loading not yet implemented
         mcp_clients = AgentFactory._create_mcp_clients(config.mcp_servers)
 
-        # Skills 加载器
+        # Skills 加载器 — skills 统一托管在 Agent 共享域 agent_space/skills
         skill_loaders = []
-        if config.agent.sandbox_skills:
-            skills_dir = os.path.join(sandbox_dir, "skills")
+        if config.agent.sandbox_skills and agent_space_dir:
+            skills_dir = os.path.join(agent_space_dir, "skills")
         else:
             skills_dir = "./skills"
         try:
@@ -344,6 +354,9 @@ class AgentFactory:
     def _create_middlewares(
         config: AppConfig,
         user_id: str | None = None,
+        user_space_dir: str | None = None,
+        agent_space_dir: str | None = None,
+        role: str = "normal",
     ) -> list:
         """创建中间件列表"""
         middlewares = []
@@ -365,13 +378,9 @@ class AgentFactory:
                 rules=config.agent.command_guard.rules,
             ))
 
-        # 沙箱路径守卫中间件（路径级）— 始终启用
-        import os
-        sandbox_dir = os.path.abspath(config.agent.sandbox_dir)
-        if config.agent.sandbox_per_user and user_id:
-            sandbox_dir = os.path.join(sandbox_dir, coerce_id(user_id))
-
         # Docker 沙箱代理（执行环境级）— sandbox.backend="docker" 时启用
+        # 容器内执行会 bypass 本地 PathGuard；本地降级（fallback_to_local=True）
+        # 时仍由下方 PathGuard 多域规则守卫（见 sandbox 调整方案 §4.1）。
         if config.sandbox.backend == "docker":
             host_project_root = os.path.abspath(".")
             middlewares.append(DockerSandboxProxy(
@@ -379,7 +388,20 @@ class AgentFactory:
                 host_project_root=host_project_root,
             ))
 
-        middlewares.append(PathGuardMiddleware(sandbox_dir=sandbox_dir))
+        # 沙箱路径守卫中间件（路径级，多域读写隔离）— 始终启用
+        # 双域：user_spaces/{user_id}（rw） + agent_space（ro/rw 视角色）
+        if user_space_dir and agent_space_dir:
+            rules = build_sandbox_rules(
+                user_space_dir, agent_space_dir,
+                is_root=(role == "root"),
+            )
+            middlewares.append(PathGuardMiddleware(rules=rules))
+        else:
+            # 旧布局兜底（未启用双域时）：单条 rw 规则
+            sandbox_dir = os.path.abspath(config.agent.sandbox_dir)
+            if config.agent.sandbox_per_user and user_id:
+                sandbox_dir = os.path.join(sandbox_dir, coerce_id(user_id))
+            middlewares.append(PathGuardMiddleware(sandbox_dir=sandbox_dir))
 
         # 长期记忆中间件 — AgenticMemory（Markdown 文件型，按用户隔离）
         if config.memory.enabled:

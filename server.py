@@ -46,6 +46,7 @@ from core.redis_message_bus import RedisMessageBus
 from core.session import SessionManager
 from core.session_status import SessionStatusTracker
 from core.storage import PostgresStorage
+from core.user_service import UserService
 from core.workspace import LocalWorkspaceManager
 
 
@@ -201,6 +202,16 @@ def create_app(config) -> FastAPI:
                 "数据库未配置（database.url 为空），跳过初始化；/health 显示 not_configured"
             )
 
+        # 用户服务（角色解析 + 懒注册）
+        # DB 未配置时优雅降级：角色完全由 config.agent.root_user_ids +
+        # 环境变量 ROOT_USER_IDS 推导，不阻断启动。
+        user_service = UserService(config, db_mgr)
+        app.state.user_service = user_service
+        logger.info(
+            "用户服务已就绪（root 预置: {}）",
+            sorted(user_service._root_ids) if user_service._root_ids else "无",
+        )
+
         # 应用配置对象（供 /context 等端点读取 request.app.state.config）
         app.state.config = config
 
@@ -249,6 +260,7 @@ def create_app(config) -> FastAPI:
             max_sessions=getattr(config.server, "max_sessions", 100),
             storage=storage,
             db=db_mgr,
+            user_service=user_service,
         )
         # 初始化 Redis 连接（与消息总线一致：失败降级而非硬崩溃，app 仍服务 /health）
         try:

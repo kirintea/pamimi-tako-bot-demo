@@ -187,6 +187,7 @@ class PostgresStorage:
         user_id: str,
         new_name: str | None = None,
         new_session_id: str | None = None,
+        branch_after_message_id: int | None = None,
     ) -> SessionRecord:
         """基于已有会话创建分支（Fork）
 

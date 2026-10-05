@@ -183,6 +183,21 @@ class AgentConfig(BaseModel):
         default=False,
         description="true 时沙箱路径追加 user_id 层级（workspaces/{user_id}/）",
     )
+    agent_space_name: str = Field(
+        default="agent_space",
+        description="Agent 共享域目录名（位于 sandbox_dir 下）。普通用户只读、root 可写；"
+        "存放 skills / mcp / soul.md / agent.md / prompts / runtime 等 Agent 资产。",
+    )
+    user_spaces_name: str = Field(
+        default="user_spaces",
+        description="用户私有域父目录名（位于 sandbox_dir 下）。每个用户的可写域为 "
+        "user_spaces/{user_id}/（memory / sessions / uploads / scratch）。",
+    )
+    root_user_ids: list[str] = Field(
+        default_factory=list,
+        description="预置 root 用户 user_id 列表（创建时配置）；命中者角色为 root，"
+        "可写 agent_space 并只读查看他人会话。可经环境变量 ROOT_USER_IDS（逗号分隔）追加。",
+    )
     tool_guard: ToolGuardConfig = Field(default_factory=ToolGuardConfig, description="工具守卫配置")
     command_guard: CommandGuardConfig = Field(default_factory=CommandGuardConfig, description="命令内容守卫配置")
     tool_manager: ToolManagerConfig = Field(default_factory=ToolManagerConfig, description="工具管理器配置")
@@ -249,6 +264,10 @@ class ContextBackfillConfig(BaseModel):
     """PG 回填配置"""
     backfill_message_limit: int = Field(default=20, description="回填消息条数上限")
     backfill_token_budget: int = Field(default=15000, description="回填 token 预算")
+    fork_window_turns: int = Field(
+        default=10,
+        description="fork 后动态窗口：新会话的 Agent 上下文仅保留最近 N 轮（系统提示词由 AgentFactory 注入，天然保留）",
+    )
 
 
 class BudgetControlConfig(BaseModel):
@@ -333,7 +352,7 @@ class ObjectStorageConfig(BaseModel):
     prefix: str = Field(default="images/", description="对象 key 前缀")
 
     # local 模式
-    local_dir: str = Field(default="workspaces/uploads", description="本地存储目录（backend=local）")
+    local_dir: str = Field(default="workspaces/user_spaces", description="本地存储目录（backend=local）；落入用户私有域 user_spaces/{user_id}/uploads/...")
 
     # S3 通用（AWS S3 / MinIO / Cloudflare R2）
     s3_endpoint: str | None = Field(default=None, description="S3 端点地址（MinIO/R2 需填写）")
@@ -370,7 +389,8 @@ class MemoryConfig(BaseModel):
 
     enabled: bool = False
     backend: str = "local"
-    workdir_base: str = "./workspaces"
+    # 记忆归用户域：workdir = {workdir_base}/{user_id}/memory
+    workdir_base: str = "./workspaces/user_spaces"
 
 
 class AppConfig(BaseModel):
