@@ -11,7 +11,7 @@
 
 import { ArrowDown } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useOutletContext, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 
 import { wsManager } from '@/api/ws';
@@ -44,30 +44,56 @@ export function ChatPage() {
 		forkSession,
 	} = useSessions(userId);
 
+	// 从 AppLayout Outlet context 获取侧栏刷新函数
+	// （AppLayout 的 useSessions 实例与 ChatPage 的独立，必须通过 context 同步）
+	const { refreshSessions: refreshSidebar } = useOutletContext<{ refreshSessions: () => Promise<void> }>();
+
 	const {
 		messages,
 		phase,
 		connectionStatus,
+		resolvedSessionId,
 		sendMessage,
 		cancelGeneration,
-		switchSession,
 	} = useMessages(userId, urlSessionId ?? null);
 
-	// Sync session switch
-	useEffect(() => {
-		if (urlSessionId) {
-			switchSession(urlSessionId);
-		}
-	}, [urlSessionId, switchSession]);
+	// 注意：switchSession effect 已移除 — useMessages 主 effect（dep 含 sessionId）
+	// 已覆盖会话切换的全部逻辑（清空消息 / connect WS / loadHistory），
+	// 保留此 effect 会导致双 loadHistory 竞态 + 双 WS 重连，fork 导航后闪白屏。
 
-	const handleFork = useCallback(async () => {
-		if (!urlSessionId) return;
-		const newSessionId = await forkSession(urlSessionId);
-		if (newSessionId) {
-			navigate(`/chat/${newSessionId}`);
-			refreshSessions();
+	// 新会话首次发消息后，将 URL 从 /chat 提升到 /chat/{resolvedSessionId}，
+	// 确保刷新后仍能回到本会话，同时使 fork 按钮依赖的 urlSessionId 始终有值。
+	// 仅在有消息后才导航，避免无消息时产生幽灵 URL。
+	// 同时刷新 AppLayout 侧栏，使新会话立即出现在「最近」列表中。
+	const navigatedRef = useRef<string | null>(null);
+	useEffect(() => {
+		if (!urlSessionId && resolvedSessionId && messages.length > 0
+			&& navigatedRef.current !== resolvedSessionId) {
+			navigatedRef.current = resolvedSessionId;
+			navigate(`/chat/${resolvedSessionId}`, { replace: true });
+			// 新会话首次消息后刷新侧栏（AppLayout 实例）
+			refreshSidebar().catch(() => {});
 		}
-	}, [urlSessionId, forkSession, navigate, refreshSessions]);
+	}, [urlSessionId, resolvedSessionId, messages.length, navigate, refreshSidebar]);
+
+	/**
+	 * 有效 sessionId（URL 优先，无 URL 时用 WS 分配的真实 id）；
+	 * 确保在 /chat（无 sessionId）路径下 fork 仍能拿到真实会话 id。
+	 */
+	const activeSessionId = urlSessionId ?? resolvedSessionId;
+
+	const handleFork = useCallback(
+		async (branchAfterMessageId?: number | string | null) => {
+			if (!activeSessionId) return;
+			const newSessionId = await forkSession(activeSessionId, branchAfterMessageId);
+			if (newSessionId) {
+				// 刷新 AppLayout 侧栏（useSessions 实例独立，必须通过 context 同步）
+				await refreshSidebar();
+				navigate(`/chat/${newSessionId}`);
+			}
+		},
+		[activeSessionId, forkSession, navigate, refreshSidebar],
+	);
 
 	const hasMessages = messages.length > 0;
 
@@ -179,11 +205,11 @@ export function ChatPage() {
 											key={msg.id}
 											message={msg}
 											className={i > 0 ? 'mt-5' : ''}
-											onFork={
-												urlSessionId && msg.role === 'assistant'
-													? handleFork
-													: undefined
-											}
+										onFork={
+											activeSessionId && msg.role === 'assistant'
+												? () => handleFork(msg.dbId ?? null)
+												: undefined
+										}
 										/>
 									))}
 									{phase === 'streaming' && (

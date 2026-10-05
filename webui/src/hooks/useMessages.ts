@@ -10,7 +10,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { sessionApi } from '@/api/session';
-import type { ChatMessage, ContentPart, ToolCallInfo, ToolCallRecord, WsMessage } from '@/api/types';
+import { rebuildChatMessages } from '@/lib/rebuildMessages';
+import type { ChatMessage, ContentPart, ToolCallInfo, WsMessage } from '@/api/types';
 import { wsManager } from '@/api/ws';
 
 export type ReplyPhase = 'idle' | 'streaming' | 'interrupting';
@@ -19,6 +20,16 @@ export function useMessages(userId: string, sessionId: string | null) {
 	const [messages, setMessages] = useState<ChatMessage[]>([]);
 	const [phase, setPhase] = useState<ReplyPhase>('idle');
 	const [connectionStatus, setConnectionStatus] = useState<'connected' | 'connecting' | 'disconnected'>('disconnected');
+	/**
+	 * resolvedSessionId：始终为「当前活跃会话的真实 id」。
+	 *
+	 * 优先级：WS `connected` 事件返回的 server-assigned id（新会话 / 无 urlSessionId 场景）
+	 *        > 页面 prop sessionId（来自 URL）。
+	 *
+	 * 用途：fork 按钮 & handleFork 使用此值，确保在 `/chat`（无 sessionId）路径下
+	 *        仍能正确 fork，无需手动刷新。
+	 */
+	const [resolvedSessionId, setResolvedSessionId] = useState<string | null>(sessionId);
 	const phaseRef = useRef<ReplyPhase>('idle');
 	phaseRef.current = phase;
 
@@ -30,8 +41,13 @@ export function useMessages(userId: string, sessionId: string | null) {
 			console.debug('[WS recv]', msg.type, msg.payload);
 		}
 		switch (msg.type) {
-			case 'connected':
+			case 'connected': {
+				// 服务端为新连接分配真实 session_id（尤其新会话无 urlSessionId 时），
+				// 捕获后用于 fork 按钮 & URL 导航，避免「必须刷新才出现 fork 按钮」。
+				const sid = (msg.payload as { session_id?: string })?.session_id;
+				if (sid) setResolvedSessionId(sid);
 				break;
+			}
 
 			case 'text_delta': {
 				const delta = (msg.payload as { delta: string }).delta;
@@ -217,144 +233,13 @@ export function useMessages(userId: string, sessionId: string | null) {
 		}
 	};
 
-	/** 加载历史消息（含 thinking + toolCalls 重建，v3 有序持久化） */
+	/** 加载历史消息（复用 rebuildChatMessages，v3 有序持久化）。
+	 *  对本人会话始终传 viewer=当前 userId，以硬化越权闸（见方案 §8.6）。 */
 	const loadHistory = useCallback(async (sid: string) => {
 		if (!userId) return;
 		try {
-			const res = await sessionApi.messages(userId, sid);
-			const rebuilt: ChatMessage[] = [];
-
-			// v3: 按 turn_id 分组（新数据）vs 旧数据（无 turn_id）
-			const turns = new Map<string, typeof res.messages>();
-			const legacyMessages: typeof res.messages = [];
-
-			for (const m of res.messages) {
-				if (m.turn_id) {
-					if (!turns.has(m.turn_id)) turns.set(m.turn_id, []);
-					turns.get(m.turn_id)!.push(m);
-				} else {
-					legacyMessages.push(m);
-				}
-			}
-
-			// === v3 新路径：按 turn 处理 ===
-			for (const [, turnMsgs] of turns) {
-				// 按 turn_seq 排序（DB 已排序，此处防御性排序）
-				turnMsgs.sort((a, b) => (a.turn_seq ?? 0) - (b.turn_seq ?? 0));
-
-				for (const m of turnMsgs) {
-					if (m.role === 'user') {
-						// 用户消息处理
-						let userContent = m.content;
-						let userImages: string[] | undefined;
-						try {
-							const parsed = JSON.parse(m.content);
-							if (Array.isArray(parsed)) {
-								const textParts = parsed.filter((p: { type: string }) => p.type === 'text');
-								const imageParts = parsed.filter((p: { type: string }) => p.type === 'image');
-								userContent = textParts.map((p: { text: string }) => p.text).join('') || '';
-								if (imageParts.length) userImages = imageParts.map((p: { key: string }) => p.key);
-							}
-						} catch { /* 纯文本 */ }
-						rebuilt.push({
-							id: `hist-${m.id}`,
-							role: 'user',
-							content: userContent,
-							images: userImages,
-							createdAt: m.created_at ? Date.parse(m.created_at) || undefined : undefined,
-						});
-					} else {
-						const meta = m.metadata;
-						const blockType = meta?.type;
-
-						if (blockType === 'thinking' && meta) {
-							rebuilt.push({
-								id: `hist-${m.id}-think`,
-								role: 'assistant',
-								content: '',
-								thinking: meta.text || '',
-							});
-						} else if (blockType === 'tool_call' && meta) {
-							rebuilt.push({
-								id: `hist-${m.id}-tool-${meta.tool_call_id}`,
-								role: 'assistant',
-								content: '',
-								toolCalls: [{
-									tool_name: meta.tool_name || '',
-									tool_call_id: meta.tool_call_id || '',
-									tool_args: meta.tool_args,
-									result: meta.result,
-									state: meta.state,
-								}],
-							});
-						} else if (blockType === 'text' || (!blockType && m.content.trim())) {
-							if (m.content.trim()) {
-								rebuilt.push({
-									id: `hist-${m.id}-text`,
-									role: 'assistant',
-									content: m.content,
-								});
-							}
-						}
-					}
-				}
-			}
-
-			// === 降级路径：旧数据（无 turn_id）===
-			for (const m of legacyMessages) {
-				if (m.role === 'user') {
-					let userContent = m.content;
-					let userImages: string[] | undefined;
-					try {
-						const parsed = JSON.parse(m.content);
-						if (Array.isArray(parsed)) {
-							const textParts = parsed.filter((p: { type: string }) => p.type === 'text');
-							const imageParts = parsed.filter((p: { type: string }) => p.type === 'image');
-							userContent = textParts.map((p: { text: string }) => p.text).join('') || '';
-							if (imageParts.length) userImages = imageParts.map((p: { key: string }) => p.key);
-						}
-					} catch { /* 纯文本 */ }
-					rebuilt.push({
-						id: `hist-${m.id}`,
-						role: 'user',
-						content: userContent,
-						images: userImages,
-						createdAt: m.created_at ? Date.parse(m.created_at) || undefined : undefined,
-					});
-				} else {
-					const meta = m.metadata;
-					if (meta?.thinking) {
-						rebuilt.push({
-							id: `hist-${m.id}-think`,
-							role: 'assistant',
-							content: '',
-							thinking: meta.thinking,
-						});
-					}
-					if (meta?.tool_calls?.length) {
-						rebuilt.push({
-							id: `hist-${m.id}-tool`,
-							role: 'assistant',
-							content: '',
-							toolCalls: meta.tool_calls.map((tc: ToolCallRecord) => ({
-								tool_name: tc.tool_name,
-								tool_call_id: tc.tool_call_id,
-								tool_args: tc.tool_args,
-								result: tc.result,
-								state: tc.state,
-							})),
-						});
-					}
-					if (m.content.trim()) {
-						rebuilt.push({
-							id: `hist-${m.id}`,
-							role: 'assistant',
-							content: m.content,
-						});
-					}
-				}
-			}
-
+			const res = await sessionApi.messages(userId, sid, { viewer: userId });
+			const rebuilt: ChatMessage[] = rebuildChatMessages(res);
 			setMessages(rebuilt);
 		} catch (e) {
 			console.error('加载消息历史失败:', e);
@@ -439,9 +324,10 @@ export function useMessages(userId: string, sessionId: string | null) {
 	useEffect(() => {
 		if (!userId) return;
 
-		// sessionId 变化时清空旧消息
+		// sessionId 变化时清空旧消息 & 重置 resolvedSessionId
 		setMessages([]);
 		setPhase('idle');
+		setResolvedSessionId(sessionId);
 
 		connect(sessionId ?? undefined);
 
@@ -465,6 +351,8 @@ export function useMessages(userId: string, sessionId: string | null) {
 		messages,
 		phase,
 		connectionStatus,
+		/** 当前活跃会话的真实 id（WS `connected` 事件赋值，始终有值，即使 URL 无 sessionId） */
+		resolvedSessionId,
 		sendMessage,
 		cancelGeneration,
 		clearMessages,

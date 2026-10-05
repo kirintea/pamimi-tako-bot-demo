@@ -57,6 +57,10 @@ services:
     volumes:
       # 绑定挂载宿主机 workspaces/，与 app 容器共享同一目录
       - ./workspaces:/workspace/workspaces
+      # 双域防御纵深：agent_space 以只读挂入沙箱，
+      # 防止容器内 Bash/Python 工具越权改写 Agent 共享资产
+      # （PathGuard 是主机侧权威边界；此处为容器侧纵深防御，见方案 §4.1）
+      - ./workspaces/agent_space:/workspace/workspaces/agent_space:ro
     stdin_open: true
     tty: true
     environment:

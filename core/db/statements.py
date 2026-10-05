@@ -178,6 +178,44 @@ STATEMENTS: dict[str, Statement] = {
         """,
     ),
     # ---------------------------------------------------------------
+    # user_service.upsert_user — 客户端主键 (user_id) 冲突更新
+    # ---------------------------------------------------------------
+    "upsert_user": Statement(
+        pg="""
+            INSERT INTO users ("user_id", "role", "display_name", "is_root", "created_at", "last_active")
+            VALUES ($1, $2, $3, $4, NOW(), NOW())
+            ON CONFLICT ("user_id") DO UPDATE SET
+                "role" = EXCLUDED."role",
+                "display_name" = COALESCE(EXCLUDED."display_name", users."display_name"),
+                "is_root" = EXCLUDED."is_root",
+                "last_active" = NOW()
+            RETURNING "user_id"
+        """,
+        mysql="""
+            INSERT INTO users ("user_id", "role", "display_name", "is_root", "created_at", "last_active")
+            VALUES ($1, $2, $3, $4, NOW(), NOW())
+            ON DUPLICATE KEY UPDATE
+                "role" = VALUES("role"),
+                "display_name" = COALESCE(VALUES("display_name"), "display_name"),
+                "is_root" = VALUES("is_root"),
+                "last_active" = NOW()
+        """,
+        # upsert 在 MySQL 侧 update 时 lastrowid 为 0，故回查现有行 user_id
+        mysql_id_sql='SELECT "user_id" FROM users WHERE "user_id" = $1',
+        mysql_id_args=(1,),
+    ),
+    # ---------------------------------------------------------------
+    # user_service.get_user_role — 单值查询
+    # ---------------------------------------------------------------
+    "get_user_role": Statement(
+        pg="""
+            SELECT "role" FROM users WHERE "user_id" = $1
+        """,
+        mysql="""
+            SELECT "role" FROM users WHERE "user_id" = $1
+        """,
+    ),
+    # ---------------------------------------------------------------
     # database.insert_conversation — 自增主键纯 INSERT
     # ---------------------------------------------------------------
     "insert_conversation": Statement(
@@ -192,35 +230,38 @@ STATEMENTS: dict[str, Statement] = {
         """,
     ),
     # ---------------------------------------------------------------
-    # database.upsert_session_title — config JSON 合并（PG || 拼接 vs MySQL JSON_MERGE_PATCH）
+    # database.upsert_session_title — 写入 title 列 + config.title（双写兼容）
+    # 参数：$1=session_id, $2=user_id, $3=title(VARCHAR), $4=config(JSON)
     # ---------------------------------------------------------------
     "upsert_session_title": Statement(
         pg="""
-            INSERT INTO sessions ("id", "user_id", "agent_id", "config", "status")
-            VALUES ($1, $2, 'default', $3, 'active')
+            INSERT INTO sessions ("id", "user_id", "agent_id", "title", "config", "status")
+            VALUES ($1, $2, 'default', $3, $4::jsonb, 'active')
             ON CONFLICT ("id") DO UPDATE SET
+                "title" = EXCLUDED."title",
                 "config" = COALESCE(sessions."config", '{}'::jsonb) || EXCLUDED."config",
                 "updated_at" = NOW()
         """,
         mysql="""
-            INSERT INTO sessions ("id", "user_id", "agent_id", "config", "status")
-            VALUES ($1, $2, 'default', $3, 'active')
+            INSERT INTO sessions ("id", "user_id", "agent_id", "title", "config", "status")
+            VALUES ($1, $2, 'default', $3, CAST($4 AS JSON), 'active')
             ON DUPLICATE KEY UPDATE
+                "title" = VALUES("title"),
                 "config" = JSON_MERGE_PATCH(COALESCE("config", JSON_OBJECT()), VALUES("config")),
                 "updated_at" = NOW()
         """,
     ),
     # ---------------------------------------------------------------
-    # database.get_session_title — JSON 取字段
+    # database.get_session_title — 优先读 title 列，降级到 config->>'title'
     # ---------------------------------------------------------------
     "get_session_title": Statement(
         pg="""
-            SELECT "config"->>'title' AS title
+            SELECT COALESCE("title", "config"->>'title') AS title
             FROM sessions
             WHERE "id" = $1 AND "user_id" = $2 AND "status" = 'active'
         """,
         mysql="""
-            SELECT JSON_UNQUOTE(JSON_EXTRACT("config", '$.title')) AS title
+            SELECT COALESCE("title", JSON_UNQUOTE(JSON_EXTRACT("config", '$.title'))) AS title
             FROM sessions
             WHERE "id" = $1 AND "user_id" = $2 AND "status" = 'active'
         """,
@@ -235,7 +276,7 @@ STATEMENTS: dict[str, Statement] = {
                 MIN(c."created_at") AS created_at,
                 MAX(c."created_at") AS last_active,
                 COUNT(*) FILTER (WHERE c."role" = 'user') AS message_count,
-                s."config"->>'title' AS custom_title,
+                COALESCE(s."title", s."config"->>'title') AS custom_title,
                 (
                     SELECT LEFT(x."content", 30)
                     FROM conversations x
@@ -249,7 +290,7 @@ STATEMENTS: dict[str, Statement] = {
             FROM conversations c
             LEFT JOIN sessions s ON s."id" = c."session_id" AND s."user_id" = c."user_id" AND s."status" = 'active'
             WHERE c."user_id" = $1 AND c."status" = 'active'
-            GROUP BY c."session_id", s."config"
+            GROUP BY c."session_id", s."title", s."config"
             ORDER BY last_active DESC
             LIMIT $2
         """,
@@ -259,7 +300,7 @@ STATEMENTS: dict[str, Statement] = {
                 MIN(c."created_at") AS created_at,
                 MAX(c."created_at") AS last_active,
                 SUM(CASE WHEN c."role" = 'user' THEN 1 ELSE 0 END) AS message_count,
-                JSON_UNQUOTE(JSON_EXTRACT(s."config", '$.title')) AS custom_title,
+                COALESCE(s."title", JSON_UNQUOTE(JSON_EXTRACT(s."config", '$.title'))) AS custom_title,
                 (
                     SELECT LEFT(x."content", 30)
                     FROM conversations x
@@ -273,7 +314,7 @@ STATEMENTS: dict[str, Statement] = {
             FROM conversations c
             LEFT JOIN sessions s ON s."id" = c."session_id" AND s."user_id" = c."user_id" AND s."status" = 'active'
             WHERE c."user_id" = $1 AND c."status" = 'active'
-            GROUP BY c."session_id", s."config"
+            GROUP BY c."session_id", s."title", s."config"
             ORDER BY last_active DESC
             LIMIT $2
         """,

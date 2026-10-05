@@ -68,6 +68,7 @@ DDL_POSTGRES = [
         "agent_id"          VARCHAR(32) NOT NULL,
         "source"            VARCHAR(16) NOT NULL DEFAULT 'user',
         "team_id"           VARCHAR(32),
+        "title"             VARCHAR(256) DEFAULT NULL,
         "config"            JSONB DEFAULT NULL,
         "state_json"        TEXT NOT NULL DEFAULT '',
         "status"            VARCHAR(16) NOT NULL DEFAULT 'active',
@@ -77,6 +78,10 @@ DDL_POSTGRES = [
     """,
     """
     ALTER TABLE sessions ALTER COLUMN "config" SET DEFAULT NULL
+    """,
+    # 迁移：给已有 sessions 表补 title 列（无则跳过）
+    """
+    ALTER TABLE sessions ADD COLUMN IF NOT EXISTS "title" VARCHAR(256) DEFAULT NULL
     """,
 
     # 状态字段（软删除：active / deleted）
@@ -179,6 +184,29 @@ DDL_POSTGRES = [
     ON agents("user_id")
     """,
 
+    # ============================================================
+    # 用户表（权限 / root 识别，Phase 1）
+    # ============================================================
+
+    # users 表 — 用户身份与角色
+    #   role:    'normal'（普通用户）/ 'root'（预置管理员）
+    #   is_root: 冗余布尔，便于索引与快速判断（与 role 保持一致）
+    #   root 身份的权威来源是 config.agent.root_user_ids + 环境变量 ROOT_USER_IDS，
+    #   DB 中的 role/is_root 仅作记录与审计。
+    """
+    CREATE TABLE IF NOT EXISTS users (
+        "user_id"      VARCHAR(64) PRIMARY KEY,
+        "role"         VARCHAR(16) NOT NULL DEFAULT 'normal',
+        "display_name" VARCHAR(128),
+        "is_root"      BOOLEAN NOT NULL DEFAULT FALSE,
+        "created_at"   TIMESTAMPTZ DEFAULT NOW(),
+        "last_active"  TIMESTAMPTZ DEFAULT NOW()
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_users_role
+    ON users("role")
+    """,
 
     # ============================================================
     # 会话分支血缘（Fork 特性）
@@ -269,6 +297,7 @@ DDL_MYSQL = [
         "agent_id"          VARCHAR(32) NOT NULL,
         "source"            VARCHAR(16) NOT NULL DEFAULT 'user',
         "team_id"           VARCHAR(32) NULL,
+        "title"             VARCHAR(256) NULL,
         "config"            JSON NULL,
         "state_json"        TEXT NULL,
         "status"            VARCHAR(16) NOT NULL DEFAULT 'active',
@@ -277,6 +306,10 @@ DDL_MYSQL = [
         "created_at"        DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
         "updated_at"        DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3)
     )
+    """,
+    # 迁移：给已有 sessions 表补 title 列（无则跳过）
+    """
+    ALTER TABLE sessions ADD COLUMN IF NOT EXISTS "title" VARCHAR(256) NULL
     """,
     'CREATE INDEX idx_sessions_user_agent ON sessions("user_id", "agent_id")',
     'CREATE INDEX idx_sessions_team ON sessions("team_id")',
@@ -347,6 +380,19 @@ DDL_MYSQL = [
     """,
     'CREATE INDEX idx_agents_user ON agents("user_id")',
 
+    # 用户表（权限 / root 识别，Phase 1）
+    """
+    CREATE TABLE IF NOT EXISTS users (
+        "user_id"      VARCHAR(64) PRIMARY KEY,
+        "role"         VARCHAR(16) NOT NULL DEFAULT 'normal',
+        "display_name" VARCHAR(128) NULL,
+        "is_root"      TINYINT(1) NOT NULL DEFAULT 0,
+        "created_at"   DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
+        "last_active"  DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3)
+    )
+    """,
+    'CREATE INDEX idx_users_role ON users("role")',
+
     # 消息渠道 channel
     'ALTER TABLE conversations ADD COLUMN "channel" VARCHAR(16) NOT NULL DEFAULT \'web\'',
     'ALTER TABLE sessions ADD COLUMN "channel" VARCHAR(16) NOT NULL DEFAULT \'web\'',
@@ -381,4 +427,5 @@ REQUIRED_TABLES = [
     "skills",
     "schedules",
     "agents",
+    "users",
 ]

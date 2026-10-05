@@ -48,6 +48,19 @@ export interface SessionListResponse {
 	total: number;
 }
 
+/** root 管理视图：跨用户扫描返回的所有会话 */
+export interface AdminSessionsResponse {
+	sessions: SessionInfo[];
+	total: number;
+}
+
+/** 当前用户身份与角色（GET /me） */
+export interface MeResponse {
+	user_id: string;
+	role: 'root' | 'normal';
+	is_root: boolean;
+}
+
 export interface SessionMessage {
 	id: number;
 	role: 'user' | 'assistant';
@@ -95,6 +108,8 @@ export interface ChatRequest {
 
 export interface ChatMessage {
 	id: string;
+	/** 后端 PG conversations 行的真实主键（历史消息才有；供中途 fork 截断用） */
+	dbId?: number;
 	role: 'user' | 'assistant';
 	content: string;
 	thinking?: string;

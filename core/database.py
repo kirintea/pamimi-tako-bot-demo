@@ -278,6 +278,102 @@ class DatabaseManager:
             "oldest_id": oldest_id,
         }
 
+    async def copy_conversations_prefix(
+        self,
+        dst_session_id: str,
+        src_session_id: str,
+        user_id: str,
+        before_id: int | None = None,
+        limit: int | None = None,
+    ) -> int:
+        """将源会话的历史消息（可选前缀）复制为新会话，重映射 session_id/user_id。
+
+        仅复制 ``status='active'`` 的行（跳过 archived/deleted），按 ``id`` 正序，
+        保证上下文顺序。用于 fork：让新会话在 PG 中存在可见历史，修复 fork 后空白。
+
+        Args:
+            dst_session_id: 目标（新）会话 ID
+            src_session_id: 源（父）会话 ID
+            user_id: 用户 ID（源与目标同源）
+            before_id: 游标，仅复制 ``id <= before_id`` 的前缀（中途 fork）；
+                ``None`` 表示全量复制
+            limit: 复制行数上限（可选）
+
+        Returns:
+            复制的消息行数
+        """
+        # 参数顺序：$1=user_id, $2=dst_session_id, $3=src_session_id
+        # INSERT 列序为 (user_id, session_id, ...) 对应 SELECT ($1, $2, ...)，
+        # 故 user_id 取 $1、session_id 取 $2（= 新子会话 id），切勿颠倒入库键。
+        #
+        # 注意：asyncpg 对同一参数在 INSERT SELECT 和 WHERE 中的类型推断不同
+        # （text vs character varying）会抛 AmbiguousParameterError，因此必须
+        # 显式 ::varchar 转换以消除歧义。
+        params: list = [user_id, dst_session_id, src_session_id]
+        where_clauses = [
+            '"user_id" = $1::varchar',
+            '"session_id" = $3::varchar',
+            '"status" = \'active\'',
+        ]
+        if before_id is not None:
+            params.append(before_id)
+            where_clauses.append(f'"id" <= ${len(params)}')
+        where_sql = " AND ".join(where_clauses)
+        order_sql = 'ORDER BY "id" ASC'
+        if limit is not None:
+            params.append(limit)
+            order_sql += f' LIMIT ${len(params)}'
+
+        sql = (
+            'INSERT INTO conversations '
+            '("user_id", "session_id", "role", "content", "metadata", "status", "channel", "turn_id", "turn_seq", "created_at") '
+            f'SELECT $1::varchar, $2::varchar, "role", "content", "metadata", "status", "channel", "turn_id", "turn_seq", "created_at" '
+            f'FROM conversations WHERE {where_sql} {order_sql}'
+        )
+        result = await self.execute(sql, *params)
+        # asyncpg 命令标签形如 "INSERT 0 N" / "INSERT N"
+        if not result:
+            return 0
+        try:
+            return int(str(result).split()[-1])
+        except (ValueError, IndexError):
+            return 0
+
+    async def delete_conversations(
+        self,
+        user_id: str,
+        session_id: str,
+    ) -> int:
+        """删除某会话的全部消息行（用于 fork 失败回滚，避免孤儿数据）。"""
+        sql = 'DELETE FROM conversations WHERE "user_id" = $1 AND "session_id" = $2'
+        result = await self.execute(sql, user_id, session_id)
+        if not result:
+            return 0
+        try:
+            return int(str(result).split()[-1])
+        except (ValueError, IndexError):
+            return 0
+
+    async def archive_conversation_rows(self, ids: list[int]) -> int:
+        """将指定消息行置为 ``archived``（软删，可恢复）。
+
+        用于轮内压缩：一轮结束后把 thinking / tool_call 等内部行归档，
+        使其在 UI 与回填中不再出现（等价于 隐藏/内部消息剔除）。
+        逐行 UPDATE 以保持 PostgreSQL / MySQL 双后端兼容。
+        """
+        if not ids:
+            return 0
+        archived = 0
+        for rid in ids:
+            res = await self.execute(
+                'UPDATE conversations SET "status" = \'archived\' '
+                'WHERE "id" = $1 AND "status" = \'active\'',
+                rid,
+            )
+            if res and "UPDATE 1" in str(res):
+                archived += 1
+        return archived
+
     async def get_user_sessions(
         self,
         user_id: str,
@@ -315,14 +411,14 @@ class DatabaseManager:
         user_id: str,
         session_id: str,
     ) -> int:
-        """软删除会话（将所有消息标记为 deleted）
+        """软删除会话（将 conversations 消息 + sessions 记录均标记为 deleted）
 
         Args:
             user_id: 用户 ID
             session_id: 会话 ID
 
         Returns:
-            受影响的行数
+            conversations 受影响的行数
         """
         sql = """
             UPDATE conversations
@@ -330,8 +426,15 @@ class DatabaseManager:
             WHERE "user_id" = $1 AND "session_id" = $2 AND "status" = 'active'
         """
         result = await self.execute(sql, user_id, session_id)
-        # 解析 "UPDATE N" 获取受影响行数
-        return int(result.split()[-1]) if result else 0
+        affected = int(result.split()[-1]) if result else 0
+
+        # 同步软删 sessions 表，避免侧栏残留已删除会话
+        await self.execute(
+            'UPDATE sessions SET "status" = \'deleted\' '
+            'WHERE "user_id" = $1 AND "id" = $2 AND "status" = \'active\'',
+            user_id, session_id,
+        )
+        return affected
 
     async def soft_delete_conversation(
         self,
@@ -359,7 +462,7 @@ class DatabaseManager:
         session_id: str,
         title: str,
     ) -> None:
-        """更新或插入会话标题（存储在 sessions 表 config 字段）
+        """更新或插入会话标题（同时写入 title 列 + config.title）
 
         Args:
             user_id: 用户 ID
@@ -368,11 +471,11 @@ class DatabaseManager:
         """
         import json
 
-        # PG `||` JSONB 拼接 vs MySQL JSON_MERGE_PATCH（注册表分歧消解）
         await self.execute_named(
             "upsert_session_title",
             session_id,
             user_id,
+            title,
             json.dumps({"title": title}),
         )
 
@@ -397,6 +500,48 @@ class DatabaseManager:
             session_id,
             user_id,
         )
+
+    # ------------------------------------------------------------------
+    # 用户（UserService 调用）
+    # ------------------------------------------------------------------
+
+    async def upsert_user(
+        self,
+        user_id: str,
+        role: str,
+        display_name: str | None = None,
+        is_root: bool = False,
+    ) -> str:
+        """懒注册/更新用户记录（users 表）
+
+        Args:
+            user_id: 规范化后的用户标识（主键）
+            role: 角色（'normal' / 'root'）
+            display_name: 可选展示名
+            is_root: 是否 root（与 role 一致）
+
+        Returns:
+            user_id
+        """
+        return await self.insert_returning_id(
+            "upsert_user",
+            user_id,
+            role,
+            display_name,
+            is_root,
+        )
+
+    async def get_user_role(self, user_id: str) -> str | None:
+        """查询用户角色（无记录返回 None）"""
+        return await self.fetchval_named("get_user_role", user_id)
+
+    async def list_users(self) -> list[dict]:
+        """列出所有已登记用户（root 管理视图用）"""
+        rows = await self.fetch(
+            'SELECT "user_id", "role", "display_name", "is_root", '
+            '"created_at", "last_active" FROM users ORDER BY "created_at" ASC'
+        )
+        return [{k: row[k] for k in row.keys()} for row in rows]
 
     @property
     def is_initialized(self) -> bool:

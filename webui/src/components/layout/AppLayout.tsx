@@ -23,6 +23,7 @@ export function AppLayout() {
 
 	const {
 		sessions,
+		refresh: refreshSessions,
 		renameSession,
 		deleteSession,
 	} = useSessions(userId);
@@ -66,7 +67,7 @@ export function AppLayout() {
 					onDeleteSession={handleDeleteSession}
 				/>
 				<main className="flex min-w-0 flex-1 flex-col overflow-hidden bg-background">
-					<Outlet />
+					<Outlet context={{ refreshSessions }} />
 				</main>
 			</div>
 		</div>

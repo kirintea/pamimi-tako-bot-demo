@@ -68,12 +68,15 @@ agent:
       platform: "AgentScope Platform Server"
 
   permission_mode: "bypass"
-  # 沙箱配置（三个均启用时：workspaces/{user_id}/ + 独立 skills/ + 独立 mcp/）
+  # 沙箱配置（双域布局：agent_space/ 共享只读 + user_spaces/{user_id}/ 私有可读写）
   sandbox_dir: "workspaces"
-  sandbox_skills: false      # true 时 skills 从 sandbox_dir/{user_id}/skills/ 加载
-                             # ⚠ 若同时用 docker 沙箱，需同步调整顶层 sandbox.extra_mounts 的 host 路径
-  sandbox_mcp: false         # true 时 MCP 配置从 sandbox_dir/mcp/ 加载
-  sandbox_per_user: true    # true 时沙箱路径追加 user_id 层级（workspaces/{user_id}/）
+  # root 预置：命中者角色为 root，可写 agent_space 并只读查看他人会话。
+  # 也可用环境变量 ROOT_USER_IDS（逗号分隔）追加，环境变量优先于此处。
+  root_user_ids:
+    - "root"
+  sandbox_skills: true       # true 时 skills 从 agent_space/skills/ 加载（双域共享只读域）
+  sandbox_mcp: false         # true 时 MCP 配置从 agent_space/mcp/ 加载
+  sandbox_per_user: true    # true 时沙箱路径追加 user_id 层级（user_spaces/{user_id}/）
   tool_guard:
     enabled: false
     mode: "allowlist" # allowlist | blocklist
@@ -178,15 +181,20 @@ sandbox:
   #   sandbox_skills=false 时 → host: "skills"（项目根，当前配置）
   #   sandbox_skills=true + per_user=true 时 → 需按 user_id 动态挂载
   extra_mounts:
-    - host: "skills"
-      container: "/workspace/skills"
+    # 双域防御纵深：仅将 agent_space 以只读方式挂入容器，
+    # 防止容器内 Bash/Python 工具越权改写 Agent 共享资产。
+    # 用户私有域 user_spaces/{user_id} 由 DockerSandboxProxy 按会话动态挂载（读写）。
+    - host: "workspaces/agent_space"
+      container: "/workspace/agent_space"
       readonly: true
 
 # 对象存储配置（图片上传等；S3/OSS 环境变量见 .env.example 第 9 节）
 object_storage:
   backend: "local"              # local / s3 / aliyun_oss
-  prefix: "images/"             # 对象 key 前缀
-  local_dir: "workspaces/uploads"  # 本地存储目录（backend=local）
+  # 本地存储落入用户私有域：key 布局 {user_id}/uploads/{date}/{uuid}.ext
+  # → 实际磁盘 workspaces/user_spaces/{user_id}/uploads/...
+  prefix: "uploads/"            # 对象 key 前缀（位于 user_id 之后）
+  local_dir: "workspaces/user_spaces"  # 本地存储根（backend=local），与双域用户域一致
 
   # backend=s3 时生效（AWS S3 / MinIO / Cloudflare R2）
   # s3_endpoint: "${S3_ENDPOINT:-http://localhost:9000}"
