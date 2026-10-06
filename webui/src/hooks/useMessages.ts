@@ -16,7 +16,7 @@ import { wsManager } from '@/api/ws';
 
 export type ReplyPhase = 'idle' | 'streaming' | 'interrupting';
 
-export function useMessages(userId: string, sessionId: string | null) {
+export function useMessages(userId: string, sessionId: string | null, newChatNonce = 0) {
 	const [messages, setMessages] = useState<ChatMessage[]>([]);
 	const [phase, setPhase] = useState<ReplyPhase>('idle');
 	const [connectionStatus, setConnectionStatus] = useState<'connected' | 'connecting' | 'disconnected'>('disconnected');
@@ -30,11 +30,15 @@ export function useMessages(userId: string, sessionId: string | null) {
 	 *        仍能正确 fork，无需手动刷新。
 	 */
 	const [resolvedSessionId, setResolvedSessionId] = useState<string | null>(sessionId);
+	/** resolvedSessionId 的同步镜像，供主 effect 在「重连」时复用同一 session，避免每次重连都新建会话 */
+	const resolvedSessionIdRef = useRef<string | null>(sessionId);
 	const phaseRef = useRef<ReplyPhase>('idle');
 	phaseRef.current = phase;
 
 	/** 处理 WebSocket 消息（用 ref 保证闭包不陈旧） */
 	const handleWsMessageRef = useRef<(msg: WsMessage) => void>(() => {});
+	/** 「新建会话」nonce 的前值，用于检测用户是否刚点了「新建会话」 */
+	const prevNonceRef = useRef(newChatNonce);
 	handleWsMessageRef.current = (msg: WsMessage) => {
 		// 调试：重连后消息流
 		if (msg.type !== 'pong') {
@@ -44,9 +48,12 @@ export function useMessages(userId: string, sessionId: string | null) {
 			case 'connected': {
 				// 服务端为新连接分配真实 session_id（尤其新会话无 urlSessionId 时），
 				// 捕获后用于 fork 按钮 & URL 导航，避免「必须刷新才出现 fork 按钮」。
-				const sid = (msg.payload as { session_id?: string })?.session_id;
-				if (sid) setResolvedSessionId(sid);
-				break;
+			const sid = (msg.payload as { session_id?: string })?.session_id;
+			if (sid) {
+				setResolvedSessionId(sid);
+				resolvedSessionIdRef.current = sid;
+			}
+			break;
 			}
 
 			case 'text_delta': {
@@ -324,17 +331,43 @@ export function useMessages(userId: string, sessionId: string | null) {
 	useEffect(() => {
 		if (!userId) return;
 
-		// sessionId 变化时清空旧消息 & 重置 resolvedSessionId
+		// 情况 1：URL 已指向某具体会话，且与「当前已连接会话」一致
+		//   —— 例如 /chat 升级为 /chat/{id}（首条消息后导航）、或 StrictMode 二次挂载复用同一 id。
+		//   不再重复清空 / 重连 / 重载，避免消息闪白、重复加载、甚至对话丢失。
+		if (sessionId && sessionId === resolvedSessionIdRef.current) {
+			return;
+		}
+
+		// 情况 2：URL 指向一个「与会话不同的具体会话」——切换历史会话
+		if (sessionId) {
+			prevNonceRef.current = newChatNonce; // 同步 nonce，避免后续误判为「点了新建」
+			setMessages([]);
+			setPhase('idle');
+			setResolvedSessionId(sessionId);
+			resolvedSessionIdRef.current = sessionId;
+			connect(sessionId);
+			loadHistory(sessionId);
+			return;
+		}
+
+		// 情况 3：停留在 /chat（无 sessionId）——新建会话视图
+		//   仅当「点了新建会话（nonce 变化）」或「尚未对任何会话建立过连接」时才发起连接；
+		//   否则（StrictMode 二次挂载、首条消息后 URL 升级前的重复触发）复用现有连接，
+		//   避免每次都让后端生成新 session_id 造成前端状态分裂。
+		const nonceChanged = prevNonceRef.current !== newChatNonce;
+		const alreadyConnected = resolvedSessionIdRef.current !== null;
+		if (!nonceChanged && alreadyConnected) {
+			return; // 保持现有连接，不重连、不重置
+		}
+		prevNonceRef.current = newChatNonce;
+
 		setMessages([]);
 		setPhase('idle');
-		setResolvedSessionId(sessionId);
-
-		connect(sessionId ?? undefined);
-
-		if (sessionId) {
-			loadHistory(sessionId);
-		}
-	}, [userId, sessionId, connect, loadHistory]);
+		setResolvedSessionId(null);
+		resolvedSessionIdRef.current = null;
+		// 不传 sessionId → 后端在 connect 时分配全新 session_id（于 connected 事件回传）
+		connect(undefined);
+	}, [userId, sessionId, newChatNonce, connect, loadHistory]);
 
 	// 监听连接状态变化
 	useEffect(() => {

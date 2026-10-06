@@ -44,9 +44,24 @@ export function ChatPage() {
 		forkSession,
 	} = useSessions(userId);
 
-	// 从 AppLayout Outlet context 获取侧栏刷新函数
+	// 从 AppLayout Outlet context 获取侧栏刷新函数、乐观插入函数与「新建会话」计数器
 	// （AppLayout 的 useSessions 实例与 ChatPage 的独立，必须通过 context 同步）
-	const { refreshSessions: refreshSidebar } = useOutletContext<{ refreshSessions: () => Promise<void> }>();
+	const {
+		refreshSessions: refreshSidebar,
+		newChatNonce,
+		upsertSessionOptimistic,
+	} = useOutletContext<{
+		refreshSessions: () => Promise<void>;
+		newChatNonce: number;
+		upsertSessionOptimistic: (session: {
+			session_id: string;
+			user_id: string;
+			title: string;
+			created_at: number;
+			last_active: number;
+			message_count: number;
+		}) => void;
+	}>();
 
 	const {
 		messages,
@@ -55,30 +70,70 @@ export function ChatPage() {
 		resolvedSessionId,
 		sendMessage,
 		cancelGeneration,
-	} = useMessages(userId, urlSessionId ?? null);
+	} = useMessages(userId, urlSessionId ?? null, newChatNonce);
+
+	// 始终持有最新 messages 的 ref，供 effect 读取而不必加入依赖（避免每个 token 都重跑 effect）
+	const messagesRef = useRef(messages);
+	messagesRef.current = messages;
 
 	// 注意：switchSession effect 已移除 — useMessages 主 effect（dep 含 sessionId）
 	// 已覆盖会话切换的全部逻辑（清空消息 / connect WS / loadHistory），
 	// 保留此 effect 会导致双 loadHistory 竞态 + 双 WS 重连，fork 导航后闪白屏。
 
-	// 新会话首次发消息后，将 URL 从 /chat 提升到 /chat/{resolvedSessionId}，
-	// 确保刷新后仍能回到本会话，同时使 fork 按钮依赖的 urlSessionId 始终有值。
-	// 仅在有消息后才导航，避免无消息时产生幽灵 URL。
-	// 同时刷新 AppLayout 侧栏，使新会话立即出现在「最近」列表中。
+	// 新会话首次发消息后：立即将新会话乐观插入「最近」列表（不等后端落库），
+	// 并把 URL 从 /chat 提升到 /chat/{resolvedSessionId}（刷新后仍可回到本会话、fork 依赖的 id 有值）。
+	// 仅在有消息后才执行，避免无消息时产生幽灵 URL。
 	const navigatedRef = useRef<string | null>(null);
+	const optimisticRef = useRef<string | null>(null);
+	const [pendingUpgrade, setPendingUpgrade] = useState(false);
+
+	// 在 /chat（无 sessionId）下发送首条消息时，标记需将 URL 升级为 /chat/{resolvedSessionId}。
+	// 用 state 而非 ref，确保赋值后触发本 effect 重新执行。
+	// 修复「点一次新建会话仍停留在历史会话」：旧逻辑在切换瞬间用陈旧的 resolvedSessionId +
+	// 尚未清空的历史消息误导航回 /chat/{旧会话}，第二下点击才生效。
+	const handleSend = useCallback(
+		(content: Parameters<typeof sendMessage>[0]) => {
+			if (!urlSessionId) setPendingUpgrade(true);
+			sendMessage(content);
+		},
+		[urlSessionId, sendMessage],
+	);
+
 	useEffect(() => {
-		if (!urlSessionId && resolvedSessionId && messages.length > 0
-			&& navigatedRef.current !== resolvedSessionId) {
+		if (
+			pendingUpgrade &&
+			!urlSessionId &&
+			resolvedSessionId &&
+			navigatedRef.current !== resolvedSessionId
+		) {
 			navigatedRef.current = resolvedSessionId;
+			setPendingUpgrade(false);
+
+			// 乐观插入「最近」：首条消息后即出现，无需等待 reply_end 落库
+			if (optimisticRef.current !== resolvedSessionId) {
+				optimisticRef.current = resolvedSessionId;
+				const firstUser = messagesRef.current.find((m) => m.role === 'user');
+				const rawTitle = firstUser
+					? (typeof firstUser.content === 'string' ? firstUser.content : '')
+					: '';
+				const title = rawTitle.trim().slice(0, 30) || '新对话';
+				upsertSessionOptimistic({
+					session_id: resolvedSessionId,
+					user_id: userId,
+					title,
+					created_at: Math.floor((firstUser?.createdAt ?? Date.now()) / 1000),
+					last_active: Math.floor((firstUser?.createdAt ?? Date.now()) / 1000),
+					message_count: 0,
+				});
+			}
+
 			navigate(`/chat/${resolvedSessionId}`, { replace: true });
-			// 新会话首次消息后刷新侧栏（AppLayout 实例）
-			refreshSidebar().catch(() => {});
 		}
-	}, [urlSessionId, resolvedSessionId, messages.length, navigate, refreshSidebar]);
+	}, [pendingUpgrade, urlSessionId, resolvedSessionId, navigate, upsertSessionOptimistic, userId]);
 
 	/**
 	 * 有效 sessionId（URL 优先，无 URL 时用 WS 分配的真实 id）；
-	 * 确保在 /chat（无 sessionId）路径下 fork 仍能拿到真实会话 id。
+	 * 确保在 /chat（无 sessionId）路径下 fork / 上下文进度条仍能拿到真实会话 id。
 	 */
 	const activeSessionId = urlSessionId ?? resolvedSessionId;
 
@@ -119,6 +174,33 @@ export function ChatPage() {
 		if (el) el.scrollTop = el.scrollHeight;
 	}, [messages, hasMessages]);
 
+	// 上下文用量刷新信号：一轮回复结束后 / 切换会话时触发 ContextIndicator 重新拉取，
+	// 解决「进度条一直 0%、需手动刷新才正常」的问题（后端在 reply_end 落库后才更新用量）。
+	const [contextRefreshSignal, setContextRefreshSignal] = useState(0);
+
+	// 每当一轮对话完成（streaming -> idle），刷新侧栏 + 触发上下文用量刷新。
+	// 侧栏刷新使新会话已落库并出现在「最近」；上下文刷新使进度条显示真实用量（无需手动刷新）。
+	// 仅对每个会话刷新一次，避免每次回复都打扰列表。
+	const prevPhaseRef = useRef(phase);
+	const refreshedSessionRef = useRef<string | null>(null);
+	useEffect(() => {
+		if (prevPhaseRef.current === 'streaming' && phase === 'idle') {
+			if (refreshedSessionRef.current !== activeSessionId) {
+				refreshedSessionRef.current = activeSessionId;
+				refreshSidebar().catch(() => {});
+				// 落库为 fire-and-forget，稍延迟再拉取用量，确保数据已写入
+				setTimeout(() => setContextRefreshSignal((n) => n + 1), 1200);
+			}
+		}
+		prevPhaseRef.current = phase;
+	}, [phase, activeSessionId, refreshSidebar]);
+
+	// 切换会话时重置「已刷新」标记并立即刷新一次上下文用量
+	useEffect(() => {
+		refreshedSessionRef.current = null;
+		setContextRefreshSignal((n) => n + 1);
+	}, [urlSessionId]);
+
 	const scrollToBottom = useCallback(() => {
 		const el = scrollRef.current;
 		if (!el) return;
@@ -139,9 +221,12 @@ export function ChatPage() {
 	}, []);
 
 	useEffect(() => {
-		// 切换会话：重置贴底跟随 + 隐藏滚动按钮
+		// 切换会话：重置贴底跟随 + 隐藏滚动按钮 + 重置 URL 升级/乐观插入标记
 		stickToBottomRef.current = true;
 		setShowScrollButton(false);
+		navigatedRef.current = null;
+		optimisticRef.current = null;
+		setPendingUpgrade(false);
 	}, [urlSessionId]);
 
 	const chatInputRef = useRef<ChatInputHandle>(null);
@@ -157,10 +242,12 @@ export function ChatPage() {
 		/>
 	);
 
-	const contextIndicator = (
+		const contextIndicator = (
 		<ContextIndicator
 			userId={userId}
-			sessionId={urlSessionId ?? null}
+			sessionId={activeSessionId}
+			messages={messages}
+			refreshSignal={contextRefreshSignal}
 			className="mx-auto w-full max-w-[49.5rem]"
 		/>
 	);

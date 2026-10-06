@@ -19,11 +19,13 @@ export function AppLayout() {
 	const navigate = useNavigate();
 	const location = useLocation();
 	const [collapsed, setCollapsed] = useState(false);
+	const [newChatNonce, setNewChatNonce] = useState(0);
 	const userId = wsManager.getUserId();
 
 	const {
 		sessions,
 		refresh: refreshSessions,
+		upsertSessionOptimistic,
 		renameSession,
 		deleteSession,
 	} = useSessions(userId);
@@ -34,6 +36,10 @@ export function AppLayout() {
 		: null;
 
 	const handleNewChat = useCallback(() => {
+		// 递增 nonce，强制 ChatPage 建立全新会话（即使当前已在 /chat）。
+		// 否则从「最近」返回新建时，useMessages 的 sessionId 仍是 null、effect 不重跑，
+		// 会停留在旧会话或跳到其它历史会话，需多次点击才进入新建界面。
+		setNewChatNonce((n) => n + 1);
 		navigate('/chat');
 	}, [navigate]);
 
@@ -66,9 +72,15 @@ export function AppLayout() {
 					onRenameSession={handleRenameSession}
 					onDeleteSession={handleDeleteSession}
 				/>
-				<main className="flex min-w-0 flex-1 flex-col overflow-hidden bg-background">
-					<Outlet context={{ refreshSessions }} />
-				</main>
+			<main className="flex min-w-0 flex-1 flex-col overflow-hidden bg-background">
+				<Outlet
+					context={{
+						refreshSessions,
+						newChatNonce,
+						upsertSessionOptimistic,
+					}}
+				/>
+			</main>
 			</div>
 		</div>
 	);
