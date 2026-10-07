@@ -210,6 +210,86 @@ export interface SkillListResponse {
 	total: number;
 }
 
+// ========== Channel ==========
+
+export interface ChannelConfig {
+	bot_id?: string;
+	secret?: string;
+	allow_from?: string[];
+	welcome_message?: string;
+}
+
+export interface ChannelInfo {
+	id: string;
+	user_id?: string;
+	name: string;
+	type: string;
+	enabled: boolean;
+	/** 运行态：stopped / starting / running / failed */
+	status: string;
+	/** 响应中 secret 已脱敏（非空即 "********"） */
+	config: ChannelConfig;
+	created_at?: string;
+	updated_at?: string;
+}
+
+export interface CreateChannelRequest {
+	name: string;
+	type?: string;
+	enabled?: boolean;
+	config: ChannelConfig;
+}
+
+export interface UpdateChannelRequest {
+	name?: string;
+	enabled?: boolean;
+	config?: Partial<ChannelConfig>;
+}
+
+export interface ChannelListResponse {
+	channels: ChannelInfo[];
+	total: number;
+}
+
+/** 单个依赖的可用性探测结果（来自后端 /channels/manifests） */
+export interface ChannelDependency {
+	/** pip 包名（tooltip 展示） */
+	name: string;
+	/** importlib.util.find_spec 探测的模块名 */
+	import_name: string;
+	/** 是否已安装 */
+	available: boolean;
+}
+
+/** 渠道元数据，含运行所需依赖及其可用性（前端渲染红绿指示灯） */
+export interface ChannelManifest {
+	type: string;
+	name: string;
+	display_name: string;
+	description?: string;
+	doc_url?: string;
+	/** 后端是否已实现适配器（注册表中存在） */
+	backend_supported: boolean;
+	/** 创建表单字段（仅后端已接入类型提供） */
+	fields?: Array<Record<string, unknown>>;
+	dependencies: ChannelDependency[];
+	/** 全部依赖就绪为 true；任一缺失为 false */
+	dependencies_satisfied: boolean;
+}
+
+export interface ChannelRuntime {
+	id: string;
+	type: string;
+	name: string;
+	running: boolean;
+	state: string;
+	error?: string | null;
+}
+
+export interface ChannelStatusResponse {
+	runtime: Record<string, ChannelRuntime>;
+}
+
 // ========== Health ==========
 
 export interface HealthResponse {

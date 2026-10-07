@@ -759,6 +759,8 @@
 		},
 		"state": {
 			"stopped": "已停止",
+			"starting": "启动中",
+			"running": "运行中",
 			"connecting": "连接中",
 			"retrying": "重连中",
 			"connected": "已连接",
@@ -955,14 +957,16 @@
 			"models": "模型配置",
 			"security": "安全配置",
 			"skills": "技能配置",
-			"mcp": "MCP 配置"
+			"mcp": "MCP 配置",
+			"channels": "渠道配置"
 		},
 		"nav": {
 			"general": "通用",
 			"models": "模型",
 			"mcp": "MCP",
 			"skills": "技能",
-			"security": "安全"
+			"security": "安全",
+			"channels": "渠道"
 		},
 		"general": {
 			"appearance": "外观",
@@ -1023,6 +1027,27 @@
 			"toolGuard": "工具守卫",
 			"toolGuardEnabled": "启用工具守卫",
 			"toolGuardDesc": "按黑白名单过滤可用工具"
+		},
+		"channels": {
+			"title": "渠道",
+			"add": "添加",
+			"empty": "暂无渠道",
+			"namePlaceholder": "名称",
+			"botIdPlaceholder": "Bot ID",
+			"secretPlaceholder": "Secret",
+			"allowFromPlaceholder": "允许发送者白名单（逗号或换行分隔，留空 = 全部允许）",
+			"welcomePlaceholder": "欢迎语（可选）",
+			"enabledOnCreate": "创建后立即启用并启动",
+			"start": "启动",
+			"stop": "停止",
+			"confirmDelete": "确认删除此渠道？",
+			"depsUnknown": "依赖状态未知",
+			"depsReady": "依赖已就绪",
+			"depsMissing": "缺少依赖：{pkgs}",
+			"backendSupported": "已接入",
+			"backendUnsupported": "未实现",
+			"backendUnsupportedDesc": "该渠道类型尚未实现适配器，敬请期待。",
+			"docLink": "查看接入文档"
 		}
 	}
 }

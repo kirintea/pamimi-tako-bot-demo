@@ -759,6 +759,8 @@
 		},
 		"state": {
 			"stopped": "Stopped",
+			"starting": "Starting",
+			"running": "Running",
 			"connecting": "Connecting",
 			"retrying": "Reconnecting",
 			"connected": "Connected",
@@ -955,14 +957,16 @@
 			"models": "Models",
 			"security": "Security",
 			"skills": "Skills",
-			"mcp": "MCP"
+			"mcp": "MCP",
+			"channels": "Channels"
 		},
 		"nav": {
 			"general": "General",
 			"models": "Models",
 			"mcp": "MCP",
 			"skills": "Skills",
-			"security": "Security"
+			"security": "Security",
+			"channels": "Channels"
 		},
 		"general": {
 			"appearance": "Appearance",
@@ -1023,6 +1027,27 @@
 			"toolGuard": "Tool Guard",
 			"toolGuardEnabled": "Enable Tool Guard",
 			"toolGuardDesc": "Filter available tools by allowlist/denylist"
+		},
+		"channels": {
+			"title": "Channels",
+			"add": "Add",
+			"empty": "No channels yet",
+			"namePlaceholder": "Name",
+			"botIdPlaceholder": "Bot ID",
+			"secretPlaceholder": "Secret",
+			"allowFromPlaceholder": "Allowed senders (comma or newline separated; empty = allow all)",
+			"welcomePlaceholder": "Welcome message (optional)",
+			"enabledOnCreate": "Enable and start immediately after creation",
+			"start": "Start",
+			"stop": "Stop",
+			"confirmDelete": "Delete this channel?",
+			"depsUnknown": "Dependency status unknown",
+			"depsReady": "Dependencies satisfied",
+			"depsMissing": "Missing dependencies: {pkgs}",
+			"backendSupported": "Supported",
+			"backendUnsupported": "Not implemented",
+			"backendUnsupportedDesc": "This channel type is not implemented yet — coming soon.",
+			"docLink": "Setup guide"
 		}
 	}
 }
