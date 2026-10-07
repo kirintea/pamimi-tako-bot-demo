@@ -7,15 +7,20 @@
 - POST   /mcp             — 添加 MCP
 - PATCH  /mcp/{mcp_id}    — 更新 MCP（启用/禁用、改名）
 - DELETE /mcp/{mcp_id}    — 删除 MCP
+
+配置来源：configs/mcps.json（JSON 文件，单一真源），由 MCPConfigStore 读写。
+运行时 AgentFactory 直接读取同一文件，故此处与管理平面共享同一真相源，不再使用数据库。
 """
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
-from core.storage_models import MCPRecord
-from core.validators import coerce_id, is_auth_enabled, require_user_id
+from core.mcp.config_store import MCPConfigEntry
+from core.validators import is_auth_enabled, require_user_id
 
 from loguru import logger
 
@@ -28,6 +33,7 @@ router = APIRouter(prefix="/mcp", tags=["mcp"])
 
 class CreateMCPRequest(BaseModel):
     """添加 MCP 请求"""
+
     name: str = Field(description="MCP 名称（唯一）")
     transport: str = Field(default="stdio", description="传输方式: stdio / http / streamable_http")
     command: str | None = Field(default=None, description="stdio 命令")
@@ -40,7 +46,8 @@ class CreateMCPRequest(BaseModel):
 
 class UpdateMCPRequest(BaseModel):
     """更新 MCP 请求"""
-    name: str | None = Field(default=None, description="新名称")
+
+    name: str | None = Field(default=None, description="新名称（改名）")
     enabled: bool | None = Field(default=None, description="启用/禁用")
     display_name: str | None = Field(default=None, description="显示名称")
     description: str | None = Field(default=None, description="描述")
@@ -48,6 +55,7 @@ class UpdateMCPRequest(BaseModel):
 
 class MCPResponse(BaseModel):
     """MCP 响应"""
+
     id: str
     user_id: str
     name: str
@@ -59,12 +67,25 @@ class MCPResponse(BaseModel):
     display_name: str | None
     description: str
     enabled: bool
+    note: str | None = Field(
+        default=None,
+        description="操作提示：MCP 变更后已有会话不会自动重载，需新开会话生效",
+    )
     created_at: str
     updated_at: str
 
 
+class ActionResponse(BaseModel):
+    """通用操作结果（含提示）"""
+
+    ok: bool = True
+    message: str
+    note: str | None = None
+
+
 class ListMCPsResponse(BaseModel):
     """MCP 列表响应"""
+
     mcps: list[MCPResponse]
     total: int
 
@@ -73,22 +94,40 @@ class ListMCPsResponse(BaseModel):
 # 工具函数
 # ============================================================
 
-def _mcp_to_response(record: MCPRecord) -> MCPResponse:
+def _entry_to_response(entry: MCPConfigEntry) -> MCPResponse:
     return MCPResponse(
-        id=record.id,
-        user_id=record.user_id,
-        name=record.name,
-        transport=record.transport,
-        command=record.command,
-        args=record.args,
-        url=record.url,
-        headers=record.headers,
-        display_name=record.display_name,
-        description=record.description,
-        enabled=record.enabled,
-        created_at=record.created_at.isoformat(),
-        updated_at=record.updated_at.isoformat(),
+        id=entry.name,
+        user_id="system",
+        name=entry.name,
+        transport=entry.transport,
+        command=entry.command,
+        args=entry.args,
+        url=entry.url,
+        headers=entry.headers,
+        display_name=entry.display_name,
+        description=entry.description,
+        enabled=entry.enabled,
+        created_at="",
+        updated_at="",
     )
+
+
+# MCP 变更后，已有会话内的 MCP 客户端不会自动重载，新会话才会读取最新配置。
+_REQUIRES_NEW_SESSION_NOTE = (
+    "MCP 配置已保存。已有会话不会自动重载 MCP 客户端，请新开会话以加载新的 MCP 工具。"
+)
+
+
+def _refresh_runtime_mcp(request: Request) -> None:
+    """把文件中的 MCP 配置同步进运行时 config.mcp_servers（新会话生效；老会话不变）。"""
+    config = getattr(request.app.state, "config", None)
+    if config is None:
+        return
+    store = request.app.state.mcp_config_store
+    try:
+        config.mcp_servers = store.get_mcp_configs()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("刷新运行时 MCP 配置失败（下次重启生效）: {}", e)
 
 
 # ============================================================
@@ -99,12 +138,12 @@ def _mcp_to_response(record: MCPRecord) -> MCPResponse:
 async def list_mcps(request: Request, user_id: str = "anonymous"):
     """列出已安装 MCP"""
     config = getattr(request.app.state, "config", None)
-    user_id = require_user_id(user_id, is_auth_enabled(config))
-    storage = request.app.state.storage
-    mcps = await storage.list_mcps(user_id)
+    require_user_id(user_id, is_auth_enabled(config))
+    store = request.app.state.mcp_config_store
+    entries = store.get_all()
     return ListMCPsResponse(
-        mcps=[_mcp_to_response(m) for m in mcps],
-        total=len(mcps),
+        mcps=[_entry_to_response(e) for e in entries],
+        total=len(entries),
     )
 
 
@@ -120,19 +159,16 @@ async def create_mcp(
 ):
     """添加 MCP"""
     config = getattr(request.app.state, "config", None)
-    user_id = require_user_id(user_id, is_auth_enabled(config))
-    storage = request.app.state.storage
+    require_user_id(user_id, is_auth_enabled(config))
+    store = request.app.state.mcp_config_store
 
-    # 检查名称唯一性
-    existing = await storage.get_mcp_by_name(user_id, body.name)
-    if existing:
+    if store.get_by_name(body.name):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"MCP '{body.name}' 已存在",
         )
 
-    record = MCPRecord(
-        user_id=user_id,
+    entry = MCPConfigEntry(
         name=body.name,
         transport=body.transport,
         command=body.command,
@@ -141,11 +177,14 @@ async def create_mcp(
         headers=body.headers,
         display_name=body.display_name,
         description=body.description,
+        enabled=True,
     )
-
-    mcp_id = await storage.upsert_mcp(user_id, record)
-    created = await storage.get_mcp(user_id, mcp_id)
-    return _mcp_to_response(created)
+    await store.upsert(entry)
+    _refresh_runtime_mcp(request)
+    created = store.get_by_name(body.name)
+    resp = _entry_to_response(created)
+    resp.note = _REQUIRES_NEW_SESSION_NOTE
+    return resp
 
 
 @router.patch("/{mcp_id}", response_model=MCPResponse)
@@ -157,31 +196,40 @@ async def update_mcp(
 ):
     """更新 MCP"""
     config = getattr(request.app.state, "config", None)
-    user_id = require_user_id(user_id, is_auth_enabled(config))
-    storage = request.app.state.storage
-    existing = await storage.get_mcp(user_id, mcp_id)
-    if not existing:
+    require_user_id(user_id, is_auth_enabled(config))
+    store = request.app.state.mcp_config_store
+    entry = store.get_by_name(mcp_id)
+    if not entry:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"MCP '{mcp_id}' 不存在",
         )
 
-    # 应用更新
-    if body.name is not None:
-        existing.name = body.name
+    # 改名：冲突检查 + 删除旧键
+    if body.name is not None and body.name != entry.name:
+        if store.get_by_name(body.name):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"MCP '{body.name}' 已存在",
+            )
+        await store.delete(entry.name)
+        entry.name = body.name
+
     if body.enabled is not None:
-        existing.enabled = body.enabled
+        entry.enabled = body.enabled
     if body.display_name is not None:
-        existing.display_name = body.display_name
+        entry.display_name = body.display_name
     if body.description is not None:
-        existing.description = body.description
+        entry.description = body.description
 
-    await storage.upsert_mcp(user_id, existing)
-    updated = await storage.get_mcp(user_id, mcp_id)
-    return _mcp_to_response(updated)
+    await store.upsert(entry)
+    _refresh_runtime_mcp(request)
+    resp = _entry_to_response(entry)
+    resp.note = _REQUIRES_NEW_SESSION_NOTE
+    return resp
 
 
-@router.delete("/{mcp_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{mcp_id}", response_model=ActionResponse, status_code=status.HTTP_200_OK)
 async def delete_mcp(
     request: Request,
     mcp_id: str,
@@ -189,11 +237,17 @@ async def delete_mcp(
 ):
     """删除 MCP"""
     config = getattr(request.app.state, "config", None)
-    user_id = require_user_id(user_id, is_auth_enabled(config))
-    storage = request.app.state.storage
-    deleted = await storage.delete_mcp(user_id, mcp_id)
+    require_user_id(user_id, is_auth_enabled(config))
+    store = request.app.state.mcp_config_store
+    deleted = await store.delete(mcp_id)
     if not deleted:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"MCP '{mcp_id}' 不存在",
         )
+    _refresh_runtime_mcp(request)
+    return ActionResponse(
+        ok=True,
+        message=f"MCP '{mcp_id}' 已删除",
+        note=_REQUIRES_NEW_SESSION_NOTE,
+    )

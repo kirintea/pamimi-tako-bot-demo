@@ -28,16 +28,16 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from api.chat import router as chat_router
+from api.channels import router as channels_router
 from api.images import router as images_router
 from api.mcp import router as mcp_router
 from api.skill import router as skill_router
 from api.ws_chat import router as ws_chat_router
-# from api.agent import router as agent_router
 # from api.workspace import router as workspace_router
-# from api.schedule import router as schedule_router
 # from api.webui import router as webui_router
 
 from core.chat_service import ChatService
+from core.channels.manager import ChannelManager
 from core.config import ConfigManager
 from core.database import DatabaseManager
 from core.db.base import DatabaseUnavailableError
@@ -324,6 +324,72 @@ def create_app(config) -> FastAPI:
         app.state.chat_service = chat_service
         logger.info("Chat 服务已就绪")
 
+        # 创建渠道配置存储（JSON 文件驱动，热加载 + 单实例文件锁）
+        from core.channels.config_store import ChannelConfigStore
+        channel_config_store = ChannelConfigStore()
+        await channel_config_store.start()
+        app.state.channel_config_store = channel_config_store
+        logger.info(
+            "渠道配置存储已就绪（配置文件: {}）",
+            channel_config_store._path,
+        )
+
+        # 创建渠道管理器（入站→内核→出站 闭环；从 JSON 配置文件拉起启用渠道）
+        channel_manager = ChannelManager(
+            config_store=channel_config_store,
+            bus=app.state.message_bus,
+            chat_service=chat_service,
+            object_storage=obj_storage,
+        )
+        app.state.channel_manager = channel_manager
+
+        # 注册热加载回调：配置文件变更时自动 diff 启停
+        channel_config_store._on_change = channel_manager.on_config_change
+
+        # 启动期拉起所有已启用的渠道
+        await channel_manager.start_all()
+        logger.info("渠道管理器已就绪（已拉起启用中的渠道）")
+
+        # 创建 MCP 配置存储（JSON 文件驱动，单一真源）
+        # 首次启动若配置文件不存在，则从 YAML mcp_servers 一次性迁移写入。
+        # 之后运行时 AgentFactory 直接读取此文件（覆盖 YAML），REST /mcp 也读写此文件。
+        from core.mcp.config_store import MCPConfigStore
+
+        # on_change：mcps.json 被外部编辑或 REST 写入后，把最新启用配置同步进运行时
+        # config.mcp_servers（新会话生效；已有会话仍用启动时加载的客户端）。
+        async def _on_mcp_change() -> None:
+            config.mcp_servers = mcp_config_store.get_mcp_configs()
+            logger.info(
+                "MCPConfigStore: 配置变更，已热更新运行时（{} 条启用）",
+                len(config.mcp_servers),
+            )
+
+        mcp_config_store = MCPConfigStore(
+            seed_mcp_configs=config.mcp_servers,
+            on_change=_on_mcp_change,
+        )
+        await mcp_config_store.start()
+        # 运行时单一真源：用文件中的 MCP 配置覆盖 YAML 值
+        config.mcp_servers = mcp_config_store.get_mcp_configs()
+        app.state.mcp_config_store = mcp_config_store
+        logger.info(
+            "MCP 配置存储已就绪（配置文件: {}，{} 条启用）",
+            mcp_config_store._path,
+            len(config.mcp_servers),
+        )
+
+        # 创建 Skill 配置存储（JSON 文件驱动，管理平面元数据 + 目录自动同步）
+        # 运行时 Skill 仍由 agent_space/skills 目录（文件系统）加载；本存储仅作管理/展示目录，
+        # 并在启动与运行时定期扫描该目录，把磁盘 SKILL.md 自动同步进 skills.json。
+        from core.skill.config_store import SkillConfigStore
+
+        skill_config_store = SkillConfigStore(
+            skills_dir=os.path.join(workspace_mgr.agent_space_dir, "skills"),
+        )
+        await skill_config_store.start()
+        app.state.skill_config_store = skill_config_store
+        logger.info("Skill 配置存储已就绪（配置文件: {}）", skill_config_store._path)
+
         # 自动打开浏览器 (仅开发环境)
         if config.otel.environment == "development":
             def _open_browser():
@@ -354,6 +420,35 @@ def create_app(config) -> FastAPI:
                     _fn()
             except Exception as _persist_err:  # noqa: BLE001
                 logger.warning("关闭时排空持久化任务失败（已忽略）: {}", _persist_err)
+
+        # 先停止所有渠道（断开 WS 长连接），再关闭会话管理器
+        channel_mgr = getattr(app.state, "channel_manager", None)
+        if channel_mgr is not None:
+            try:
+                await channel_mgr.stop_all()
+                logger.info("渠道管理器已停止")
+            except Exception as _ch_err:  # noqa: BLE001
+                logger.warning("关闭渠道管理器异常（已忽略）: {}", _ch_err)
+
+        # 停止渠道配置存储（热加载轮询 + 释放文件锁）
+        ch_cfg_store = getattr(app.state, "channel_config_store", None)
+        if ch_cfg_store is not None:
+            try:
+                await ch_cfg_store.stop()
+                logger.info("渠道配置存储已停止")
+            except Exception as _cs_err:  # noqa: BLE001
+                logger.warning("关闭渠道配置存储异常（已忽略）: {}", _cs_err)
+
+        # 停止 MCP / Skill 配置存储（热加载轮询）
+        for _store in (
+            getattr(app.state, "mcp_config_store", None),
+            getattr(app.state, "skill_config_store", None),
+        ):
+            if _store is not None:
+                try:
+                    await _store.stop()
+                except Exception as _store_err:  # noqa: BLE001
+                    logger.warning("关闭配置存储异常（已忽略）: {}", _store_err)
 
         await session_mgr.shutdown()
         logger.info("会话管理器已关闭")
@@ -423,14 +518,13 @@ def create_app(config) -> FastAPI:
     # 3. 注册 API 路由
     # ============================================================
     app.include_router(chat_router, tags=["chat"])
+    app.include_router(channels_router)
     app.include_router(images_router, tags=["images"])
     app.include_router(mcp_router)
     app.include_router(skill_router)
     app.include_router(ws_chat_router, tags=["websocket"])
 
-    # app.include_router(agent_router)  # 暂未使用
     # app.include_router(workspace_router)
-    # app.include_router(schedule_router)  # 暂未使用
     # app.include_router(webui_router)  # WebUI 兼容层 (/webui/*)
 
     # 静态文件服务（CSS/JS 等）
