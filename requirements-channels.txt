@@ -1,0 +1,44 @@
+# requirements-channels.txt
+# 渠道 / 聊天平台对接专用依赖（独立于核心 requirements.txt）
+#
+# 使用方式（二选一）：
+#   1) 叠加安装：  pip install -r requirements.txt -r requirements-channels.txt
+#   2) uv：        uv pip install -r requirements-channels.txt   （在已装核心依赖的环境）
+#
+# 本文件【仅包含】「渠道相关、且核心 requirements.txt 未覆盖」的包。
+# 以下依赖已由核心 requirements.txt 提供，无需重复：
+#   redis / cryptography / aiohttp / pydantic / pydantic-settings / python-socketio / websocket-client
+
+# ============================================================
+# 企业微信 AI Bot 长连接（首发渠道）
+# SDK 提供 wss 长连接、reply_stream 原生流式、事件分发(on)、文件 AES-256-CBC 解密
+# PyPI 真实包名 = wecom-aibot-sdk-python
+#   ⚠️ 注意：GitHub WecomTeam 仓库 README 写的是 wecom-aibot-python-sdk（词序不同），
+#      二者是不同包，安装以 PyPI 名为准，否则 404。
+# 导入名：wecom_aibot_sdk
+# 已用 PyPI JSON API 核实：最新版本 0.1.7
+# ============================================================
+wecom-aibot-sdk-python==0.1.7
+
+# 企微 SDK 的运行时传递依赖（核心 requirements.txt 未包含；按 SDK 声明的最低版本给出下限）
+websockets>=12.0
+pyee>=11.0
+
+# ============================================================
+# 后续渠道（按需取消注释；实现对应 adapter 时再启用并锁定精确版本）
+# ============================================================
+
+# 飞书：复用上面的 websockets 即可，无需额外 SDK（原生 WebSocket 长连接）
+
+# 邮件（IMAP 收 + SMTP 发）
+# aiosmtplib>=3.0
+# aioimaplib>=2.1
+
+# Telegram
+# python-telegram-bot>=21.0
+
+# WhatsApp
+# twilio>=9.0
+
+# 可选：指数退避重试（手写 _send_with_retry，可不引；若要复用 tenacity 风格再开）
+# tenacity>=9.0
