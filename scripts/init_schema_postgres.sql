@@ -36,56 +36,15 @@ CREATE TABLE IF NOT EXISTS sessions (
     "updated_at"        TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 3. MCP 已安装表
-CREATE TABLE IF NOT EXISTS mcps (
-    "id"          VARCHAR(32) PRIMARY KEY,
-    "user_id"     VARCHAR(64) NOT NULL,
-    "name"        VARCHAR(128) NOT NULL,
-    "transport"   VARCHAR(16) NOT NULL DEFAULT 'stdio',
-    "config"      JSONB DEFAULT NULL,
-    "enabled"     BOOLEAN NOT NULL DEFAULT TRUE,
-    "created_at"  TIMESTAMPTZ DEFAULT NOW(),
-    "updated_at"  TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE("user_id", "name")
-);
-
--- 4. Skill 已安装表
-CREATE TABLE IF NOT EXISTS skills (
-    "id"          VARCHAR(32) PRIMARY KEY,
-    "user_id"     VARCHAR(64) NOT NULL,
-    "name"        VARCHAR(128) NOT NULL,
-    "data"        JSONB DEFAULT NULL,
-    "enabled"     BOOLEAN NOT NULL DEFAULT TRUE,
-    "created_at"  TIMESTAMPTZ DEFAULT NOW(),
-    "updated_at"  TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE("user_id", "name")
-);
-
--- 5. 定时任务表
-CREATE TABLE IF NOT EXISTS schedules (
-    "id"          VARCHAR(32) PRIMARY KEY,
-    "user_id"     VARCHAR(64) NOT NULL,
-    "agent_id"    VARCHAR(32) NOT NULL,
-    "session_id"  VARCHAR(32),
-    "name"        VARCHAR(256) NOT NULL,
-    "cron_expr"   VARCHAR(64) NOT NULL,
-    "prompt"      TEXT NOT NULL DEFAULT '',
-    "source"      VARCHAR(16) NOT NULL DEFAULT 'user',
-    "enabled"     BOOLEAN NOT NULL DEFAULT TRUE,
-    "last_run_at" TIMESTAMPTZ,
-    "next_run_at" TIMESTAMPTZ,
-    "created_at"  TIMESTAMPTZ DEFAULT NOW(),
-    "updated_at"  TIMESTAMPTZ DEFAULT NOW()
-);
-
--- 6. Agent 记录表
-CREATE TABLE IF NOT EXISTS agents (
-    "id"          VARCHAR(32) PRIMARY KEY,
-    "user_id"     VARCHAR(64) NOT NULL,
-    "source"      VARCHAR(16) NOT NULL DEFAULT 'user',
-    "data"        JSONB NOT NULL,
-    "created_at"  TIMESTAMPTZ DEFAULT NOW(),
-    "updated_at"  TIMESTAMPTZ DEFAULT NOW()
+-- 3. 用户表（权限 / root 识别，Phase 1）
+--    root 身份权威来源为配置 + 环境变量 ROOT_USER_IDS，DB 仅作记录与审计
+CREATE TABLE IF NOT EXISTS users (
+    "user_id"      VARCHAR(64) PRIMARY KEY,
+    "role"         VARCHAR(16) NOT NULL DEFAULT 'normal',
+    "display_name" VARCHAR(128),
+    "is_root"      BOOLEAN NOT NULL DEFAULT FALSE,
+    "created_at"   TIMESTAMPTZ DEFAULT NOW(),
+    "last_active"  TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- ============================================================
@@ -112,17 +71,8 @@ CREATE INDEX IF NOT EXISTS idx_sessions_status
 CREATE INDEX IF NOT EXISTS idx_sessions_parent
     ON sessions("parent_session_id") WHERE "parent_session_id" IS NOT NULL;
 
--- mcps 索引
-CREATE INDEX IF NOT EXISTS idx_mcps_user ON mcps("user_id");
-
--- skills 索引
-CREATE INDEX IF NOT EXISTS idx_skills_user ON skills("user_id");
-
--- schedules 索引
-CREATE INDEX IF NOT EXISTS idx_schedules_user ON schedules("user_id");
-
--- agents 索引
-CREATE INDEX IF NOT EXISTS idx_agents_user ON agents("user_id");
+-- users 索引
+CREATE INDEX IF NOT EXISTS idx_users_role ON users("role");
 
 -- ============================================================
 -- 完成

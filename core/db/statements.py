@@ -41,28 +41,7 @@ class Statement:
 
 
 STATEMENTS: dict[str, Statement] = {
-    # ---------------------------------------------------------------
-    # storage.upsert_agent — 客户端主键 (id) 冲突更新
-    # ---------------------------------------------------------------
-    "upsert_agent": Statement(
-        pg="""
-            INSERT INTO agents ("id", "user_id", "source", "data", "created_at", "updated_at")
-            VALUES ($1, $2, $3, $4, $5, $6)
-            ON CONFLICT ("id") DO UPDATE SET
-                "data" = EXCLUDED."data",
-                "source" = EXCLUDED."source",
-                "updated_at" = EXCLUDED."updated_at"
-            RETURNING "id"
-        """,
-        mysql="""
-            INSERT INTO agents ("id", "user_id", "source", "data", "created_at", "updated_at")
-            VALUES ($1, $2, $3, $4, $5, $6)
-            ON DUPLICATE KEY UPDATE
-                "data" = VALUES("data"),
-                "source" = VALUES("source"),
-                "updated_at" = VALUES("updated_at")
-        """,
-    ),
+    # [已禁用] upsert_agent — agents 表已从 DDL 移除（建而不用）
     # ---------------------------------------------------------------
     # storage.upsert_session — 冲突时保留原有 parent/depth
     # ---------------------------------------------------------------
@@ -93,90 +72,10 @@ STATEMENTS: dict[str, Statement] = {
                 "updated_at" = VALUES("updated_at")
         """,
     ),
-    # ---------------------------------------------------------------
-    # storage.upsert_mcp — (user_id, name) 唯一冲突，回查现有行 id
-    # ---------------------------------------------------------------
-    "upsert_mcp": Statement(
-        pg="""
-            INSERT INTO mcps ("id", "user_id", "name", "transport", "config", "enabled", "created_at", "updated_at")
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            ON CONFLICT ("user_id", "name") DO UPDATE SET
-                "transport" = EXCLUDED."transport",
-                "config" = EXCLUDED."config",
-                "enabled" = EXCLUDED."enabled",
-                "updated_at" = EXCLUDED."updated_at"
-            RETURNING "id"
-        """,
-        mysql="""
-            INSERT INTO mcps ("id", "user_id", "name", "transport", "config", "enabled", "created_at", "updated_at")
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            ON DUPLICATE KEY UPDATE
-                "transport" = VALUES("transport"),
-                "config" = VALUES("config"),
-                "enabled" = VALUES("enabled"),
-                "updated_at" = VALUES("updated_at")
-        """,
-        mysql_id_sql='SELECT "id" FROM mcps WHERE "user_id" = $1 AND "name" = $2',
-        mysql_id_args=(2, 3),
-    ),
-    # ---------------------------------------------------------------
-    # storage.upsert_skill — 同 (user_id, name) 冲突
-    # ---------------------------------------------------------------
-    "upsert_skill": Statement(
-        pg="""
-            INSERT INTO skills ("id", "user_id", "name", "data", "enabled", "created_at", "updated_at")
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
-            ON CONFLICT ("user_id", "name") DO UPDATE SET
-                "data" = EXCLUDED."data",
-                "enabled" = EXCLUDED."enabled",
-                "updated_at" = EXCLUDED."updated_at"
-            RETURNING "id"
-        """,
-        mysql="""
-            INSERT INTO skills ("id", "user_id", "name", "data", "enabled", "created_at", "updated_at")
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
-            ON DUPLICATE KEY UPDATE
-                "data" = VALUES("data"),
-                "enabled" = VALUES("enabled"),
-                "updated_at" = VALUES("updated_at")
-        """,
-        mysql_id_sql='SELECT "id" FROM skills WHERE "user_id" = $1 AND "name" = $2',
-        mysql_id_args=(2, 3),
-    ),
-    # ---------------------------------------------------------------
-    # storage.upsert_schedule — 客户端主键
-    # ---------------------------------------------------------------
-    "upsert_schedule": Statement(
-        pg="""
-            INSERT INTO schedules ("id", "user_id", "agent_id", "session_id", "name",
-                                   "cron_expr", "prompt", "source", "enabled",
-                                   "last_run_at", "next_run_at", "created_at", "updated_at")
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-            ON CONFLICT ("id") DO UPDATE SET
-                "name" = EXCLUDED."name",
-                "cron_expr" = EXCLUDED."cron_expr",
-                "prompt" = EXCLUDED."prompt",
-                "enabled" = EXCLUDED."enabled",
-                "last_run_at" = EXCLUDED."last_run_at",
-                "next_run_at" = EXCLUDED."next_run_at",
-                "updated_at" = EXCLUDED."updated_at"
-            RETURNING "id"
-        """,
-        mysql="""
-            INSERT INTO schedules ("id", "user_id", "agent_id", "session_id", "name",
-                                   "cron_expr", "prompt", "source", "enabled",
-                                   "last_run_at", "next_run_at", "created_at", "updated_at")
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-            ON DUPLICATE KEY UPDATE
-                "name" = VALUES("name"),
-                "cron_expr" = VALUES("cron_expr"),
-                "prompt" = VALUES("prompt"),
-                "enabled" = VALUES("enabled"),
-                "last_run_at" = VALUES("last_run_at"),
-                "next_run_at" = VALUES("next_run_at"),
-                "updated_at" = VALUES("updated_at")
-        """,
-    ),
+    # [已禁用] upsert_mcp — mcps 表已从 DDL 移除（改 configs/mcps.json 文件驱动，运行时单一真源）
+    # [已禁用] upsert_skill — skills 表已从 DDL 移除（运行时目录加载 + configs/skills.json 元数据）
+    # [已禁用] upsert_channel — channels 表已从 DDL 移除（已改 JSON 文件驱动）
+    # [已禁用] upsert_schedule — schedules 表已从 DDL 移除（建而不用）
     # ---------------------------------------------------------------
     # user_service.upsert_user — 客户端主键 (user_id) 冲突更新
     # ---------------------------------------------------------------

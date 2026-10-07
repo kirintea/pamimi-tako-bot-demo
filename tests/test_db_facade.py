@@ -33,25 +33,11 @@ async def test_generic_execute_delegates_to_backend():
     assert fake.executed == [("UPDATE t SET a = $1", (1,))]
 
 
-async def test_execute_named_picks_pg_variant():
-    db, fake = _make_db("postgres")
-    await db.execute_named("upsert_agent", "id1", "u1", "user", "{}", None, None)
-    sql = fake.executed[-1][0]
-    assert "ON CONFLICT" in sql
-    assert "RETURNING" in sql
-
-
-async def test_execute_named_picks_mysql_variant():
-    db, fake = _make_db("mysql")
-    await db.execute_named("upsert_agent", "id1", "u1", "user", "{}", None, None)
-    sql = fake.executed[-1][0]
-    assert "ON DUPLICATE KEY" in sql
-    assert "RETURNING" not in sql
-
-
 async def test_insert_returning_id_delegates_with_statement():
     db, fake = _make_db("mysql")
-    result = await db.insert_returning_id("upsert_mcp", "m1", "u1", "srv")
+    result = await db.insert_returning_id(
+        "upsert_session", "s1", "u1", "a1", "user", "{}", "", None, 0, "now", "now",
+    )
     assert result == 99
     sql = fake.executed[-1][0]
     assert "ON DUPLICATE KEY" in sql

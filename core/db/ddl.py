@@ -104,85 +104,12 @@ DDL_POSTGRES = [
     ON sessions("status") WHERE "status" != 'active'
     """,
 
-    # MCP 已安装表
-    """
-    CREATE TABLE IF NOT EXISTS mcps (
-        "id"          VARCHAR(32) PRIMARY KEY,
-        "user_id"     VARCHAR(64) NOT NULL,
-        "name"        VARCHAR(128) NOT NULL,
-        "transport"   VARCHAR(16) NOT NULL DEFAULT 'stdio',
-        "config"      JSONB DEFAULT NULL,
-        "enabled"     BOOLEAN NOT NULL DEFAULT TRUE,
-        "created_at"  TIMESTAMPTZ DEFAULT NOW(),
-        "updated_at"  TIMESTAMPTZ DEFAULT NOW(),
-        UNIQUE("user_id", "name")
-    )
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS idx_mcps_user
-    ON mcps("user_id")
-    """,
+    # [已禁用] mcps 表 — 运行时 MCP 配置改由 configs/mcps.json 文件驱动（单一真源），REST 端点读写该文件，不再使用数据库
+    # [已禁用] skills 表 — 运行时技能由 agent_space/skills 目录（文件系统）加载，管理元数据改由 configs/skills.json，不再使用数据库
 
-    # Skill 已安装表
-    """
-    CREATE TABLE IF NOT EXISTS skills (
-        "id"          VARCHAR(32) PRIMARY KEY,
-        "user_id"     VARCHAR(64) NOT NULL,
-        "name"        VARCHAR(128) NOT NULL,
-        "data"        JSONB DEFAULT NULL,
-        "enabled"     BOOLEAN NOT NULL DEFAULT TRUE,
-        "created_at"  TIMESTAMPTZ DEFAULT NOW(),
-        "updated_at"  TIMESTAMPTZ DEFAULT NOW(),
-        UNIQUE("user_id", "name")
-    )
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS idx_skills_user
-    ON skills("user_id")
-    """,
+    # [已禁用] schedules 表 — 建而不用（api/schedule.py 路由未注册，lifespan 无调度器），已从 REQUIRED_TABLES 移除，启动不再建表
 
-    # 定时任务表
-    """
-    CREATE TABLE IF NOT EXISTS schedules (
-        "id"          VARCHAR(32) PRIMARY KEY,
-        "user_id"     VARCHAR(64) NOT NULL,
-        "agent_id"    VARCHAR(32) NOT NULL,
-        "session_id"  VARCHAR(32),
-        "name"        VARCHAR(256) NOT NULL,
-        "cron_expr"   VARCHAR(64) NOT NULL,
-        "prompt"      TEXT NOT NULL DEFAULT '',
-        "source"      VARCHAR(16) NOT NULL DEFAULT 'user',
-        "enabled"     BOOLEAN NOT NULL DEFAULT TRUE,
-        "last_run_at" TIMESTAMPTZ,
-        "next_run_at" TIMESTAMPTZ,
-        "created_at"  TIMESTAMPTZ DEFAULT NOW(),
-        "updated_at"  TIMESTAMPTZ DEFAULT NOW()
-    )
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS idx_schedules_user
-    ON schedules("user_id")
-    """,
-
-    # ============================================================
-    # Agent 持久化表（storage.py 的 Agent CRUD 使用）
-    # ============================================================
-
-    # Agent 记录表
-    """
-    CREATE TABLE IF NOT EXISTS agents (
-        "id"          VARCHAR(32) PRIMARY KEY,
-        "user_id"     VARCHAR(64) NOT NULL,
-        "source"      VARCHAR(16) NOT NULL DEFAULT 'user',
-        "data"        JSONB NOT NULL,
-        "created_at"  TIMESTAMPTZ DEFAULT NOW(),
-        "updated_at"  TIMESTAMPTZ DEFAULT NOW()
-    )
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS idx_agents_user
-    ON agents("user_id")
-    """,
+    # [已禁用] agents 表 — 建而不用（api/agent.py 标注"没想好，不使用"，路由未注册），已从 REQUIRED_TABLES 移除
 
     # ============================================================
     # 用户表（权限 / root 识别，Phase 1）
@@ -235,6 +162,9 @@ DDL_POSTGRES = [
     """
     ALTER TABLE sessions ALTER COLUMN "parent_session_id" TYPE VARCHAR(64)
     """,
+
+    # [已禁用] channels 表 — 渠道连接配置已改为 JSON 文件驱动（见 api/channels.py + core/channels/），
+    #            多实例下用 FileLock 保证单实例连接企微机器人；DB 表废弃，已从 REQUIRED_TABLES 移除
 
     # ============================================================
     # 消息渠道 channel — 三表各 1 条
@@ -316,69 +246,12 @@ DDL_MYSQL = [
     'CREATE INDEX idx_sessions_status ON sessions("status")',
     'CREATE INDEX idx_sessions_parent ON sessions("parent_session_id")',
 
-    # MCP 已安装表
-    """
-    CREATE TABLE IF NOT EXISTS mcps (
-        "id"          VARCHAR(32) PRIMARY KEY,
-        "user_id"     VARCHAR(64) NOT NULL,
-        "name"        VARCHAR(128) NOT NULL,
-        "transport"   VARCHAR(16) NOT NULL DEFAULT 'stdio',
-        "config"      JSON NULL,
-        "enabled"     TINYINT(1) NOT NULL DEFAULT 1,
-        "created_at"  DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
-        "updated_at"  DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
-        UNIQUE KEY uniq_mcps_user_name ("user_id", "name")
-    )
-    """,
-    'CREATE INDEX idx_mcps_user ON mcps("user_id")',
+    # [已禁用] mcps 表 — 运行时 MCP 配置改由 configs/mcps.json 文件驱动（单一真源），REST 端点读写该文件，不再使用数据库
+    # [已禁用] skills 表 — 运行时技能由 agent_space/skills 目录（文件系统）加载，管理元数据改由 configs/skills.json，不再使用数据库
 
-    # Skill 已安装表
-    """
-    CREATE TABLE IF NOT EXISTS skills (
-        "id"          VARCHAR(32) PRIMARY KEY,
-        "user_id"     VARCHAR(64) NOT NULL,
-        "name"        VARCHAR(128) NOT NULL,
-        "data"        JSON NULL,
-        "enabled"     TINYINT(1) NOT NULL DEFAULT 1,
-        "created_at"  DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
-        "updated_at"  DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
-        UNIQUE KEY uniq_skills_user_name ("user_id", "name")
-    )
-    """,
-    'CREATE INDEX idx_skills_user ON skills("user_id")',
+    # [已禁用] schedules 表（同 PG，已从 REQUIRED_TABLES 移除）
 
-    # 定时任务表
-    """
-    CREATE TABLE IF NOT EXISTS schedules (
-        "id"          VARCHAR(32) PRIMARY KEY,
-        "user_id"     VARCHAR(64) NOT NULL,
-        "agent_id"    VARCHAR(32) NOT NULL,
-        "session_id"  VARCHAR(32) NULL,
-        "name"        VARCHAR(256) NOT NULL,
-        "cron_expr"   VARCHAR(64) NOT NULL,
-        "prompt"      TEXT NOT NULL,
-        "source"      VARCHAR(16) NOT NULL DEFAULT 'user',
-        "enabled"     TINYINT(1) NOT NULL DEFAULT 1,
-        "last_run_at" DATETIME(3) NULL,
-        "next_run_at" DATETIME(3) NULL,
-        "created_at"  DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
-        "updated_at"  DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3)
-    )
-    """,
-    'CREATE INDEX idx_schedules_user ON schedules("user_id")',
-
-    # Agent 记录表
-    """
-    CREATE TABLE IF NOT EXISTS agents (
-        "id"          VARCHAR(32) PRIMARY KEY,
-        "user_id"     VARCHAR(64) NOT NULL,
-        "source"      VARCHAR(16) NOT NULL DEFAULT 'user',
-        "data"        JSON NOT NULL,
-        "created_at"  DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
-        "updated_at"  DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3)
-    )
-    """,
-    'CREATE INDEX idx_agents_user ON agents("user_id")',
+    # [已禁用] agents 表（同 PG，已从 REQUIRED_TABLES 移除）
 
     # 用户表（权限 / root 识别，Phase 1）
     """
@@ -392,6 +265,8 @@ DDL_MYSQL = [
     )
     """,
     'CREATE INDEX idx_users_role ON users("role")',
+
+    # [已禁用] channels 表（同 PG，已改 JSON 文件驱动）
 
     # 消息渠道 channel
     'ALTER TABLE conversations ADD COLUMN "channel" VARCHAR(16) NOT NULL DEFAULT \'web\'',
@@ -419,13 +294,16 @@ def get_ddl(dialect: str) -> list[str]:
     raise ValueError(f"未知方言: {dialect!r}")
 
 
-# 服务端依赖的 6 张核心表（建表/校验/健康检查共用，单一事实来源）
+# 服务端依赖的 3 张核心表（建表/校验/健康检查共用，单一事实来源）
+#   conversations / sessions / users
+#   channels / agents / schedules / mcps / skills 已禁用：
+#   - channels 改 configs/channels.json（JSON 文件驱动 + 单实例锁）
+#   - mcps 改 configs/mcps.json（JSON 文件驱动，运行时单一真源）
+#   - skills 运行时由 agent_space/skills 目录加载，管理元数据改 configs/skills.json
+#   - agents / schedules 建而不用（路由未注册 / 无调度器）
+#   上述表已从本列表移除，启动不再建表、不再 fail-fast 校验
 REQUIRED_TABLES = [
     "conversations",
     "sessions",
-    "mcps",
-    "skills",
-    "schedules",
-    "agents",
     "users",
 ]
