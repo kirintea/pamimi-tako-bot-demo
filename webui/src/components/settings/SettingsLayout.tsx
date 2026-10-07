@@ -30,6 +30,7 @@ const MOBILE_NAV_ITEMS: { key: SettingsSection; labelKey: string; fallback: stri
 	{ key: 'security', labelKey: 'settings.nav.security', fallback: '安全' },
 	{ key: 'skills', labelKey: 'settings.nav.skills', fallback: '技能' },
 	{ key: 'mcp', labelKey: 'settings.nav.mcp', fallback: 'MCP' },
+	{ key: 'channels', labelKey: 'settings.nav.channels', fallback: '渠道' },
 ];
 
 const CARD_TITLES: Record<SettingsSection, { key: string; fallback: string }> = {
@@ -38,6 +39,7 @@ const CARD_TITLES: Record<SettingsSection, { key: string; fallback: string }> = 
 	security: { key: 'settings.card.security', fallback: '安全配置' },
 	skills: { key: 'settings.card.skills', fallback: '技能配置' },
 	mcp: { key: 'settings.card.mcp', fallback: 'MCP 配置' },
+	channels: { key: 'settings.card.channels', fallback: '渠道配置' },
 };
 
 export function SettingsLayout({ children, activeSection, onSectionChange, onBack }: SettingsLayoutProps) {
