@@ -299,7 +299,7 @@ function SkillCard({ skill, onToggle, onDelete }: SkillCardProps) {
 }
 
 // ---------------------------------------------------------------------------
-// InstallDialog — dual‑tab (form / paste)
+// InstallDialog — three tabs (form / paste / upload)
 // ---------------------------------------------------------------------------
 
 interface InstallDialogProps {
@@ -452,8 +452,9 @@ function InstallDialog({ onClose, onInstalled }: InstallDialogProps) {
                 await skillApi.create(data);
                 toast.success(t('skill.toastInstalled', { defaultValue: '技能已安装' }));
                 await onInstalled();
-              } catch {
+              } catch (e) {
                 toast.error(t('skill.toastInstallFailed', { defaultValue: '安装失败' }));
+                throw e;
               } finally {
                 setSubmitting(false);
               }
