@@ -80,12 +80,12 @@ class SkillConfigEntry:
             self.updated_at = self.created_at
 
     def to_dict(self) -> dict[str, Any]:
+        """序列化为字典（不含 markdown，仅保留元数据）"""
         return {
             "id": self.id,
             "name": self.name,
             "display_name": self.display_name,
             "description": self.description,
-            "markdown": self.markdown,
             "tags": list(self.tags),
             "author": self.author,
             "enabled": self.enabled,
@@ -227,7 +227,7 @@ class SkillConfigStore:
                 name=sk.name,
                 display_name=(prev.display_name if prev else sk.name),
                 description=getattr(sk, "description", "") or "",
-                markdown=getattr(sk, "markdown", "") or "",
+                markdown="",  # 不存储完整内容到元数据（运行时从文件读取）
                 tags=list(prev.tags) if prev else [],
                 author=prev.author if prev else None,
                 enabled=prev.enabled if prev else True,

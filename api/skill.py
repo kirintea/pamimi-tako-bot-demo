@@ -142,14 +142,13 @@ class UpdateSkillRequest(BaseModel):
 
 
 class SkillResponse(BaseModel):
-    """Skill 响应"""
+    """Skill 响应（不含 markdown，运行时从文件读取）"""
 
     id: str
     user_id: str
     name: str
     display_name: str | None
     description: str
-    markdown: str
     tags: list[str]
     author: str | None
     version: str | None = None
@@ -176,7 +175,6 @@ def _entry_to_response(entry: SkillConfigEntry) -> SkillResponse:
         name=entry.name,
         display_name=entry.display_name,
         description=entry.description,
-        markdown=entry.markdown,
         tags=entry.tags,
         author=entry.author,
         version=entry.version,
@@ -268,12 +266,12 @@ async def create_skill(
     else:
         logger.warning("skills_dir 未配置，跳过创建实际文件（仅更新元数据）")
 
-    # 3. 更新元数据配置（skills.json）
+    # 3. 更新元数据配置（skills.json，不含 markdown）
     entry = SkillConfigEntry(
         name=body.name,
         display_name=body.display_name,
         description=body.description,
-        markdown=body.markdown,
+        markdown="",  # 不存储完整内容到元数据（运行时从文件读取）
         tags=body.tags,
         author=body.author,
         enabled=True,
