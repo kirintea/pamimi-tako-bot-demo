@@ -156,6 +156,11 @@ class SkillConfigStore:
         self._lock = asyncio.Lock()
         self._watch_task: asyncio.Task | None = None
 
+    @property
+    def skills_dir(self) -> str | None:
+        """返回 skills 目录路径（如 agent_space/skills），用于创建/删除实际的 SKILL.md 文件"""
+        return self._skills_dir
+
     # ------------------------------------------------------------------
     # 生命周期
     # ------------------------------------------------------------------
