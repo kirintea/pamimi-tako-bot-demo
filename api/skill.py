@@ -18,7 +18,8 @@
 
 from __future__ import annotations
 
-import os
+import re
+import shutil
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request, status
@@ -53,6 +54,12 @@ def _create_skill_file(skills_dir: str, name: str, markdown: str) -> None:
         markdown: SKILL.md 的完整内容（含 frontmatter）
     """
     skill_dir = Path(skills_dir) / name
+
+    # 验证路径安全性（防止路径穿越）
+    final_dir = skill_dir.resolve()
+    if not str(final_dir).startswith(str(Path(skills_dir).resolve())):
+        raise ValueError(f"Skill 名称包含路径穿越: {name}")
+
     skill_dir.mkdir(parents=True, exist_ok=True)
     skill_file = skill_dir / "SKILL.md"
     skill_file.write_text(markdown, encoding="utf-8")
@@ -69,8 +76,14 @@ def _delete_skill_file(skills_dir: str, name: str) -> bool:
     Returns:
         是否成功删除
     """
-    import shutil
     skill_dir = Path(skills_dir) / name
+
+    # 验证路径安全性（防止路径穿越）
+    final_dir = skill_dir.resolve()
+    if not str(final_dir).startswith(str(Path(skills_dir).resolve())):
+        logger.warning("Skill 名称包含路径穿越，拒绝删除: {}", name)
+        return False
+
     if skill_dir.exists() and skill_dir.is_dir():
         shutil.rmtree(skill_dir)
         logger.info("已删除 Skill 目录: {}", skill_dir)
@@ -86,6 +99,10 @@ def _is_path_safe(file_path: str) -> bool:
 
     # 检查是否是绝对路径
     if file_path.startswith('/') or file_path.startswith('\\'):
+        return False
+
+    # 检查 Windows 驱动器字母
+    if re.match(r'^[A-Za-z]:', file_path):
         return False
 
     # 检查是否包含危险字符
@@ -220,6 +237,7 @@ async def create_skill(
             # 2. 如果有额外文件，写入到 skill 目录
             if body.files:
                 skill_dir = Path(skills_dir) / body.name
+                resolved_skill_dir = str(skill_dir.resolve())
                 for file_path, content in body.files.items():
                     # 安全校验：防止路径穿越
                     if not _is_path_safe(file_path):
@@ -230,7 +248,7 @@ async def create_skill(
 
                     safe_path = skill_dir / file_path
                     # 确保路径在 skill 目录内
-                    if not str(safe_path.resolve()).startswith(str(skill_dir.resolve())):
+                    if not str(safe_path.resolve()).startswith(resolved_skill_dir):
                         raise HTTPException(
                             status_code=status.HTTP_400_BAD_REQUEST,
                             detail=f"文件路径越界: {file_path}",
@@ -245,12 +263,12 @@ async def create_skill(
             logger.exception("创建 Skill 文件失败: {}", e)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"创建 Skill 文件失败: {e}",
+                detail="创建 Skill 文件失败，请查看服务端日志",
             )
     else:
         logger.warning("skills_dir 未配置，跳过创建实际文件（仅更新元数据）")
 
-    # 2. 更新元数据配置（skills.json）
+    # 3. 更新元数据配置（skills.json）
     entry = SkillConfigEntry(
         name=body.name,
         display_name=body.display_name,
