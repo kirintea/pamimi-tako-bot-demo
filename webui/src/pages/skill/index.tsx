@@ -222,12 +222,12 @@ function SkillCard({ skill, onToggle, onDelete }: SkillCardProps) {
   return (
     <div
       className={cn(
-        'group relative min-h-[156px] rounded-[16px] border border-border bg-white dark:bg-[#303030] p-6 transition-shadow',
+        'group flex flex-col rounded-[16px] border border-border bg-white dark:bg-[#303030] transition-shadow',
         'hover:shadow-[0_1px_2px_rgba(24,25,28,0.05)]',
       )}
     >
-      {/* Top row */}
-      <div className="mt-0.5 flex items-center justify-between">
+      {/* Top row: icon + name + actions */}
+      <div className="flex items-center justify-between px-6 pt-5 pb-4">
         <div className="flex items-center gap-3">
           <div
             className={cn(
@@ -262,16 +262,24 @@ function SkillCard({ skill, onToggle, onDelete }: SkillCardProps) {
         </div>
       </div>
 
-      {/* Description — truncated, full text on hover */}
-      <p
-        className="mt-4 line-clamp-3 text-xs leading-5 text-[#9CA3AF]"
-        title={skill.description || undefined}
-      >
-        {skill.description || ' '}
-      </p>
+      {/* Divider */}
+      <div className="mx-6 border-t border-[#F3F4F6] dark:border-[#383838]" />
 
-      {/* Bottom row */}
-      <div className="absolute inset-x-6 bottom-4 flex items-center justify-between">
+      {/* Description — truncated, full text on hover */}
+      <div className="flex-1 px-6 py-4">
+        <p
+          className="line-clamp-3 text-xs leading-5 text-[#9CA3AF]"
+          title={skill.description || undefined}
+        >
+          {skill.description || ' '}
+        </p>
+      </div>
+
+      {/* Divider */}
+      <div className="mx-6 border-t border-[#F3F4F6] dark:border-[#383838]" />
+
+      {/* Bottom row: status + toggle */}
+      <div className="flex items-center justify-between px-6 py-4">
         <div className="flex items-center gap-2">
           <span
             className={cn(
