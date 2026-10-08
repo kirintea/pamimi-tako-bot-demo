@@ -196,6 +196,7 @@ export interface CreateSkillRequest {
 	markdown?: string;
 	tags?: string[];
 	author?: string;
+	files?: Record<string, string>;
 }
 
 export interface UpdateSkillRequest {
