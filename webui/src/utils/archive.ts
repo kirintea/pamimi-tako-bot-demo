@@ -51,10 +51,28 @@ function untarSync(data: Uint8Array): Record<string, Uint8Array> {
     }
     if (allZero) break;
 
+    // Verify checksum (bytes 148-155)
+    const checksumStr = readTarString(header, 148, 8);
+    const expectedChecksum = parseInt(checksumStr.trim(), 8);
+
+    let actualChecksum = 0;
+    for (let i = 0; i < 512; i++) {
+      if (i >= 148 && i < 156) {
+        actualChecksum += 0x20; // checksum field treated as 8 spaces
+      } else {
+        actualChecksum += header[i];
+      }
+    }
+
+    if (actualChecksum !== expectedChecksum) {
+      throw new Error(`TAR header checksum mismatch at offset ${offset}`);
+    }
+
     // Read fields from the 512-byte header
     const name = readTarString(header, 0, 100);
     const sizeOctal = readTarString(header, 124, 12);
     const prefix = readTarString(header, 345, 155);
+    const typeflag = header[156];
 
     // Determine full path (USTAR prefix + name)
     const fullPath = prefix ? `${prefix}/${name}` : name;
@@ -64,6 +82,12 @@ function untarSync(data: Uint8Array): Record<string, Uint8Array> {
 
     // Move past the 512-byte header
     offset += 512;
+
+    // Skip non-regular-file, non-directory entries (PAX headers, GNU long names, etc.)
+    if (typeflag !== 0 && typeflag !== 0x30 /* '0' */ && typeflag !== 0x35 /* '5' */) {
+      offset += Math.ceil(fileSize / 512) * 512;
+      continue;
+    }
 
     // Extract file data (skip directory entries that end with '/')
     if (fullPath && !fullPath.endsWith('/')) {
@@ -121,12 +145,20 @@ export async function decompressArchive(file: File): Promise<ArchiveFile[]> {
     throw new Error('不支持的文件格式，请上传 .zip, .tar, .tar.gz 或 .tgz 文件');
   }
 
-  // Filter out directory entries (paths ending with /)
+  // Filter out directory entries, validate path safety
   const files: ArchiveFile[] = [];
   for (const [path, content] of Object.entries(decompressed)) {
-    if (!path.endsWith('/')) {
-      files.push({ path, content });
+    // Skip directory entries (paths ending with /)
+    if (path.endsWith('/')) {
+      continue;
     }
+
+    // Validate path safety to prevent path traversal attacks
+    if (!isPathSafe(path)) {
+      throw new Error(`压缩包包含不安全的路径: ${path}`);
+    }
+
+    files.push({ path, content });
   }
 
   if (files.length === 0) {
