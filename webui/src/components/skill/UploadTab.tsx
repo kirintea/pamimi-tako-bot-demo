@@ -15,6 +15,7 @@ import {
   Check,
   AlertCircle,
 } from 'lucide-react';
+import { toast } from 'sonner';
 
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -22,7 +23,6 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Spinner } from '@/components/ui/spinner';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Empty, EmptyHeader, EmptyTitle, EmptyDescription } from '@/components/ui/empty';
 
 import {
   decompressArchive,
@@ -30,7 +30,6 @@ import {
   parseFrontmatter,
   buildFileTree,
   fileTreeToString,
-  isPathSafe,
   type ArchiveFile,
   type FileTreeNode,
   type SkillMetadata,
@@ -43,6 +42,44 @@ import type { CreateSkillRequest } from '@/api/types';
 
 const ACCEPTED_EXTENSIONS = ['.zip', '.tar', '.tar.gz', '.tgz'];
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * 检测文件是否为文本文件（基于扩展名）
+ */
+function isTextFile(path: string): boolean {
+  const textExtensions = [
+    '.md', '.txt', '.json', '.yaml', '.yml', '.toml',
+    '.js', '.ts', '.jsx', '.tsx', '.py', '.rb', '.go',
+    '.java', '.c', '.cpp', '.h', '.hpp', '.rs',
+    '.html', '.css', '.scss', '.less',
+    '.sh', '.bash', '.zsh', '.fish',
+    '.xml', '.svg', '.csv', '.tsv',
+    '.ini', '.cfg', '.conf', '.env',
+    '.gitignore', '.dockerignore', '.editorconfig',
+  ];
+
+  const lowerPath = path.toLowerCase();
+  return textExtensions.some(ext => lowerPath.endsWith(ext)) ||
+    // 没有扩展名的文件可能是文本（如 Makefile, Dockerfile）
+    !lowerPath.includes('.');
+}
+
+/**
+ * 格式化文件大小显示
+ */
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  } else if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  } else {
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Props
@@ -115,13 +152,6 @@ export function UploadTab({ onInstall, installing = false }: UploadTabProps) {
       try {
         const files = await decompressArchive(f);
 
-        // 额外路径安全检查
-        for (const af of files) {
-          if (!isPathSafe(af.path)) {
-            throw new Error(`压缩包包含不安全的路径: ${af.path}`);
-          }
-        }
-
         const tree = buildFileTree(files);
         const found = findSkillMd(files);
         const meta = found ? parseFrontmatter(found.content) : {};
@@ -178,10 +208,20 @@ export function UploadTab({ onInstall, installing = false }: UploadTabProps) {
       return;
     }
 
-    // 构建 files 映射
-    const filesMap: Record<string, string> = {};
+    // 打包所有文件为 Record<string, string>（只处理文本文件）
+    const filesRecord: Record<string, string> = {};
+    let skippedBinary = 0;
+
     for (const af of archiveFiles) {
-      filesMap[af.path] = new TextDecoder().decode(af.content);
+      if (isTextFile(af.path)) {
+        filesRecord[af.path] = new TextDecoder().decode(af.content);
+      } else {
+        skippedBinary++;
+      }
+    }
+
+    if (skippedBinary > 0) {
+      toast.warning(`已跳过 ${skippedBinary} 个二进制文件`);
     }
 
     const data: CreateSkillRequest = {
@@ -189,14 +229,16 @@ export function UploadTab({ onInstall, installing = false }: UploadTabProps) {
       display_name: editName.trim(),
       description: metadata.description,
       markdown: skillMd?.content,
-      files: Object.keys(filesMap).length > 0 ? filesMap : undefined,
+      files: Object.keys(filesRecord).length > 0 ? filesRecord : undefined,
     };
 
     try {
       await onInstall(data);
       reset();
-    } catch {
-      // 错误由父组件处理
+    } catch (e) {
+      const message = e instanceof Error ? e.message : '安装失败';
+      setError(message);
+      toast.error(message);
     }
   }, [editName, archiveFiles, metadata, skillMd, onInstall, reset]);
 
@@ -289,7 +331,7 @@ export function UploadTab({ onInstall, installing = false }: UploadTabProps) {
         <FileArchive className="size-4 text-muted-foreground" />
         <span className="text-sm font-medium truncate">{file.name}</span>
         <Badge variant="secondary" className="text-xs">
-          {(file.size / 1024).toFixed(1)} KB
+          {formatFileSize(file.size)}
         </Badge>
         <Badge variant="secondary" className="text-xs">
           {archiveFiles.length} 个文件
