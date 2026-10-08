@@ -179,7 +179,6 @@ export interface SkillInfo {
 	name: string;
 	display_name?: string;
 	description?: string;
-	markdown?: string;
 	tags?: string[];
 	author?: string;
 	/** 版本（设计稿卡片右上角 Ver badge） */
@@ -193,6 +192,7 @@ export interface CreateSkillRequest {
 	name: string;
 	display_name?: string;
 	description?: string;
+	/** SKILL.md 内容（用于创建文件） */
 	markdown?: string;
 	tags?: string[];
 	author?: string;
