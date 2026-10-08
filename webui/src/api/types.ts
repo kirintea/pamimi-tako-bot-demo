@@ -196,6 +196,7 @@ export interface CreateSkillRequest {
 	markdown?: string;
 	tags?: string[];
 	author?: string;
+	/** 文件映射：文件相对路径 → 文件内容（用于压缩包上传） */
 	files?: Record<string, string>;
 }
 
