@@ -222,7 +222,7 @@ function SkillCard({ skill, onToggle, onDelete }: SkillCardProps) {
   return (
     <div
       className={cn(
-        'group relative min-h-[132px] rounded-[16px] border border-border bg-white dark:bg-[#303030] p-6 transition-shadow',
+        'group relative min-h-[156px] rounded-[16px] border border-border bg-white dark:bg-[#303030] p-6 transition-shadow',
         'hover:shadow-[0_1px_2px_rgba(24,25,28,0.05)]',
       )}
     >
@@ -262,8 +262,11 @@ function SkillCard({ skill, onToggle, onDelete }: SkillCardProps) {
         </div>
       </div>
 
-      {/* Description */}
-      <p className="mt-4 line-clamp-2 text-xs text-[#9CA3AF]">
+      {/* Description — truncated, full text on hover */}
+      <p
+        className="mt-4 line-clamp-3 text-xs leading-5 text-[#9CA3AF]"
+        title={skill.description || undefined}
+      >
         {skill.description || ' '}
       </p>
 
