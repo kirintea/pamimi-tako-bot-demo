@@ -1,4 +1,4 @@
-# CLAUDE.md — AgentScope Platform Server 项目指引
+# CLAUDE.md — Pamimi Tako Bot Demo 项目指引
 
 ## 项目概述
 
@@ -11,7 +11,7 @@
 ## 项目结构
 
 ```
-platform-server-8090/
+pamimi-tako-bot-demo/
 ├── main.py                    # 启动入口 — 配置加载 + 日志 + OTel + uvicorn
 ├── server.py                  # FastAPI 应用 — create_app(config) + lifespan + 路由注册
 ├── api/
@@ -79,7 +79,7 @@ platform-server-8090/
 │   ├── sandbox-plan.md        # 沙箱隔离设计
 │   └── tool-middleware-plan.md # 工具守卫设计
 ├── scripts/
-│   └── start_8090.sh          # 启动 8090 自有平台层（VENV_PATH 可配置）
+│   └── start.sh               # 启动服务（VENV_PATH 可配置）
 ├── .env.example               # 环境变量模板
 ├── pyproject.toml             # 项目依赖
 └── requirements.txt           # 锁定依赖
@@ -92,7 +92,7 @@ platform-server-8090/
 - **main.py** — 启动入口：配置加载、日志初始化、OTel 初始化、uvicorn 启动
 - **server.py** — FastAPI 应用：`create_app(config)` 工厂函数、lifespan 资源管理、路由注册
 - 自有 SessionManager、DatabaseManager、RedisMessageBus、PostgresStorage、ChatService
-- 会话存储：Redis `agentscope:session:*` 前缀
+- 会话存储：Redis `dmx_agent_redis:session:*` 前缀
 - 工作区：`workspaces/{user_id}/{session_id}/`
 
 ### 访问入口
@@ -188,8 +188,8 @@ APP_ENV=dev
 SessionManager
   ├── 内存缓存: (user_id, session_id) → SessionEntry
   └── KVStore（kv.backend: redis | jsonl，key 前缀/TTL 取自 redis 配置）
-      ├── agentscope:session:{user_id}:{session_id}      → AgentState JSON (TTL 1800s)
-      └── agentscope:session:{user_id}:{session_id}:meta → 会话元数据 JSON (TTL 1800s)
+      ├── dmx_agent_redis:session:{user_id}:{session_id}      → AgentState JSON (TTL 1800s)
+      └── dmx_agent_redis:session:{user_id}:{session_id}:meta → 会话元数据 JSON (TTL 1800s)
           {session_id, user_id, title, created_at, last_active, message_count}
           # kv.backend=jsonl 时改落 workspaces/.history/kv_data/kv.jsonl（开发/资源受限，单进程，惰性 TTL）
 
@@ -217,7 +217,7 @@ PostgresStorage (PostgreSQL / MySQL — 后端无关)
 ```yaml
 redis:
   url: "${REDIS_URL:-redis://localhost:6379/0}"
-  key_prefix: "agentscope:session:"
+  key_prefix: "dmx_agent_redis:session:"
   session_ttl: 1800    # 秒
 ```
 

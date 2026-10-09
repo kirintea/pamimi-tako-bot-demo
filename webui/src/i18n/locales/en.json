@@ -557,7 +557,7 @@
 		"checking": "Connecting...",
 		"errorUnreachable": "Cannot reach this server. Check the address, make sure the service is running, and that it allows cross-origin requests.",
 		"errorTimeout": "The server accepted the connection but did not respond in time. It may be overloaded or stuck starting up.",
-		"errorNotAgentScope": "Reached the address, but it is not an AgentScope service — check the URL, or upgrade a backend too old to expose a health endpoint.",
+		"errorNotAgentScope": "Reached the address, but it is not a Pamimi Tako Bot Demo service — check the URL, or upgrade a backend too old to expose a health endpoint.",
 		"errorUnauthorized": "The server rejected this username. Enter a valid one.",
 		"errorNotReady": "The server is reachable but not ready. These subsystems failed to start:",
 		"hint": "This is a frontend-only application, and all data are served from the Server URL above. The username is used solely for server-side authentication."
@@ -759,6 +759,8 @@
 		},
 		"state": {
 			"stopped": "Stopped",
+			"starting": "Starting",
+			"running": "Running",
 			"connecting": "Connecting",
 			"retrying": "Reconnecting",
 			"connected": "Connected",
@@ -788,6 +790,8 @@
 		"disabledLabel": "Disabled",
 		"loadError": "Failed to load MCP list",
 		"nameRequired": "Please enter a service name",
+		"commandRequired": "stdio transport requires a start command",
+		"urlRequired": "HTTP transport requires a URL",
 		"updateSuccess": "MCP service updated",
 		"createSuccess": "MCP service added",
 		"saveError": "Save failed, please retry",
@@ -955,14 +959,16 @@
 			"models": "Models",
 			"security": "Security",
 			"skills": "Skills",
-			"mcp": "MCP"
+			"mcp": "MCP",
+			"channels": "Channels"
 		},
 		"nav": {
 			"general": "General",
 			"models": "Models",
 			"mcp": "MCP",
 			"skills": "Skills",
-			"security": "Security"
+			"security": "Security",
+			"channels": "Channels"
 		},
 		"general": {
 			"appearance": "Appearance",
@@ -1023,6 +1029,27 @@
 			"toolGuard": "Tool Guard",
 			"toolGuardEnabled": "Enable Tool Guard",
 			"toolGuardDesc": "Filter available tools by allowlist/denylist"
+		},
+		"channels": {
+			"title": "Channels",
+			"add": "Add",
+			"empty": "No channels yet",
+			"namePlaceholder": "Name",
+			"botIdPlaceholder": "Bot ID",
+			"secretPlaceholder": "Secret",
+			"allowFromPlaceholder": "Allowed senders (comma or newline separated; empty = allow all)",
+			"welcomePlaceholder": "Welcome message (optional)",
+			"enabledOnCreate": "Enable and start immediately after creation",
+			"start": "Start",
+			"stop": "Stop",
+			"confirmDelete": "Delete this channel?",
+			"depsUnknown": "Dependency status unknown",
+			"depsReady": "Dependencies satisfied",
+			"depsMissing": "Missing dependencies: {pkgs}",
+			"backendSupported": "Supported",
+			"backendUnsupported": "Not implemented",
+			"backendUnsupportedDesc": "This channel type is not implemented yet — coming soon.",
+			"docLink": "Setup guide"
 		}
 	}
 }

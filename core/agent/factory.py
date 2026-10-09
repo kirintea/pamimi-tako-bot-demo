@@ -11,6 +11,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import os
+
 from agentscope.agent import Agent, ContextConfig, InjectionConfig, ReActConfig
 from agentscope.formatter import (
     AnthropicChatFormatter,
@@ -40,9 +43,14 @@ from core.workspace import LocalWorkspaceManager
 from middleware.tool_guard import ToolGuardMiddleware
 from middleware.command_guard import CommandGuardMiddleware
 from middleware.tool_manager import ToolManagerMiddleware
-from middleware.path_guard import PathGuardMiddleware
+from middleware.path_guard import PathGuardMiddleware, build_sandbox_rules
 from middleware.docker_sandbox_proxy import DockerSandboxProxy
 from middleware.tracing_context import TracingContextMiddleware
+
+
+# 有状态 MCP（stdio）子进程 connect() 的上限。无响应的 MCP 不应无限期阻塞
+# Agent 创建 —— 超时按连接失败处理（跳过该 MCP，不拖垮会话）。
+MCP_CONNECT_TIMEOUT_SECONDS = 30.0
 
 
 class AgentFactory:
@@ -53,17 +61,21 @@ class AgentFactory:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def create(
+    async def create(
         config: AppConfig,
         state: AgentState | None = None,
         user_id: str | None = None,
+        role: str = "normal",
+        mcp_configs: list[MCPConfig] | None = None,
     ) -> Agent:
         """根据配置创建完整的 Agent 实例
 
         Args:
             config: 应用配置
             state: 已有的 AgentState（从 Redis 恢复时使用），为 None 则创建新状态
-            user_id: 用户标识（sandbox_per_user 启用时用于拼接沙箱路径）
+            user_id: 用户标识（用于拼接用户私有域路径 user_spaces/{user_id}）
+            role: 用户角色（'normal' / 'root'）；root 可写 agent_space 并拥有更宽路径域
+            mcp_configs: MCP 配置列表，None 时从 configs/mcps.json 读取（唯一真源）
 
         Returns:
             配置好的 Agent 实例
@@ -95,19 +107,32 @@ class AgentFactory:
                 e,
             )
 
-        # 2. 创建 Toolkit
-        toolkit = AgentFactory._create_toolkit(config, user_id=user_id)
+        # 4. 创建工作区管理器（同时作为 Offloader）— 提前计算双域路径
+        import os
+        sandbox_base = os.path.abspath(config.agent.sandbox_dir)
+        workspace_manager = LocalWorkspaceManager(base_dir=sandbox_base)
+        # 双域路径（权限隔离）：用户私有域 user_spaces/{user_id}（rw），
+        # Agent 共享域 agent_space（普通用户 ro / root rw）
+        if user_id:
+            user_space_dir = workspace_manager.get_user_space_dir(user_id)
+        else:
+            user_space_dir = sandbox_base
+        agent_space_dir = workspace_manager.agent_space_dir
+
+        # 2. 创建 Toolkit（异步：有状态 MCP 需先 connect()）
+        toolkit = await AgentFactory._create_toolkit(
+            config, user_id=user_id, agent_space_dir=agent_space_dir,
+            mcp_configs=mcp_configs,
+        )
 
         # 3. 创建中间件列表
-        middlewares = AgentFactory._create_middlewares(config, user_id=user_id)
-
-        # 4. 创建工作区管理器（同时作为 Offloader）
-        import os
-        sandbox_dir = os.path.abspath(config.agent.sandbox_dir)
-        if config.agent.sandbox_per_user and user_id:
-            # 防止 user_id="/" 或 "../../" 等越界输入折叠沙箱根目录
-            sandbox_dir = os.path.join(sandbox_dir, coerce_id(user_id))
-        workspace_manager = LocalWorkspaceManager(base_dir=sandbox_dir)
+        middlewares = AgentFactory._create_middlewares(
+            config,
+            user_id=user_id,
+            user_space_dir=user_space_dir,
+            agent_space_dir=agent_space_dir,
+            role=role,
+        )
 
         # 5. 创建 Agent 配置
         react_config = ReActConfig(
@@ -256,34 +281,59 @@ class AgentFactory:
         return None
 
     @staticmethod
-    def _create_toolkit(
+    async def _create_toolkit(
         config: AppConfig,
         user_id: str | None = None,
+        agent_space_dir: str | None = None,
+        mcp_configs: list[MCPConfig] | None = None,
     ) -> Toolkit:
-        """组装 Toolkit：配置驱动的工具 + MCP + Skills"""
+        """组装 Toolkit：配置驱动的工具 + MCP + Skills
+
+        Args:
+            mcp_configs: MCP 配置列表。None 时从 configs/mcps.json 读取（唯一真源）。
+
+        有状态（stdio）MCP 客户端必须先 connect() 再交给 Toolkit ——
+        agentscope Toolkit.__init__ 对未连接的有状态客户端直接抛 ValueError。
+        连接失败的客户端被剔除并告警，不让单个 MCP 拖垮整个 Agent 创建。
+        """
         import os
 
         # 从配置文件加载工具（替代硬编码列表）
         tool_manager = ToolManagerMiddleware(config.agent.tool_manager.config_path)
         tools = tool_manager.load_tools()
 
-        # 沙箱根目录（按需追加 user_id，coerce_id 防止越界）
-        sandbox_dir = os.path.abspath(config.agent.sandbox_dir)
-        if config.agent.sandbox_per_user and user_id:
-            sandbox_dir = os.path.join(sandbox_dir, coerce_id(user_id))
-
-        # MCP 客户端
+        # MCP 客户端 — 唯一真源 configs/mcps.json（YAML 不参与，见 core/mcp/config_store.py）
         if config.agent.sandbox_mcp:
-            # 预留：从 sandbox_dir/mcp/ 加载用户级 MCP 配置。
-            # 当前 MCP 配置仍统一来自 config.mcp_servers（yaml），
-            # 此分支为保留位，暂不执行任何操作。
+            # 预留：从 agent_space/mcp/ 加载用户级 MCP 配置，暂未实现
             pass  # reserved: per-user sandbox MCP loading not yet implemented
-        mcp_clients = AgentFactory._create_mcp_clients(config.mcp_servers)
+        if mcp_configs is None:
+            from core.mcp.config_store import load_mcp_configs
 
-        # Skills 加载器
+            mcp_configs = load_mcp_configs()
+        mcp_clients = AgentFactory._create_mcp_clients(mcp_configs)
+
+        # 连接有状态客户端（stdio 子进程），失败或超时的剔除
+        ready_clients: list[MCPClient] = []
+        for client in mcp_clients:
+            if client.is_stateful:
+                try:
+                    await asyncio.wait_for(
+                        client.connect(), timeout=MCP_CONNECT_TIMEOUT_SECONDS,
+                    )
+                    logger.info("MCP '{}': 子进程已连接", client.name)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(
+                        "MCP '{}' 连接失败（本次会话跳过该 MCP）: {}",
+                        client.name, e,
+                    )
+                    continue
+            ready_clients.append(client)
+        mcp_clients = ready_clients
+
+        # Skills 加载器 — skills 统一托管在 Agent 共享域 agent_space/skills
         skill_loaders = []
-        if config.agent.sandbox_skills:
-            skills_dir = os.path.join(sandbox_dir, "skills")
+        if config.agent.sandbox_skills and agent_space_dir:
+            skills_dir = os.path.join(agent_space_dir, "skills")
         else:
             skills_dir = "./skills"
         try:
@@ -306,18 +356,71 @@ class AgentFactory:
         )
 
     @staticmethod
+    async def close_mcp_clients(agent: Agent) -> None:
+        """关闭 Agent 持有的有状态 MCP 客户端（stdio 子进程），释放连接。
+
+        无状态 HTTP MCP 无需关闭。会话移除/删除/过期/停机时调用。
+        """
+        toolkit = getattr(agent, "toolkit", None)
+        if toolkit is None:
+            return
+        for group in getattr(toolkit, "tool_groups", []) or []:
+            for client in getattr(group, "mcps", []) or []:
+                if not getattr(client, "is_stateful", False):
+                    continue
+                try:
+                    await client.close()
+                    logger.debug("MCP '{}': 已关闭", client.name)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("MCP '{}' 关闭失败（已忽略）: {}", client.name, e)
+
+    @staticmethod
     def _create_mcp_clients(mcp_configs: list[MCPConfig]) -> list[MCPClient]:
-        """从配置创建 MCP 客户端列表"""
+        """从配置创建 MCP 客户端列表
+
+        传输别名归一：
+        - stdio：需 command；env 暂存于 headers（UI 约定），透传 StdioMCPConfig.env
+        - http 族（http / https / sse / streamable_http / streamableHttp / streamable-http）：
+          需 url；SSE 与 Streamable HTTP 由 agentscope 按 URL 路径自动判别
+        配置不完整或传输未知时跳过并记录警告（禁止静默丢弃）。
+        """
         clients = []
         for cfg in mcp_configs:
-            if cfg.transport == "stdio" and cfg.command:
+            transport = (cfg.transport or "").strip().lower().replace("-", "_")
+            if transport == "stdio":
+                if not cfg.command:
+                    logger.warning(
+                        "MCP '{}' 已跳过：stdio 类型缺少 command（请补全启动命令）",
+                        cfg.name,
+                    )
+                    continue
+                # UI 将 stdio 环境变量暂存于 headers 字段，这里透传给子进程
+                raw_env = cfg.headers or {}
+                env = {k: v for k, v in raw_env.items() if v} or None
+                dropped = [k for k in raw_env if k not in (env or {})]
+                if dropped:
+                    logger.warning(
+                        "MCP '{}' env 已被过滤（值为空，可能缺少环境变量）: {}",
+                        cfg.name, dropped,
+                    )
                 mcp_config = StdioMCPConfig(
                     command=cfg.command,
                     args=cfg.args or None,
+                    env=env,
                 )
                 # STDIO 必须有状态（长连接子进程）
                 clients.append(MCPClient(mcp_config=mcp_config, name=cfg.name, is_stateful=True))
-            elif cfg.transport in ("http", "streamableHttp", "streamable_http") and cfg.url:
+                logger.info(
+                    "MCP '{}': transport=stdio, is_stateful=True",
+                    cfg.name,
+                )
+            elif transport in ("http", "https", "sse", "streamable_http", "streamablehttp"):
+                if not cfg.url:
+                    logger.warning(
+                        "MCP '{}' 已跳过：HTTP 族传输缺少 url（请补全服务地址）",
+                        cfg.name,
+                    )
+                    continue
                 # 过滤空值 header，避免发送 "Bearer " 等无效认证头
                 raw_headers = cfg.headers or {}
                 headers = {k: v for k, v in raw_headers.items() if v}
@@ -338,12 +441,20 @@ class AgentFactory:
                     cfg.name, cfg.transport, is_stateful,
                 )
                 clients.append(MCPClient(mcp_config=mcp_config, name=cfg.name, is_stateful=is_stateful))
+            else:
+                logger.warning(
+                    "MCP '{}' 已跳过：未知 transport '{}'（支持 stdio / http / sse / streamable_http）",
+                    cfg.name, cfg.transport,
+                )
         return clients
 
     @staticmethod
     def _create_middlewares(
         config: AppConfig,
         user_id: str | None = None,
+        user_space_dir: str | None = None,
+        agent_space_dir: str | None = None,
+        role: str = "normal",
     ) -> list:
         """创建中间件列表"""
         middlewares = []
@@ -365,13 +476,9 @@ class AgentFactory:
                 rules=config.agent.command_guard.rules,
             ))
 
-        # 沙箱路径守卫中间件（路径级）— 始终启用
-        import os
-        sandbox_dir = os.path.abspath(config.agent.sandbox_dir)
-        if config.agent.sandbox_per_user and user_id:
-            sandbox_dir = os.path.join(sandbox_dir, coerce_id(user_id))
-
         # Docker 沙箱代理（执行环境级）— sandbox.backend="docker" 时启用
+        # 容器内执行会 bypass 本地 PathGuard；本地降级（fallback_to_local=True）
+        # 时仍由下方 PathGuard 多域规则守卫（见 sandbox 调整方案 §4.1）。
         if config.sandbox.backend == "docker":
             host_project_root = os.path.abspath(".")
             middlewares.append(DockerSandboxProxy(
@@ -379,7 +486,20 @@ class AgentFactory:
                 host_project_root=host_project_root,
             ))
 
-        middlewares.append(PathGuardMiddleware(sandbox_dir=sandbox_dir))
+        # 沙箱路径守卫中间件（路径级，多域读写隔离）— 始终启用
+        # 双域：user_spaces/{user_id}（rw） + agent_space（ro/rw 视角色）
+        if user_space_dir and agent_space_dir:
+            rules = build_sandbox_rules(
+                user_space_dir, agent_space_dir,
+                is_root=(role == "root"),
+            )
+            middlewares.append(PathGuardMiddleware(rules=rules))
+        else:
+            # 旧布局兜底（未启用双域时）：单条 rw 规则
+            sandbox_dir = os.path.abspath(config.agent.sandbox_dir)
+            if config.agent.sandbox_per_user and user_id:
+                sandbox_dir = os.path.join(sandbox_dir, coerce_id(user_id))
+            middlewares.append(PathGuardMiddleware(sandbox_dir=sandbox_dir))
 
         # 长期记忆中间件 — AgenticMemory（Markdown 文件型，按用户隔离）
         if config.memory.enabled:

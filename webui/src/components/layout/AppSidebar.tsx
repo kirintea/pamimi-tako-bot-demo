@@ -11,6 +11,9 @@ import { format } from 'date-fns';
 import {
 	BookText,
 	Cable,
+	ChevronDown,
+	ChevronRight,
+	Crown,
 	Database,
 	Ellipsis,
 	LogIn,
@@ -30,6 +33,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
+import { useRole } from '@/hooks/useRole';
 import { wsManager } from '@/api/ws';
 import type { SessionInfo } from '@/api/types';
 import { Button } from '@/components/ui/button';
@@ -113,7 +117,9 @@ export function AppSidebar({
 	const [renameTarget, setRenameTarget] = useState<string | null>(null);
 	const [renameValue, setRenameValue] = useState('');
 	const [query, setQuery] = useState('');
+	const [workbenchOpen, setWorkbenchOpen] = useState(true);
 	const currentUserId = wsManager.getUserId();
+	const { isRoot } = useRole();
 
 	const handleSwitchUser = () => {
 		const trimmed = newUserId.trim();
@@ -221,10 +227,21 @@ export function AppSidebar({
 						/>
 					</div>
 
-					{/* 工作台 */}
-					<div className="mt-4 px-3 text-[11px] font-semibold text-text-tertiary">
-						{t('sidebar.groupWorkbench', { defaultValue: '工作台' })}
-					</div>
+				{/* 工作台（可折叠，root 用户可收起以腾出空间看最近对话） */}
+				<button
+					type="button"
+					onClick={() => setWorkbenchOpen((v) => !v)}
+					aria-expanded={workbenchOpen}
+					className="mt-4 flex w-full items-center gap-1 px-3 text-[11px] font-semibold text-text-tertiary transition-colors hover:text-foreground"
+				>
+					{workbenchOpen ? (
+						<ChevronDown className="size-3.5 shrink-0" />
+					) : (
+						<ChevronRight className="size-3.5 shrink-0" />
+					)}
+					<span>{t('sidebar.groupWorkbench', { defaultValue: '工作台' })}</span>
+				</button>
+				{workbenchOpen && (
 					<nav className="mt-3 flex flex-col gap-0.5">
 						{navItems.map((item) => (
 							<NavItem
@@ -240,8 +257,26 @@ export function AppSidebar({
 							/>
 						))}
 					</nav>
+				)}
 
-					{/* 最近 */}
+				{/* 管理视图（仅 root） */}
+				{isRoot && (
+					<>
+						<div className="mt-6 px-3 text-[11px] font-semibold text-text-tertiary">
+							{t('sidebar.groupAdmin', { defaultValue: '管理视图' })}
+						</div>
+						<nav className="mt-3 flex flex-col gap-0.5">
+							<NavItem
+								icon={<Crown className="size-3.5" />}
+								label={t('sidebar.adminAllSessions', { defaultValue: '全部用户会话' })}
+								active={location.pathname.startsWith('/admin/sessions')}
+								onClick={() => navigate('/admin/sessions')}
+							/>
+						</nav>
+					</>
+				)}
+
+				{/* 最近 */}
 					<div className="mt-6 px-3 text-[11px] font-semibold text-text-tertiary">
 						{t('sidebar.sessions', { defaultValue: '最近' })}
 					</div>
@@ -320,6 +355,11 @@ export function AppSidebar({
 						>
 							<UserRound className="size-3.5" />
 							<span className="truncate">{currentUserId || t('sidebar.user', { defaultValue: '用户' })}</span>
+							{isRoot && (
+								<span className="ml-auto rounded-[4px] bg-primary px-1.5 py-0.5 text-[10px] font-bold leading-none text-primary-foreground">
+									ROOT
+								</span>
+							)}
 						</button>
 						<button
 							type="button"
@@ -385,8 +425,28 @@ export function AppSidebar({
 								tooltip={item.label}
 							/>
 						))}
-					</nav>
-					<div className="mt-auto flex flex-col items-center gap-0.5">
+				</nav>
+				{isRoot && (
+					<Tooltip>
+						<TooltipTrigger asChild>
+							<button
+								type="button"
+								aria-label={t('sidebar.adminAllSessions', { defaultValue: '全部用户会话' })}
+								onClick={() => navigate('/admin/sessions')}
+								className={cn(
+									'flex size-[34px] items-center justify-center rounded-[10px]',
+									location.pathname.startsWith('/admin/sessions')
+										? 'bg-primary-light text-primary'
+										: 'bg-secondary text-nav-label hover:bg-secondary/70',
+								)}
+							>
+								<Crown className="size-4" />
+							</button>
+						</TooltipTrigger>
+						<TooltipContent side="right">{t('sidebar.adminAllSessions', { defaultValue: '全部用户会话' })}</TooltipContent>
+					</Tooltip>
+				)}
+				<div className="mt-auto flex flex-col items-center gap-0.5">
 						<Tooltip>
 							<TooltipTrigger asChild>
 								<button

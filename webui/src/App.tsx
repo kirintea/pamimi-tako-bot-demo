@@ -8,6 +8,7 @@ import { MCPPage } from '@/pages/mcp';
 import { SettingsPage } from '@/pages/settings';
 import { SetupPage } from '@/pages/setup';
 import { SkillPage } from '@/pages/skill';
+import { AllSessions } from '@/pages/admin/AllSessions';
 
 function SetupPageRoute() {
 	const navigate = useNavigate();
@@ -31,6 +32,7 @@ const router = createBrowserRouter(
 				{ path: '/mcp', element: <MCPPage /> },
 				{ path: '/skill', element: <SkillPage /> },
 				{ path: '/settings/:section?', element: <SettingsPage /> },
+				{ path: '/admin/sessions', element: <AllSessions /> },
 			],
 		},
 		{ path: '/setup', element: <SetupPageRoute /> },

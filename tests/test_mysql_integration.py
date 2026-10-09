@@ -83,23 +83,6 @@ async def test_insert_returning_id_incrementing(db_manager):
 # Task 9 — 存储层端到端（接入语句注册表后的真实 MySQL 路径）
 # ============================================================
 
-async def test_storage_agent_roundtrip(db_manager):
-    """upsert_agent → get_agent 端到端（客户端 PK 路径）"""
-    from core.storage import PostgresStorage
-    from core.storage_models import AgentData, AgentRecord
-
-    storage = PostgresStorage(db_manager)
-    rec = AgentRecord(
-        user_id="it_user", data=AgentData(name="集成测试Agent"),
-    )
-    rec.id = "it-agent-001"
-    stored_id = await storage.upsert_agent("it_user", rec)
-    assert stored_id == rec.id
-    fetched = await storage.get_agent("it_user", rec.id)
-    assert fetched is not None
-    assert fetched.data.name == "集成测试Agent"
-
-
 async def test_storage_session_title_merge(db_manager):
     """upsert_session_title 写入后可读回；标题行 state_json TEXT NULL → _row_to_session 读作 \"\""""
     from core.storage import PostgresStorage
@@ -115,21 +98,6 @@ async def test_storage_session_title_merge(db_manager):
     record = storage._row_to_session(rows[0])
     assert record.state_json == ""
     assert record.config.name  # SessionConfig 默认 name 字段仍在
-
-
-async def test_storage_mcp_name_conflict_returns_same_id(db_manager):
-    """(user_id, name) 冲突 upsert：MySQL 走回查 id，两次 upsert 返回同一条"""
-    from core.storage import PostgresStorage
-    from core.storage_models import MCPRecord
-
-    storage = PostgresStorage(db_manager)
-    rec = MCPRecord(user_id="it_user", name="it-mcp", transport="stdio")
-    id1 = await storage.upsert_mcp("it_user", rec)
-    rec2 = MCPRecord(user_id="it_user", name="it-mcp", transport="stdio")
-    id2 = await storage.upsert_mcp("it_user", rec2)
-    assert id1 == id2
-    all_mcps = await storage.list_mcps("it_user")
-    assert len([m for m in all_mcps if m.name == "it-mcp"]) == 1
 
 
 async def test_get_user_sessions_with_title(db_manager):

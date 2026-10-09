@@ -1,11 +1,11 @@
 FROM python:3.12-slim
 
-LABEL version="0.1.0"
+LABEL version="0.2.1"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    IMAGE_VERSION=0.1.0
+    IMAGE_VERSION=0.2.1
 
 # 换 apt 国内源
 RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources

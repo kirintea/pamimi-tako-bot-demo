@@ -7,6 +7,7 @@
 import { Cable, Plus, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { toast } from 'sonner';
 
 import { mcpApi } from '@/api/mcp';
 import type { McpInfo } from '@/api/types';
@@ -38,6 +39,15 @@ export function McpSettingsPage() {
 	useEffect(() => { loadMcps(); }, [loadMcps]);
 
 	const handleAdd = async () => {
+		// 连接字段完整性校验（与后端 422 规则一致），避免保存空壳记录
+		if (form.transport === 'stdio' ? !form.command.trim() : !form.url.trim()) {
+			toast.error(
+				form.transport === 'stdio'
+					? t('mcp.commandRequired', { defaultValue: 'stdio 类型需要填写启动命令' })
+					: t('mcp.urlRequired', { defaultValue: 'HTTP 类型需要填写 URL' }),
+			);
+			return;
+		}
 		try {
 			await mcpApi.create({
 				name: form.name,

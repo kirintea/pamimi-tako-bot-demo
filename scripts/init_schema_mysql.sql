@@ -1,5 +1,5 @@
 -- ============================================================
--- AgentScope Platform Server — MySQL 建表脚本
+-- Pamimi Tako Bot Demo — MySQL 建表脚本
 -- 数据库: dmx_agent_db (MySQL >= 5.7.22)
 -- 执行方式: mysql -h <host> -u <user> -p dmx_agent_db < init_schema_mysql.sql
 -- 说明: CREATE TABLE 带 IF NOT EXISTS；索引重复创建会报 1061 可忽略
@@ -36,56 +36,14 @@ CREATE TABLE IF NOT EXISTS sessions (
     `updated_at`        DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 3. MCP 已安装表
-CREATE TABLE IF NOT EXISTS mcps (
-    `id`          VARCHAR(32) PRIMARY KEY,
-    `user_id`     VARCHAR(64) NOT NULL,
-    `name`        VARCHAR(128) NOT NULL,
-    `transport`   VARCHAR(16) NOT NULL DEFAULT 'stdio',
-    `config`      JSON NULL,
-    `enabled`     TINYINT(1) NOT NULL DEFAULT 1,
-    `created_at`  DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
-    `updated_at`  DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
-    UNIQUE KEY uniq_mcps_user_name (`user_id`, `name`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- 4. Skill 已安装表
-CREATE TABLE IF NOT EXISTS skills (
-    `id`          VARCHAR(32) PRIMARY KEY,
-    `user_id`     VARCHAR(64) NOT NULL,
-    `name`        VARCHAR(128) NOT NULL,
-    `data`        JSON NULL,
-    `enabled`     TINYINT(1) NOT NULL DEFAULT 1,
-    `created_at`  DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
-    `updated_at`  DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
-    UNIQUE KEY uniq_skills_user_name (`user_id`, `name`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- 5. 定时任务表
-CREATE TABLE IF NOT EXISTS schedules (
-    `id`          VARCHAR(32) PRIMARY KEY,
-    `user_id`     VARCHAR(64) NOT NULL,
-    `agent_id`    VARCHAR(32) NOT NULL,
-    `session_id`  VARCHAR(32) NULL,
-    `name`        VARCHAR(256) NOT NULL,
-    `cron_expr`   VARCHAR(64) NOT NULL,
-    `prompt`      TEXT NOT NULL,
-    `source`      VARCHAR(16) NOT NULL DEFAULT 'user',
-    `enabled`     TINYINT(1) NOT NULL DEFAULT 1,
-    `last_run_at` DATETIME(3) NULL,
-    `next_run_at` DATETIME(3) NULL,
-    `created_at`  DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
-    `updated_at`  DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- 6. Agent 记录表
-CREATE TABLE IF NOT EXISTS agents (
-    `id`          VARCHAR(32) PRIMARY KEY,
-    `user_id`     VARCHAR(64) NOT NULL,
-    `source`      VARCHAR(16) NOT NULL DEFAULT 'user',
-    `data`        JSON NOT NULL,
-    `created_at`  DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
-    `updated_at`  DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3)
+-- 3. 用户表（权限 / root 识别，Phase 1）
+CREATE TABLE IF NOT EXISTS users (
+    `user_id`      VARCHAR(64) PRIMARY KEY,
+    `role`         VARCHAR(16) NOT NULL DEFAULT 'normal',
+    `display_name` VARCHAR(128) NULL,
+    `is_root`      TINYINT(1) NOT NULL DEFAULT 0,
+    `created_at`   DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
+    `last_active`  DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================
@@ -104,17 +62,8 @@ CREATE INDEX idx_sessions_team ON sessions(`team_id`);
 CREATE INDEX idx_sessions_status ON sessions(`status`);
 CREATE INDEX idx_sessions_parent ON sessions(`parent_session_id`);
 
--- mcps 索引
-CREATE INDEX idx_mcps_user ON mcps(`user_id`);
-
--- skills 索引
-CREATE INDEX idx_skills_user ON skills(`user_id`);
-
--- schedules 索引
-CREATE INDEX idx_schedules_user ON schedules(`user_id`);
-
--- agents 索引
-CREATE INDEX idx_agents_user ON agents(`user_id`);
+-- users 索引
+CREATE INDEX idx_users_role ON users(`role`);
 
 -- ============================================================
 -- 完成

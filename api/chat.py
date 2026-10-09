@@ -78,6 +78,45 @@ def _validate_user_id(request: Request, user_id: str) -> str:
             detail="认证启用时必须提供有效的 user_id（不允许 'anonymous'）",
         )
 
+
+async def _resolve_viewer_role(request: Request, viewer_user_id: object) -> str:
+    """返回查看者角色（'root' / 'normal'）。
+
+    无 user_service（未装配）时默认 'normal'，保证系统仍可运行。
+    """
+    user_service = getattr(request.app.state, "user_service", None)
+    if user_service is None:
+        return "normal"
+    try:
+        return await user_service.get_role(viewer_user_id)
+    except Exception:  # noqa: BLE001
+        return "normal"
+
+
+async def _authorize_session_view(
+    request: Request,
+    target_user_id: str,
+    viewer_user_id: object | None,
+) -> None:
+    """授权查看会话消息：本人或 root 可读。
+
+    Args:
+        target_user_id: 会话所属用户（路径参数）。
+        viewer_user_id: 发起查看的用户（查询参数 viewer；缺省视为本人）。
+
+    Raises:
+        HTTPException(403): 非本人且非 root。
+    """
+    viewer = viewer_user_id or target_user_id
+    if coerce_id(viewer) == coerce_id(target_user_id):
+        return
+    role = await _resolve_viewer_role(request, viewer)
+    if role != "root":
+        raise HTTPException(
+            status_code=403,
+            detail="仅 root 角色可查看他人会话",
+        )
+
 # 追踪后台持久化任务，避免被 GC 回收（见 shutdown_persist_tasks）。
 _PERSIST_TASKS: set[asyncio.Task] = set()
 
@@ -561,12 +600,15 @@ async def get_session_messages(
     session_id: str,
     before_id: int | None = None,
     limit: int = 50,
+    viewer: str | None = None,
 ):
     """获取会话的消息历史（从 PG 查询，支持游标分页）
 
     Args:
         before_id: 游标，获取此 ID 之前的消息（用于加载更多）
         limit: 每页消息数，默认 50
+        viewer: 发起查看的用户（查询参数）；缺省视为本人。
+            非本人访问需为 root（只读查看他人会话，见方案 §8.6）。
 
     用于前端切换会话时加载聊天记录，支持滚动加载更多。
     """
@@ -575,6 +617,9 @@ async def get_session_messages(
         session_id = coerce_id_strict(session_id, "session_id")
     except ValueError as e:
         raise HTTPException(400, str(e))
+    # 本人或 root 可读；其余 403
+    await _authorize_session_view(request, user_id, viewer)
+
     db = getattr(request.app.state, "database_manager", None)
     if not db or not db.is_initialized:
         raise HTTPException(503, "数据库未配置")
@@ -586,6 +631,42 @@ async def get_session_messages(
     )
 
     return result
+
+
+@router.get("/me")
+async def get_me(request: Request, user_id: str = "anonymous"):
+    """返回当前用户身份与角色（前端据此判断是否展示 root 管理视图）。
+
+    demo 阶段 user_id 由查询参数提供（与前端 localStorage 一致）；
+    生产环境应改由认证 token 解析，而非客户端自报。
+    """
+    try:
+        uid = coerce_id_strict(user_id, "user_id")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    user_service = getattr(request.app.state, "user_service", None)
+    if user_service is None:
+        return {"user_id": uid, "role": "normal", "is_root": False}
+    role = await user_service.get_role(uid)
+    return {"user_id": uid, "role": role, "is_root": role == "root"}
+
+
+@router.get("/admin/sessions")
+async def admin_list_sessions(
+    request: Request,
+    viewer: str | None = None,
+):
+    """root 管理视图：列出所有用户的全部会话（跨用户扫描）
+
+    仅 root 可访问。``viewer`` 为查询参数，表示调用者身份
+    （demo 阶段用查询参数表达调用者；生产环境应改由认证 token 解析）。
+    """
+    role = await _resolve_viewer_role(request, viewer)
+    if role != "root":
+        raise HTTPException(status_code=403, detail="需要 root 角色")
+    session_mgr = request.app.state.session_manager
+    sessions = await session_mgr.list_all_sessions()
+    return {"sessions": sessions, "total": len(sessions)}
 
 
 @router.post("/sessions/{user_id}/{session_id}/delete")
@@ -661,8 +742,21 @@ class ForkSessionResponse(BaseModel):
     title: str = Field(description="子会话标题")
 
 
+class ForkSessionRequest(BaseModel):
+    """会话分支请求"""
+    branch_after_message_id: int | None = Field(
+        default=None,
+        description="中途 fork 的截断点消息 ID（包含该消息）；None 表示复制全部历史",
+    )
+
+
 @router.post("/sessions/{user_id}/{session_id}/fork", response_model=ForkSessionResponse)
-async def fork_session(request: Request, user_id: str, session_id: str):
+async def fork_session(
+    request: Request,
+    user_id: str,
+    session_id: str,
+    body: ForkSessionRequest | None = None,
+):
     """基于父会话创建分支，返回新会话信息"""
     try:
         user_id = coerce_id_strict(user_id, "user_id")
@@ -680,7 +774,11 @@ async def fork_session(request: Request, user_id: str, session_id: str):
         logger.exception("加载父会话失败: user={} session={}", user_id, session_id)
 
     try:
-        child_sid = await session_mgr.fork_session(user_id, session_id)
+        child_sid = await session_mgr.fork_session(
+            user_id,
+            session_id,
+            branch_after_message_id=body.branch_after_message_id if body else None,
+        )
     except ValueError as e:
         logger.warning("Fork 失败 (ValueError): {}", e)
         raise HTTPException(status_code=404, detail=str(e))
@@ -798,15 +896,19 @@ async def get_session_context(
         for msg in context
     )
 
-    # 检查卸载文件（卸载目录已改为按用户隔离：{sandbox_dir}/{user_id}/sessions/{session_id}）
-    # 从配置派生沙箱根，避免硬编码 "workspaces" 绕过 workspace 单一真源。
+    # 检查卸载文件（按用户域隔离：workspaces/user_spaces/{user_id}/sessions/{session_id}）
+    # 复用 app.state.workspace_manager 单一真源，避免硬编码布局。
     from pathlib import Path
-    sandbox_base = getattr(config.agent, "sandbox_dir", "workspaces")
-    offload_dir = Path(sandbox_base) / user_id / "sessions" / session_id
+    workspace_mgr = getattr(request.app.state, "workspace_manager", None)
+    if workspace_mgr is not None:
+        offload_dir = Path(workspace_mgr.get_user_space_dir(user_id)) / "sessions" / session_id
+    else:
+        sandbox_base = getattr(config.agent, "sandbox_dir", "workspaces")
+        offload_dir = Path(sandbox_base) / "user_spaces" / user_id / "sessions" / session_id
     offloaded_files = []
     if offload_dir.is_dir():
         offloaded_files = [
-            str(f.relative_to(Path(sandbox_base) / user_id))
+            str(f.relative_to(offload_dir))
             for f in offload_dir.iterdir()
             if f.is_file()
         ]

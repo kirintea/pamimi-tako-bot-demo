@@ -17,14 +17,7 @@ from core.config.schemas import DatabaseConfig
 from core.database import DatabaseManager
 from core.db.statements import STATEMENTS
 from core.storage import PostgresStorage
-from core.storage_models import (
-    AgentData,
-    AgentRecord,
-    MCPRecord,
-    ScheduleRecord,
-    SessionConfig,
-    SkillRecord,
-)
+from core.storage_models import SessionConfig
 from tests.db_fakes import FakeBackend
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
@@ -47,76 +40,7 @@ def _last(fake: FakeBackend) -> tuple[str, tuple]:
 
 
 # ------------------------------------------------------------
-# upsert_agent — 客户端 PK，直接返回 record.id
-# ------------------------------------------------------------
-
-async def test_upsert_agent_pg_uses_on_conflict_returning():
-    db, fake = _db("postgres")
-    storage = PostgresStorage(db)
-    rec = AgentRecord(
-        user_id="u1",
-        data=AgentData(name="助手A"),
-        created_at=datetime(2026, 1, 1),
-        updated_at=datetime(2026, 1, 1),
-    )
-    rec.id = "agent-1"
-    result = await storage.upsert_agent("u1", rec)
-    sql, args = _last(fake)
-    assert sql == STATEMENTS["upsert_agent"].pick("postgres")
-    assert "ON CONFLICT" in sql and "RETURNING" in sql
-    assert args[0] == "agent-1" and args[1] == "u1"
-    assert result == "agent-1"  # 客户端 PK：直接返回 record.id
-
-
-async def test_upsert_agent_mysql_uses_on_duplicate_key():
-    db, fake = _db("mysql")
-    storage = PostgresStorage(db)
-    rec = AgentRecord(
-        user_id="u1",
-        data=AgentData(name="助手A"),
-        created_at=datetime(2026, 1, 1),
-        updated_at=datetime(2026, 1, 1),
-    )
-    rec.id = "agent-1"
-    result = await storage.upsert_agent("u1", rec)
-    sql, _ = _last(fake)
-    assert sql == STATEMENTS["upsert_agent"].pick("mysql")
-    assert "ON DUPLICATE KEY UPDATE" in sql
-    assert "RETURNING" not in sql
-    assert result == "agent-1"
-
-
-# ------------------------------------------------------------
-# upsert_mcp / upsert_skill — (user_id, name) 冲突表，MySQL 回查 id
-# ------------------------------------------------------------
-
-async def test_upsert_mcp_returns_backend_id():
-    db, fake = _db("mysql")
-    fake.insert_id = 99
-    storage = PostgresStorage(db)
-    rec = MCPRecord(user_id="u1", name="fs-tools", transport="stdio")
-    result = await storage.upsert_mcp("u1", rec)
-    sql, args = _last(fake)
-    assert sql == STATEMENTS["upsert_mcp"].pick("mysql")
-    assert "ON DUPLICATE KEY UPDATE" in sql
-    assert result == 99  # insert_returning_id → FakeBackend.insert_id
-    assert args[0] == rec.id and args[2] == "fs-tools"
-
-
-async def test_upsert_skill_pg_returning():
-    db, fake = _db("postgres")
-    fake.insert_id = "skill-1"
-    storage = PostgresStorage(db)
-    rec = SkillRecord(user_id="u1", name="summarize")
-    result = await storage.upsert_skill("u1", rec)
-    sql, _ = _last(fake)
-    assert sql == STATEMENTS["upsert_skill"].pick("postgres")
-    assert "RETURNING" in sql
-    assert result == "skill-1"
-
-
-# ------------------------------------------------------------
-# upsert_session / upsert_schedule
+# upsert_session
 # ------------------------------------------------------------
 
 async def test_upsert_session_mysql_sql_returns_record():
@@ -133,25 +57,6 @@ async def test_upsert_session_mysql_sql_returns_record():
     assert args[0] == "s1" and args[1] == "u1" and args[2] == "a1"
     assert record.id == "s1"
     assert record.config.name == "测试会话"
-
-
-async def test_upsert_schedule_returns_record_id():
-    db, fake = _db("mysql")
-    storage = PostgresStorage(db)
-    rec = ScheduleRecord(
-        user_id="u1",
-        agent_id="a1",
-        name="每日简报",
-        cron_expr="0 9 * * *",
-        prompt="生成简报",
-    )
-    rec.id = "sch-1"
-    result = await storage.upsert_schedule("u1", rec)
-    sql, args = _last(fake)
-    assert sql == STATEMENTS["upsert_schedule"].pick("mysql")
-    assert "ON DUPLICATE KEY UPDATE" in sql
-    assert result == "sch-1"
-    assert args[0] == "sch-1" and args[1] == "u1"
 
 
 # ------------------------------------------------------------
