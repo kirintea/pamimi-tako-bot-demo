@@ -15,7 +15,7 @@ class OTelConfig(BaseModel):
     """OpenTelemetry 追踪配置"""
     enabled: bool = Field(default=True, description="是否启用追踪")
     endpoint: str = Field(description="OTLP 上报地址 (gRPC)")
-    service_name: str = Field(default="platform-agent", description="服务名称")
+    service_name: str = Field(default="pamimi-tako-bot-demo", description="服务名称")
     service_version: str = Field(default="0.1.0", description="服务版本")
     environment: str = Field(description="运行环境 (development / production)")
     channel: str = Field(default="web", description="消息渠道 Resource tag（web / feishu / wechat ...）")
@@ -151,7 +151,7 @@ class AgentConfig(BaseModel):
     """Agent 行为配置"""
     model_config = ConfigDict(extra="forbid")
 
-    name: str = Field(default="platform_agent", description="Agent 名称")
+    name: str = Field(default="pamimi_tako_bot_demo", description="Agent 名称")
     system_prompt: str = Field(default="你是一个有帮助的助手。", description="系统提示词")
     max_iters: int = Field(default=20, description="ReAct 最大迭代次数")
     context_trigger_ratio: float = Field(default=0.6, description="上下文压缩触发比例")
@@ -240,7 +240,7 @@ class DatabaseConfig(BaseModel):
 class RedisConfig(BaseModel):
     """Redis 配置"""
     url: str = Field(default="redis://localhost:6379/0", description="Redis 连接 URL")
-    key_prefix: str = Field(default="agentscope:session:", description="会话 Key 前缀")
+    key_prefix: str = Field(default="dmx_agent_redis:session:", description="会话 Key 前缀")
     session_ttl: int = Field(default=1800, description="会话 TTL (秒)")
 
 

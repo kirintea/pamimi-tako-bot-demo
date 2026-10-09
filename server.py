@@ -465,9 +465,9 @@ def create_app(config) -> FastAPI:
     # 2. 创建 FastAPI 应用
     # ============================================================
     app = FastAPI(
-        title="AgentScope Platform Server",
-        description="基于 AgentScope 2.0.5 的对话智能体平台",
-        version="0.1.3",
+        title="Pamimi Tako Bot Demo",
+        description="基于 AgentScope 的对话智能体平台",
+        version="0.2.1",
         lifespan=lifespan,
     )
 

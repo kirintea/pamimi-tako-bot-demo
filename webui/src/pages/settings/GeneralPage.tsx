@@ -109,11 +109,11 @@ export function GeneralPage() {
 				<SettingsGroup>
 					<ReadOnlyRow
 						label={t('settings.general.version', { defaultValue: '版本' })}
-						value="0.2.0"
+						value="0.2.1"
 					/>
 					<ReadOnlyRow
 						label={t('settings.general.platform', { defaultValue: '平台' })}
-						value="AgentScope Platform Server"
+						value="Pamimi Tako Bot Demo"
 					/>
 				</SettingsGroup>
 			</section>

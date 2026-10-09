@@ -4,8 +4,8 @@
 otel:
   enabled: true
   endpoint: "http://otel-collector.prod.svc:4317"
-  service_name: "platform-agent"
-  service_version: "0.1.0"
+  service_name: "pamimi-tako-bot-demo"
+  service_version: "0.2.1"
   environment: "production"
   channel: "${OTEL_CHANNEL:-web}"
   headers:
@@ -34,7 +34,7 @@ server:
   log_backup_count: 30
 
 agent:
-  name: "platform_agent"
+  name: "pamimi_tako_bot_demo"
   system_prompt:
     module_path: "configs.prompt"
     name: "SYSTEM_PROMPT"
@@ -99,7 +99,7 @@ kv:
 # 沙箱配置
 sandbox:
   backend: "${SANDBOX_BACKEND:-local}"
-  container: "platform-sandbox"
+  container: "pamimi-tako-bot-demo-sandbox"
   project_root: "/workspace"
   fallback_to_local: false
   extra_mounts:

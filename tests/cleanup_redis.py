@@ -23,7 +23,7 @@ import sys
 import redis.asyncio as aioredis
 
 DEFAULT_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-KEY_PREFIX = "agentscope:session:"
+KEY_PREFIX = "dmx_agent_redis:session:"
 
 
 async def get_all_session_keys(r: aioredis.Redis, pattern: str = "*") -> list[str]:
