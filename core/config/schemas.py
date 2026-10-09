@@ -15,7 +15,7 @@ class OTelConfig(BaseModel):
     """OpenTelemetry 追踪配置"""
     enabled: bool = Field(default=True, description="是否启用追踪")
     endpoint: str = Field(description="OTLP 上报地址 (gRPC)")
-    service_name: str = Field(default="platform-agent", description="服务名称")
+    service_name: str = Field(default="pamimi-tako-bot-demo", description="服务名称")
     service_version: str = Field(default="0.1.0", description="服务版本")
     environment: str = Field(description="运行环境 (development / production)")
     channel: str = Field(default="web", description="消息渠道 Resource tag（web / feishu / wechat ...）")
@@ -151,7 +151,7 @@ class AgentConfig(BaseModel):
     """Agent 行为配置"""
     model_config = ConfigDict(extra="forbid")
 
-    name: str = Field(default="platform_agent", description="Agent 名称")
+    name: str = Field(default="pamimi_tako_bot_demo", description="Agent 名称")
     system_prompt: str = Field(default="你是一个有帮助的助手。", description="系统提示词")
     max_iters: int = Field(default=20, description="ReAct 最大迭代次数")
     context_trigger_ratio: float = Field(default=0.6, description="上下文压缩触发比例")
@@ -182,6 +182,21 @@ class AgentConfig(BaseModel):
     sandbox_per_user: bool = Field(
         default=False,
         description="true 时沙箱路径追加 user_id 层级（workspaces/{user_id}/）",
+    )
+    agent_space_name: str = Field(
+        default="agent_space",
+        description="Agent 共享域目录名（位于 sandbox_dir 下）。普通用户只读、root 可写；"
+        "存放 skills / mcp / soul.md / agent.md / prompts / runtime 等 Agent 资产。",
+    )
+    user_spaces_name: str = Field(
+        default="user_spaces",
+        description="用户私有域父目录名（位于 sandbox_dir 下）。每个用户的可写域为 "
+        "user_spaces/{user_id}/（memory / sessions / uploads / scratch）。",
+    )
+    root_user_ids: list[str] = Field(
+        default_factory=list,
+        description="预置 root 用户 user_id 列表（创建时配置）；命中者角色为 root，"
+        "可写 agent_space 并只读查看他人会话。可经环境变量 ROOT_USER_IDS（逗号分隔）追加。",
     )
     tool_guard: ToolGuardConfig = Field(default_factory=ToolGuardConfig, description="工具守卫配置")
     command_guard: CommandGuardConfig = Field(default_factory=CommandGuardConfig, description="命令内容守卫配置")
@@ -225,7 +240,7 @@ class DatabaseConfig(BaseModel):
 class RedisConfig(BaseModel):
     """Redis 配置"""
     url: str = Field(default="redis://localhost:6379/0", description="Redis 连接 URL")
-    key_prefix: str = Field(default="agentscope:session:", description="会话 Key 前缀")
+    key_prefix: str = Field(default="dmx_agent_redis:session:", description="会话 Key 前缀")
     session_ttl: int = Field(default=1800, description="会话 TTL (秒)")
 
 
@@ -249,6 +264,10 @@ class ContextBackfillConfig(BaseModel):
     """PG 回填配置"""
     backfill_message_limit: int = Field(default=20, description="回填消息条数上限")
     backfill_token_budget: int = Field(default=15000, description="回填 token 预算")
+    fork_window_turns: int = Field(
+        default=10,
+        description="fork 后动态窗口：新会话的 Agent 上下文仅保留最近 N 轮（系统提示词由 AgentFactory 注入，天然保留）",
+    )
 
 
 class BudgetControlConfig(BaseModel):
@@ -333,7 +352,7 @@ class ObjectStorageConfig(BaseModel):
     prefix: str = Field(default="images/", description="对象 key 前缀")
 
     # local 模式
-    local_dir: str = Field(default="workspaces/uploads", description="本地存储目录（backend=local）")
+    local_dir: str = Field(default="workspaces/user_spaces", description="本地存储目录（backend=local）；落入用户私有域 user_spaces/{user_id}/uploads/...")
 
     # S3 通用（AWS S3 / MinIO / Cloudflare R2）
     s3_endpoint: str | None = Field(default=None, description="S3 端点地址（MinIO/R2 需填写）")
@@ -370,7 +389,8 @@ class MemoryConfig(BaseModel):
 
     enabled: bool = False
     backend: str = "local"
-    workdir_base: str = "./workspaces"
+    # 记忆归用户域：workdir = {workdir_base}/{user_id}/memory
+    workdir_base: str = "./workspaces/user_spaces"
 
 
 class AppConfig(BaseModel):
@@ -382,13 +402,8 @@ class AppConfig(BaseModel):
     server: ServerConfig = Field(default_factory=ServerConfig)
     auth: AuthConfig = Field(default_factory=AuthConfig, description="API 认证配置")
     agent: AgentConfig = Field(default_factory=AgentConfig)
-    mcp_servers: list[MCPConfig] | None = Field(default_factory=list, description="MCP 服务列表")
-
-    @field_validator("mcp_servers", mode="before")
-    @classmethod
-    def _coerce_mcp_servers(cls, v: Any) -> list[MCPConfig]:
-        """YAML 中 mcp_servers: 下全部注释时解析为 None，兜底为空列表。"""
-        return v if v is not None else []
+    # NOTE: MCP 配置不在 YAML 中 —— 唯一真源是 configs/mcps.json（见 core/mcp/config_store.py）。
+    # AppConfig 是 extra="forbid"，YAML 写 mcp_servers 会直接启动失败，避免「配了不生效」的静默陷阱。
 
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     redis: RedisConfig = Field(default_factory=RedisConfig)

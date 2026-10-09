@@ -10,8 +10,8 @@
 - 所有设备通过 SSE/WebSocket 订阅同一事件流，实时看到生成过程
 
 Redis key 设计：
-- agentscope:session:{id}:status → JSON 状态（TTL 300s）
-- agentscope:session:{id}:control → cancel 指令（TTL 60s）
+- dmx_agent_redis:session:{id}:status → JSON 状态（TTL 300s）
+- dmx_agent_redis:session:{id}:control → cancel 指令（TTL 60s）
 """
 
 from __future__ import annotations
@@ -49,7 +49,7 @@ class SessionStatusTracker:
         ttl: status key 过期时间（秒），默认 300s
     """
 
-    PREFIX = "agentscope:session:"
+    PREFIX = "dmx_agent_redis:session:"
     STATUS_SUFFIX = ":status"
     CONTROL_SUFFIX = ":control"
 

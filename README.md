@@ -1,44 +1,61 @@
-# AgentScope Platform Server
+# 🐙Pamimi Tako Bot Demo
 
-用 AgentScope 2.0.7 搭的对话智能体服务端。一句话定位：把 Agent 当服务跑，而不是在本地起个 demo 脚本就收工。多用户、多实例、状态外置、工具调用全程有守卫——这几个是当时卡我的点，下面会具体说。
+基于 AgentScope 2.0.7 的 AI Agent 平台服务。把 Agent 当服务跑：多用户隔离、多实例无状态、工具调用全程守卫、沙箱执行环境。
 
-## 写这东西的起因
-
-开源的 Agent 框架大多是个人向的。会话历史往本地 JSON 一丢，单机跑通就算完事。真要按服务来用，多用户加分布式一上来就撞两堵墙。
-
-一是会话。本地文件撑不住多实例，所以我拆成两层：Redis 放会话状态和元数据，读写快、天然分布式；PostgreSQL 归档对话历史，理论上换 MySQL 或 MongoDB 也接得上。这套分层后来证明是对的——热数据和冷数据的访问模式差太多，搅一起反而更麻烦。
-
-二是安全。Agent 能调工具、能执行命令，提示词注入绕不过去。我放了三道闸：`command_guard` 拦危险命令，`path_guard` 把文件操作锁进沙箱，不想让 Agent 碰的工具直接在 `configs/tools.yaml` 里关掉。别指望靠 prompt 说一句"你不准干坏事"就安全，得在工具层物理拦。
-
-顺带一提，这也是我学 AgentScope 的练手项目。写到一半翻了下 Java 版，生产相关的配套（限流、可观测、部署）比 Python 版齐全不少，缺的部分只能自己补。所以这个 repo 一半是学习笔记，一半是补丁。
-
-
-整个 8090 端口是个 FastAPI 应用。`main.py` 只做启动那点事：加载配置、初始化日志和 OTel，然后拉起 uvicorn。`server.py` 是应用本体，`create_app(config)` 工厂函数配 lifespan 资源管理，路由统一在这注册。平台层自带 SessionManager、DatabaseManager、RedisMessageBus、PostgresStorage、ChatService 这一套。
-
-会话 key 统一走 `agentscope:session:` 前缀，每个会话的工作目录在 `workspaces/{user_id}/{session_id}/`。
-
-中间件三件套，都是给工具调用兜底用的：
-
-- `tool_guard.py` — 工具名级黑白名单，控制 Agent 能碰哪些工具
-- `command_guard.py` — 命令内容级检查，拦 `rm -rf /`、反弹 shell 那类
-- `path_guard.py` — 路径访问守卫，把文件操作圈在沙箱里
+这是一个学习用的 demo 项目，用于探索 AgentScope 的服务化能力。
 
 ## 特性
 
-- **多用户会话隔离** — 每个 (user_id, session_id) 维护独立 Agent 状态
-- **会话分支（Fork）** — 基于已有会话创建分支，父子状态完全独立，支持多级 fork
-- **多实例无状态** — RedisMessageBus 实现分布式锁、Pub/Sub 事件广播、回放日志，支持多进程部署
-- **流式输出** — SSE + WebSocket 双通道实时推送文本、思考过程、工具调用事件
-- **工具调用** — 内置 Bash/Read/Write/Edit/Glob/Grep + TaskCreate/TaskList/TaskGet/TaskUpdate
-- **工具守卫** — 工具名级黑白名单（tool_guard）+ 命令内容级安全守卫（command_guard）
-- **命令安全** — 命令内容级黑白名单，拦截危险命令（rm -rf /、管道执行、反弹 shell 等）
-- **Redis 持久化** — 会话状态 + 元数据自动保存到 Redis，支持历史会话列表与消息回放
-- **PostgreSQL 持久化** — `DatabaseManager` + `PostgresStorage` 管理 asyncpg 连接池，启动自动建表，归档对话历史与用户元数据
-- **OTel 追踪** — 集成 OpenTelemetry，支持 Jaeger/Grafana 可视化
-- **MCP 扩展** — 支持 stdio/http 两种 MCP 服务接入
-- **自定义工作流** — WorkflowBase 抽象类，支持业务流程定制
-- **SiliconFlow 兼容** — `core/formatter/SiliconFlowFormatter` 自动扁平化 content list 格式
-- **新版 WebUI** — React 19 SPA，支持中英双语、会话管理、MCP/Skill 管理
+### 核心能力
+
+- **多用户会话隔离** — 每个 `(user_id, session_id)` 维护独立 Agent 状态
+- **会话分支（Fork）** — 基于已有会话创建分支，支持多级 fork，PG 历史拷贝 + 原子回滚
+- **多实例无状态** — RedisMessageBus 实现分布式锁、Pub/Sub 事件广播、回放日志
+- **流式输出** — SSE + WebSocket 双通道实时推送（text/thinking/tool_call/tool_result）
+- **多设备并发** — SessionStatusTracker 通过 Redis 广播 idle/generating/interrupting 状态，跨设备取消
+
+### 工具与安全
+
+- **内置工具** — Bash/Read/Write/Edit/Glob/Grep + TaskCreate/List/Get/Update + PowerShell
+- **MCP 扩展** — stdio（有状态子进程）和 HTTP/SSE 两种传输协议，热加载
+- **Skill 系统** — SKILL.md 文件驱动，支持上传/管理
+- **工具守卫** — 工具名级黑白名单（`tool_guard`）
+- **命令守卫** — 命令内容级安全守卫（`command_guard`），拦截 `rm -rf /`、反弹 shell 等
+- **路径守卫** — 多域读写隔离（`path_guard`），用户空间 / 共享空间分权
+- **Docker 沙箱** — 工具执行转发到隔离容器，agent_space 只读挂载
+
+### 存储
+
+- **双后端数据库** — PostgreSQL（asyncpg）/ MySQL（aiomysql），按 URL scheme 自动切换
+- **双后端 KV** — Redis（生产）/ JSONL（开发单进程），会话状态 + 元数据持久化
+- **有序持久化（v3）** — `turn_id` + `turn_seq`，text/thinking/tool_call/tool_result 分行存储
+- **对象存储** — 本地文件系统 / S3 / 阿里云 OSS，图片上传 + presigned URL
+
+### 上下文管理
+
+- **自动压缩** — 触发比例 0.6，保留比例 0.15，结构化压缩 schema
+- **上下文卸载** — 历史消息写入 JSONL 文件，Agent 可通过工具按需读取
+- **PG 回填** — KV 未命中时从 PostgreSQL 恢复近期消息
+- **回复预算** — 加权 token 预算控制（input:output = 1:2）
+
+### 可观测性
+
+- **OpenTelemetry** — OTLP gRPC 上报，自动记录 LLM 调用、工具调用、完整链路
+- **Jaeger** — 分布式追踪可视化
+- **Grafana** — 统一监控大盘
+- **Prometheus** — 指标查询
+- **Loki** — 日志聚合
+
+### 前端
+
+- **React 19 SPA** — TypeScript + TailwindCSS + Radix UI
+- **中英双语** — i18next 支持
+- **功能页面** — 对话、MCP 管理、Skill 管理、渠道管理、设置
+
+### 渠道接入
+
+- **企业微信** — WebSocket 长连接，无需公网 IP，原生流式回复
+- **可扩展** — 注册式架构，预留飞书/邮件/Web 等渠道
 
 ## 快速开始
 
@@ -54,7 +71,6 @@ pip install -r requirements.txt
 ### 2. 配置
 
 ```bash
-# 复制环境变量模板
 cp .env.example .env
 
 # 编辑 .env，填入 API Key
@@ -66,304 +82,238 @@ LLM_MODEL_NAME=Qwen/Qwen3.6-35B-A3B
 ### 3. 启动依赖服务
 
 ```bash
-# 启动 Redis（会话持久化）+ PostgreSQL（对话历史）+ 可观测性栈（OTel + Jaeger + Grafana）
-cd docker && docker-compose up -d
+# 一键启动 Redis + PostgreSQL + 可观测性栈
+cd docker && docker compose up -d
 
-# 或仅启动单个依赖（模块化 compose 文件位于 docker/deploy_yml/）
-docker-compose -f docker/deploy_yml/redis.yml up -d
-docker-compose -f docker/deploy_yml/postgres.yml up -d
+# 或按需启动单个服务（模块化 compose 在 docker/deploy_yml/）
+docker compose -f docker/deploy_yml/redis.yml up -d
+docker compose -f docker/deploy_yml/postgres.yml up -d
 ```
 
-只想起单个也行，模块化的 compose 在 `docker/deploy_yml/`。默认连接：Redis 在 `redis://localhost:6379/0`，PostgreSQL 在 `postgresql://user:password@localhost:5432/dmx_agent_db`。
+默认连接：Redis `redis://localhost:6379/0`，PostgreSQL `postgresql://user:password@localhost:5432/dmx_agent_db`
 
-然后拉起服务：
+### 4. 启动服务
 
 ```bash
 APP_ENV=dev python main.py
-# 或者用启动脚本
-./scripts/start_8090.sh
+# 或
+./scripts/start.sh
 ```
 
 ### 5. 访问
 
-| 前端 | 地址 | 说明 |
+| 入口 | 地址 | 说明 |
 |------|------|------|
-| 新版 WebUI | http://localhost:8090/webui | React 19 SPA（需先构建：`cd webui && npm run build`） |
-| 旧版静态界面 | http://localhost:8090/ | api/static/index.html |
-| Swagger 文档 | http://localhost:8090/docs | API 文档 |
+| WebUI | http://localhost:8090/webui | React 19 SPA（需先 `cd webui && npm run build`） |
+| 旧版界面 | http://localhost:8090/ | 静态 HTML |
+| API 文档 | http://localhost:8090/docs | Swagger |
 
-## 服务架构
+## 架构
 
-### main.py + server.py (端口 8090) — 自有平台层
+```
+main.py                    # 启动入口 — 配置加载 + 日志 + OTel + uvicorn
+server.py                  # FastAPI 应用 — create_app(config) + lifespan + 路由注册
 
-- `main.py` — 启动入口：配置加载、日志初始化、OTel 初始化、uvicorn 启动
-- `server.py` — FastAPI 应用：`create_app(config)` 工厂函数、lifespan 资源管理、路由注册
-- 自有 SessionManager、DatabaseManager、RedisMessageBus、PostgresStorage、ChatService
-- 会话存储：Redis `agentscope:session:*` 前缀
-- 工作区：`workspaces/{user_id}/{session_id}/`
+api/
+├── chat.py                # 对话 API（/chat/stream, /chat/, /sessions/*）
+├── ws_chat.py             # WebSocket 对话（/ws/chat）
+├── channels.py            # 渠道管理（/channels）
+├── mcp.py                 # MCP 管理（/mcp）
+├── skill.py               # Skill 管理（/skill）
+├── images.py              # 图片上传（/images）
+└── static/                # 旧版前端
 
-### 核心模块
+core/
+├── agent/factory.py       # Agent 工厂（模型/工具/中间件组装，9 种 provider）
+├── config/                # 配置加载（YAML + ${ENV} 解析）
+├── database.py            # 数据库管理器（PG/MySQL 双后端，fail-fast）
+├── db/                    # 后端实现（base/factory/postgres/mysql/dialect/statements/ddl）
+├── storage.py             # 存储层（Session/Conversation CRUD）
+├── chat_service.py        # Chat 服务层（Fire-and-Forget 事件驱动）
+├── session.py             # 会话管理器（KV 持久化 + fork + PG 回填）
+├── kv/                    # KV 存储（RedisKVStore / JsonlKVStore）
+├── redis_message_bus.py   # Redis 分布式消息总线
+├── message_bus.py         # 内存消息总线（Redis 不可用时降级）
+├── session_status.py      # 多设备并发状态同步
+├── workspace.py           # 双域工作空间（agent_space + user_spaces）
+├── user_service.py        # 用户服务（root 身份 + 注册）
+├── token_counter.py       # tiktoken 精确计数
+├── multimodal.py          # 多模态消息构建（文本 + 图片）
+├── object_storage/        # 对象存储（local / S3 / OSS）
+├── formatter/             # SiliconFlow 兼容 formatter
+├── rag/                   # RAG 向量存储（placeholder）
+├── tracing/               # OTel 追踪初始化
+└── log/                   # 日志初始化（loguru + 文件轮转）
 
-| 模块 | 说明 |
-|------|------|
-| `core/session.py` | 会话管理器（Redis 持久化 + fork + refresh_state） |
-| `core/chat_service.py` | Chat 服务层（Fire-and-Forget 模式，事件驱动） |
-| `core/database.py` | PostgreSQL 管理器（asyncpg 连接池 + 自动建表） |
-| `core/storage.py` | PostgreSQL 存储层（Agent/Session/MCP/Skill/Message CRUD） |
-| `core/storage_models.py` | 数据模型定义（AgentRecord/MCPRecord/SkillRecord 等） |
-| `core/redis_message_bus.py` | Redis 分布式消息总线（分布式锁 + Pub/Sub） |
-| `core/workspace.py` | 自有 LocalWorkspaceManager（base_dir="./workspaces"） |
-| `core/config/` | 配置加载（YAML + 环境变量） |
-| `core/formatter/` | 自定义 Formatter（SiliconFlow 兼容） |
-| `core/tracing/` | OTel 追踪初始化 |
+middleware/
+├── tool_guard.py          # 工具名级黑白名单
+├── command_guard.py       # 命令内容级安全守卫
+├── path_guard.py          # 路径访问守卫（多域隔离）
+├── docker_sandbox_proxy.py # Docker 沙箱代理
+├── context_guard.py       # 上下文压缩守卫
+├── rate_limit.py          # 速率限制（滑动窗口）
+├── tool_manager.py        # 工具选择性加载
+└── tracing_context.py     # OTel 上下文注入
 
-### 中间件
+webui/                     # React 19 SPA
+├── src/pages/             # ChatPage, MCPPage, SkillPage, SettingsPage, SetupPage
+├── src/components/        # ~35 个 UI 组件
+├── src/api/               # API 客户端层
+└── src/i18n/              # 中英双语
 
-| 模块 | 说明 |
-|------|------|
-| `middleware/tool_guard.py` | 工具名级黑白名单（控制可调用工具范围） |
-| `middleware/command_guard.py` | 命令内容级安全守卫（拦截危险命令） |
-| `middleware/path_guard.py` | 路径访问守卫 |
-| `middleware/tool_manager.py` | 工具管理器（从 configs/tools.yaml 选择性加载） |
+configs/
+├── dev.yaml               # 开发环境配置
+├── prod.yaml              # 生产环境配置
+├── tools.yaml             # 工具选择性加载
+├── mcps.json              # MCP 服务配置（热加载）
+├── skills.json            # Skill 元数据（热加载）
+├── channels.json          # 渠道配置（热加载）
+└── prompt.py              # 系统提示词
 
-## API 端点（8090）
+docker/
+├── deploy_yml/            # 模块化部署（redis/postgres/mysql/minio/milvus/...）
+├── docker-compose.yaml    # 可观测性栈
+└── *.yaml / *.yml         # 各组件配置
 
-### 对话（chat）
+health_check/              # 健康检查（HTTP/Redis/PG/MySQL/LLM）
+scripts/start.sh           # 启动脚本
+workspaces/                # 双域工作空间
+```
+
+## API 端点
+
+### 对话
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/chat/stream` | 流式对话（SSE 事件流） |
-| POST | `/chat/` | Fire-and-Forget 触发（事件驱动） |
+| POST | `/chat/stream` | 流式对话（SSE） |
+| POST | `/chat/` | Fire-and-Forget 触发 |
 | GET | `/sessions/{session_id}/stream` | SSE 事件流订阅 |
+| POST | `/sessions/{user_id}/{session_id}/interrupt` | 取消生成 |
 | GET | `/health` | 健康检查 |
 
-### WebSocket 对话
+### 会话
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| WS | `/ws/chat?user_id={user_id}&session_id={session_id}` | 全双工 WebSocket 对话通道 |
-
-### 会话（session）
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/sessions` | 列出内存中活跃会话（可选 `user_id` 过滤） |
-| GET | `/sessions/{user_id}` | 列出用户所有历史会话（Redis SCAN） |
-| GET | `/sessions/{user_id}/{session_id}/messages` | 获取会话消息历史 |
-| POST | `/sessions/{user_id}/{session_id}/fork` | 基于父会话创建分支 |
+| GET | `/sessions` | 列出活跃会话 |
+| GET | `/sessions/{user_id}` | 用户历史会话列表 |
+| GET | `/sessions/{user_id}/{session_id}/messages` | 消息历史 |
+| POST | `/sessions/{user_id}/{session_id}/fork` | 会话分支 |
 | DELETE | `/sessions/{user_id}/{session_id}` | 删除会话 |
 
-### MCP 管理
+### WebSocket
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/mcp` | 列出已安装 MCP |
-| POST | `/mcp` | 添加 MCP |
-| PATCH | `/mcp/{mcp_id}` | 更新 MCP（启用/禁用、改名） |
-| DELETE | `/mcp/{mcp_id}` | 删除 MCP |
+| WS | `/ws/chat?user_id=&session_id=` | 全双工对话通道 |
 
-### Skill 管理
+### MCP / Skill / 渠道 / 图片
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/skill` | 列出已安装 Skill |
-| POST | `/skill` | 添加 Skill |
-| GET | `/skill/{skill_id}` | 获取单个 Skill |
-| DELETE | `/skill/{skill_id}` | 删除 Skill |
+| CRUD | `/mcp` | MCP 管理 |
+| CRUD | `/skill` | Skill 管理 |
+| CRUD | `/channels` | 渠道管理 |
+| POST | `/images/upload` | 图片上传 |
 
-### 文档
+## 配置
 
-| 路径 | 说明 |
-|------|------|
-| `/docs` | Swagger API 文档 |
-| `/redoc` | ReDoc API 文档 |
-
-### 流式对话事件类型
-
-| 事件 | 说明 |
-|------|------|
-| `session` | 会话 ID（首条事件） |
-| `text_delta` | 文本增量 |
-| `thinking_delta` | 思考过程增量 |
-| `tool_call` | 工具调用开始 |
-| `tool_result` | 工具执行结果 |
-| `reply_end` | 回复结束 |
-| `error` | 错误 |
-
-### WebSocket 消息协议
-
-客户端 → 服务端：
-- `{"type": "chat", "payload": {"message": "..."}}` — 发送消息
-- `{"type": "cancel", "payload": {}}` — 取消回复
-- `{"type": "ping", "payload": {}}` — 心跳
-
-服务端 → 客户端：
-- `{"type": "text_delta", "payload": {"delta": "..."}}` — 文本增量
-- `{"type": "thinking_delta", "payload": {"delta": "..."}}` — 思考增量
-- `{"type": "tool_call", "payload": {"tool_name", "tool_call_id", "tool_args"}}` — 工具调用
-- `{"type": "tool_result", "payload": {"tool_call_id", "state", "result"}}` — 工具结果
-- `{"type": "reply_end", "payload": {"finished_reason", "finished": true}}` — 回复结束
-
-
-## 配置说明
-
-配置文件位于 `configs/`，通过 `APP_ENV` 环境变量选择环境。
-
-### LLM 配置
-
-```yaml
-llm:
-  api_key: "${LLM_API_KEY}"
-  base_url: "https://api.siliconflow.cn/v1"
-  model: "Qwen/Qwen3.6-35B-A3B"
-  stream: true
-  context_size: 128000
-  max_tokens: 4096
-  temperature: 0.7
-```
-
-### Redis 配置
-
-```yaml
-redis:
-  url: "${REDIS_URL:-redis://localhost:6379/0}"
-  key_prefix: "agentscope:session:"
-  session_ttl: 1800    # 会话过期时间（秒）
-```
-
-Redis 中每个会话存储两类 key（共享 TTL）：
-- `agentscope:session:{user_id}:{session_id}` — AgentState JSON
-- `agentscope:session:{user_id}:{session_id}:meta` — 会话元数据（标题、消息数、时间），供 `/sessions/{user_id}` 列表扫描
-
-### PostgreSQL 配置
-
-```yaml
-database:
-  url: "${DATABASE_URL:-postgresql://user:password@localhost:5432/dmx_agent_db}"
-  pool_size: 10
-```
-
-`DatabaseManager` 在服务启动时初始化 asyncpg 连接池并执行幂等 DDL（自动建 `users` / `conversations` / `sessions` 等表及索引），未配置 `url` 时跳过。
-
-### 环境变量
-
-所有外部依赖地址均支持 `${VAR:-default}` 语法，可在 `.env` 中覆盖（参考 `.env.example`）：
+配置文件在 `configs/`，通过 `APP_ENV` 选择环境。所有外部地址支持 `${VAR:-default}` 语法。
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `LLM_API_KEY` | — | LLM API 密钥（必填） |
-| `LLM_BASE_URL` | — | LLM 接口地址（必填，参考 `.env.example`） |
-| `LLM_MODEL_NAME` | `glm-5` | 模型名 |
-| `OTEL_ENDPOINT` | `http://localhost:4317` | OTel OTLP gRPC 端点 |
-| `DATABASE_URL` | `postgresql://user:password@localhost:5432/dmx_agent_db` | PostgreSQL 连接串 |
+| `LLM_BASE_URL` | — | LLM 接口地址（必填） |
+| `LLM_MODEL_NAME` | `qwen-max` | 模型名 |
+| `DATABASE_URL` | `postgresql://user:password@localhost:5432/dmx_agent_db` | 数据库连接串 |
 | `REDIS_URL` | `redis://localhost:6379/0` | Redis 连接串 |
+| `OTEL_ENDPOINT` | `http://localhost:4317` | OTel gRPC 端点 |
 | `APP_ENV` | `dev` | 环境（dev / prod） |
+| `AUTH_REQUIRED` | `false` | 是否启用 API Key 认证 |
+| `API_KEY` | — | API Key |
 
-### 权限配置
+### LLM 支持的 Provider
 
-```yaml
-agent:
-  permission_mode: "bypass"   # bypass = 自动批准所有工具调用
-  tool_guard:
-    enabled: false
-    mode: "blocklist"          # blocklist / allowlist
-    tools: []                  # 需要拦截的工具名
-  command_guard:
-    enabled: true
-    mode: "blocklist"          # blocklist / allowlist
-    rules:
-      - "rm -rf /"             # 拦截删根目录
-      - "*/dev/tcp/*"          # 拦截反弹 shell
-      - "Invoke-Expression*"   # 拦截 PowerShell 远程执行
-```
+openai / dashscope / anthropic / deepseek / gemini / moonshot / ollama / siliconflow / xai
 
+### KV 后端
 
-## 多实例部署
+- **redis**（默认）— 生产用，支持多实例
+- **jsonl** — 开发用，本地文件，单进程，无 Redis 依赖
 
-项目支持多实例无状态部署，通过 RedisMessageBus 实现跨实例一致性：
+### 沙箱模式
 
-- **分布式锁**：同 session 并发请求时，Redis SETNX 保证互斥
-- **Pub/Sub 事件广播**：SSE 事件跨实例分发
-- **状态刷新**：每次 ChatService.run() 开始前从 Redis 加载最新 AgentState
-- **回放日志**：Redis List 存储事件日志，支持新订阅者追赶历史
-
-## 可观测性
-
-启动 Docker 可观测性栈后：
-
-- **Jaeger**: http://localhost:16686 — 查看分布式追踪
-- **Grafana**: http://localhost:3000 (admin/admin) — 统一监控大盘
-- **Prometheus**: http://localhost:9090 — 指标查询
-
-TracingMiddleware 自动记录：
-- LLM 调用的输入/输出消息
-- 工具调用的名称、参数、结果
-- 每次请求的完整调用链路
+- **local**（默认）— 直接本机执行
+- **docker** — 转发到沙箱容器，workspaces 隔离挂载
 
 ## 健康检查
 
-`health_check/` 下能单独跑，也能一把全查：
+```bash
+# 一键检查
+python health_check/check_all.py
+
+# 单独检查
+python health_check/check_http.py
+python health_check/check_redis.py
+python health_check/check_postgres.py
+python health_check/check_llm.py
+```
+
+## 部署
+
+### 单容器
 
 ```bash
-.venv/Scripts/python.exe health_check/check_all.py
-# 单独查：check_http / check_redis / check_postgres / check_llm
+docker compose build && docker compose up -d
 ```
 
-## WebUI
-
-基于 React 19 + TypeScript + TailwindCSS 构建的 SPA 前端：
-
-- 路径：`webui/`
-- 访问：http://localhost:8090/webui
-- 功能：会话管理、MCP/Skill 管理、中英双语
-- 技术栈：React 19, Vite 8, Radix UI, i18next
+### 应用 + 沙箱分离
 
 ```bash
-# 构建前端
-cd webui && npm install && npm run build
-
-# 开发模式（独立 dev server）
-cd webui && npm run dev
+docker compose -f docker-compose.sandbox.yml up -d
 ```
 
-## 项目结构
+### 多实例 + Nginx 负载均衡
 
-```
-platform-server-8090/
-├── main.py              # 启动入口
-├── server.py            # FastAPI 应用
-├── api/                 # 路由层（chat / ws / mcp / skill / 旧版静态界面）
-├── core/                # 会话、存储、消息总线、formatter、workspace、tracing
-│   ├── agent/factory.py # Agent 工厂
-│   ├── config/          # 配置加载
-│   ├── database.py      # PostgreSQL 管理器
-│   ├── storage*.py      # 存储层 + 数据模型
-│   ├── chat_service.py  # Chat 服务（事件驱动）
-│   ├── session.py       # 会话管理器
-│   ├── redis_message_bus.py
-│   └── formatter/       # SiliconFlow 兼容
-├── middleware/          # tool_guard / command_guard / path_guard / tool_manager
-├── webui/               # React 19 SPA
-├── workflow/base.py     # 工作流基类
-├── workspaces/          # 沙箱与工作路径
-├── configs/            # dev.yaml / prod.yaml / tools.yaml
-├── docker/             # compose + 模块化部署 + 镜像导出
-├── scripts/start_8090.sh
-├── health_check/        # 健康检查脚本
-├── skills/              # 自定义 Skill
-├── docs/                # 设计文档
-└── pyproject.toml / requirements.txt
+```bash
+cd docker
+docker compose -f docker-compose.multi-instance.yaml up -d --scale pamimi-tako-bot-demo=3
 ```
 
-## 文档索引
+## 项目结构（目录）
 
-开发、部署、API 参考、各种设计规划都在 `docs/` 
+```
+pamimi-tako-bot-demo/
+├── main.py / server.py
+├── api/           # 路由层
+├── core/          # 核心模块
+├── middleware/     # 安全守卫 + 中间件
+├── webui/         # React 19 SPA
+├── configs/       # 配置文件
+├── docker/        # 部署编排
+├── health_check/  # 健康检查
+├── scripts/       # 启动脚本
+├── workspaces/    # 双域工作空间
+├── tests/         # 测试
+└── docs/          # 设计文档
+```
 
+## 相关文档
 
-## TODO LIST
+| 文档 | 说明 |
+|------|------|
+| [docs/middleware-guards.md](docs/middleware-guards.md) | 中间件守卫体系 |
+| [docs/budget-control.md](docs/budget-control.md) | 预算控制 |
+| [docs/上下文管理.md](docs/上下文管理.md) | 上下文压缩与卸载 |
+| [docs/docker-deployment.md](docs/docker-deployment.md) | Docker 部署指南 |
+| [docs/sandbox-guide.md](docs/sandbox-guide.md) | 沙箱隔离指南 |
+| [docs/persistence-design.md](docs/persistence-design.md) | 持久化设计 |
+
+## TODO
 
 - 补文档。
-- 换个项目名。
 - 重新写前端界面，当前刚好凑合能用。
 - 守卫测试，测试样例不是很多，也不确定这是不是真有用。
 - 服务实例和沙箱和用户之间的分配问题，计划是一个用户分一个沙箱，但这边验证资源有限，先标记一下吧。
+- RAG 向量存储集成（当前是 placeholder）。

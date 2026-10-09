@@ -10,7 +10,7 @@ import { useTranslation } from 'react-i18next';
 
 import { cn } from '@/lib/utils';
 
-export type SettingsSection = 'general' | 'models' | 'security' | 'skills' | 'mcp';
+export type SettingsSection = 'general' | 'models' | 'security' | 'skills' | 'mcp' | 'channels';
 
 interface NavItem {
 	key: SettingsSection;
@@ -24,6 +24,7 @@ const NAV_ITEMS: NavItem[] = [
 	{ key: 'security', labelKey: 'settings.nav.security', fallback: '安全' },
 	{ key: 'skills', labelKey: 'settings.nav.skills', fallback: '技能' },
 	{ key: 'mcp', labelKey: 'settings.nav.mcp', fallback: 'MCP' },
+	{ key: 'channels', labelKey: 'settings.nav.channels', fallback: '渠道' },
 ];
 
 interface SettingsSidebarProps {

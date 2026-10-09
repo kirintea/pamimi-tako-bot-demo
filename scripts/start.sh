@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# 启动 main.py — 自有平台层服务（端口 8090）
+# 启动 main.py — Pamimi Tako Bot Demo 服务
 #
 # 提供：
 #   - /chat /chat/stream /sessions/* 等自有 API
@@ -8,10 +8,10 @@
 #   - Swagger 文档   http://localhost:8090/docs
 #
 # 用法：
-#   ./scripts/start_8090.sh
-#   APP_ENV=prod ./scripts/start_8090.sh
-#   VENV_PATH=/opt/venv ./scripts/start_8090.sh
-#   VENV_PATH= ./scripts/start_8090.sh           # 用全局 Python（打镜像场景）
+#   ./scripts/start.sh
+#   APP_ENV=prod ./scripts/start.sh
+#   VENV_PATH=/opt/venv ./scripts/start.sh
+#   VENV_PATH= ./scripts/start.sh           # 用全局 Python（打镜像场景）
 # ============================================================
 
 set -euo pipefail

@@ -6,16 +6,16 @@
 # 内置工具（AgentScope 自带）
 builtin_tools:
   Bash:
-    enabled: true
+    enabled: false
     description: "执行 shell 命令"
   Read:
     enabled: true
     description: "读取文件"
   Write:
-    enabled: true
+    enabled: false
     description: "写入文件"
   Edit:
-    enabled: true
+    enabled: false
     description: "编辑文件（精确替换）"
   Glob:
     enabled: true

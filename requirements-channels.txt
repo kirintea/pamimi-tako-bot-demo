@@ -1,0 +1,7 @@
+# 渠道依赖（企业微信等）
+# 在 requirements.txt 基础上额外安装
+aiomysql==0.2.0
+pycryptodome==3.24.0
+wecom-aibot-sdk-python==0.1.7
+websockets==17.2
+pymysql==1.2.3

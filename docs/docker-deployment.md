@@ -67,7 +67,7 @@ environment:
 
 ```
 ┌─────────────────────────────────┐
-│  app 容器 (platform-server-8090)│
+│  app 容器 (pamimi-tako-bot-demo)│
 │  ├── FastAPI 服务               │
 │  ├── 完整项目代码 (/workspace)  │
 │  └── DockerSandboxProxy 中间件  │

@@ -5,10 +5,10 @@
 # endpoint: OTLP gRPC 上报地址（Jaeger / OTEL Collector）
 # channel:  消息渠道 Resource tag，多渠道部署时按实例区分（web / feishu / wechat）
 otel:
-  enabled: false
+  enabled: true
   endpoint: "${OTEL_ENDPOINT:-http://localhost:4317}"
-  service_name: "platform-agent"
-  service_version: "0.1.0"
+  service_name: "pamimi-tako-bot-demo"
+  service_version: "0.2.1"
   environment: "development"
   channel: "${OTEL_CHANNEL:-web}"
   headers: {}
@@ -43,7 +43,7 @@ server:
   log_backup_count: 7
 
 agent:
-  name: "platform_agent"
+  name: "pamimi_tako_bot_demo"
   # 系统提示词（从 configs/prompt.py 加载，修改提示词编辑该文件即可）
   system_prompt:
     module_path: "configs.prompt"
@@ -65,19 +65,22 @@ agent:
     context_buffer_ratio: 0.15            # 压缩阈值前 15% 开始预警
     emit_hint_event: true                 # 前端可渲染注入内容
     extra_fields:
-      platform: "AgentScope Platform Server"
+      platform: "Pamimi Tako Bot Demo"
 
   permission_mode: "bypass"
-  # 沙箱配置（三个均启用时：workspaces/{user_id}/ + 独立 skills/ + 独立 mcp/）
+  # 沙箱配置（双域布局：agent_space/ 共享只读 + user_spaces/{user_id}/ 私有可读写）
   sandbox_dir: "workspaces"
-  sandbox_skills: false      # true 时 skills 从 sandbox_dir/{user_id}/skills/ 加载
-                             # ⚠ 若同时用 docker 沙箱，需同步调整顶层 sandbox.extra_mounts 的 host 路径
-  sandbox_mcp: false         # true 时 MCP 配置从 sandbox_dir/mcp/ 加载
-  sandbox_per_user: true    # true 时沙箱路径追加 user_id 层级（workspaces/{user_id}/）
+  # root 预置：命中者角色为 root，可写 agent_space 并只读查看他人会话。
+  # 也可用环境变量 ROOT_USER_IDS（逗号分隔）追加，环境变量优先于此处。
+  root_user_ids:
+    - "root"
+  sandbox_skills: true       # true 时 skills 从 agent_space/skills/ 加载（双域共享只读域）
+  sandbox_mcp: false         # true 时 MCP 配置从 agent_space/mcp/ 加载
+  sandbox_per_user: true    # true 时沙箱路径追加 user_id 层级（user_spaces/{user_id}/）
   tool_guard:
     enabled: false
     mode: "allowlist" # allowlist | blocklist
-    tools: []
+    tools: ["Skill"]
 
   command_guard:
     enabled: true
@@ -97,22 +100,9 @@ agent:
   tool_manager:
     config_path: "configs/tools.yaml"
 
-# MCP 服务列表（可选，取消注释即启用；对应 API Key 见 .env.example 第 8 节）
-mcp_servers:
-  # - name: "baidu-maps"
-  #   transport: "http"
-  #   url: "https://mcp.api-inference.modelscope.net/20cc3a3b3d6740/mcp"
-  #   headers:
-  #     Authorization: "Bearer ${BAIDU_MAPS_API_KEY:-}"
-  # - name: "market-cmgjmcp00074997"
-  #   transport: "http"
-  #   url: "https://dashscope.aliyuncs.com/api/v1/mcps/market-cmgjmcp00074997/mcp"
-  #   headers:
-  #     Authorization: "Bearer ${DASHSCOPE_API_KEY:-}"
-  # - name: "filesystem"
-  #   transport: "stdio"
-  #   command: "npx"
-  #   args: ["-y", "@modelcontextprotocol/server-filesystem", "/workspace"]
+# MCP 服务不在 YAML 中配置 —— 唯一真源是 configs/mcps.json
+# （前端 /webui 或 REST /mcp 管理，保存即热加载，新建会话生效）
+# 注意：AppConfig 为 extra="forbid"，此处写 mcp_servers 会直接启动失败。
 
 database:
   # ------------------------------------------------------------
@@ -132,7 +122,7 @@ database:
 
 redis:
   url: "${REDIS_URL:-redis://localhost:6379/0}"
-  key_prefix: "agentscope:session:"
+  key_prefix: "dmx_agent_redis:session:"
   session_ttl: 1800
 
 # KV 存储（会话状态 / 元数据持久化层）
@@ -171,22 +161,27 @@ middleware:
 sandbox:
   # backend: "${SANDBOX_BACKEND:-local}"
   backend: "docker"
-  container: "platform-sandbox"
+  container: "pamimi-tako-bot-demo-sandbox"
   project_root: "/workspace"
   # 额外挂载（宿主机路径 → 容器内路径）
   # ⚠ host 路径需与 agent.sandbox_skills 的实际加载路径一致：
   #   sandbox_skills=false 时 → host: "skills"（项目根，当前配置）
   #   sandbox_skills=true + per_user=true 时 → 需按 user_id 动态挂载
   extra_mounts:
-    - host: "skills"
-      container: "/workspace/skills"
+    # 双域防御纵深：仅将 agent_space 以只读方式挂入容器，
+    # 防止容器内 Bash/Python 工具越权改写 Agent 共享资产。
+    # 用户私有域 user_spaces/{user_id} 由 DockerSandboxProxy 按会话动态挂载（读写）。
+    - host: "workspaces/agent_space"
+      container: "/workspace/agent_space"
       readonly: true
 
 # 对象存储配置（图片上传等；S3/OSS 环境变量见 .env.example 第 9 节）
 object_storage:
   backend: "local"              # local / s3 / aliyun_oss
-  prefix: "images/"             # 对象 key 前缀
-  local_dir: "workspaces/uploads"  # 本地存储目录（backend=local）
+  # 本地存储落入用户私有域：key 布局 {user_id}/uploads/{date}/{uuid}.ext
+  # → 实际磁盘 workspaces/user_spaces/{user_id}/uploads/...
+  prefix: "uploads/"            # 对象 key 前缀（位于 user_id 之后）
+  local_dir: "workspaces/user_spaces"  # 本地存储根（backend=local），与双域用户域一致
 
   # backend=s3 时生效（AWS S3 / MinIO / Cloudflare R2）
   # s3_endpoint: "${S3_ENDPOINT:-http://localhost:9000}"

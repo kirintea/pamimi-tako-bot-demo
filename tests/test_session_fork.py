@@ -6,6 +6,8 @@
 避免污染其他测试。
 """
 
+import uuid
+
 import pytest
 
 from core.config.schemas import DatabaseConfig
@@ -136,4 +138,71 @@ async def test_fork_session_without_new_session_id_still_works():
         assert child.parent_session_id == root.id
     finally:
         await db.execute("DELETE FROM sessions WHERE user_id = $1", "test_fork_user_04")
+        await db.shutdown()
+
+
+async def test_copy_conversations_prefix_copies_and_remaps():
+    """copy_conversations_prefix 复制全部 active 行并重映射 session_id。"""
+    storage, db = await _storage()
+    try:
+        uid = "test_fork_user_05"
+        cfg = SessionConfig(name="root")
+        parent = await storage.upsert_session(uid, "ag_01", cfg)
+        await db.insert_conversation(uid, parent.id, "user", "hello",
+                                      channel="web", turn_id="t1", turn_seq=0)
+        await db.insert_conversation(uid, parent.id, "assistant", "hi",
+                                      metadata={"type": "text"},
+                                      channel="web", turn_id="t1", turn_seq=1)
+        await db.insert_conversation(uid, parent.id, "assistant", "",
+                                      metadata={"type": "thinking"},
+                                      channel="web", turn_id="t1", turn_seq=2)
+
+        child = str(uuid.uuid4())
+        copied = await db.copy_conversations_prefix(child, parent.id, uid)
+        assert copied == 3
+
+        hist = await db.get_conversation_history(uid, child, limit=100)
+        assert len(hist["messages"]) == 3
+        assert all(m["session_id"] == child for m in hist["messages"])
+
+        # 父会话未被改动
+        hist_p = await db.get_conversation_history(uid, parent.id, limit=100)
+        assert len(hist_p["messages"]) == 3
+    finally:
+        await db.delete_conversations(uid, child)
+        await db.delete_conversations(uid, parent.id)
+        await db.execute("DELETE FROM sessions WHERE user_id = $1", uid)
+        await db.shutdown()
+
+
+async def test_copy_conversations_prefix_branch_point():
+    """before_id 截断：仅复制 id <= before_id 的前缀。"""
+    storage, db = await _storage()
+    try:
+        uid = "test_fork_user_06"
+        cfg = SessionConfig(name="root")
+        parent = await storage.upsert_session(uid, "ag_01", cfg)
+        r1 = await db.insert_conversation(uid, parent.id, "user", "Q1",
+                                          channel="web", turn_id="t1", turn_seq=0)
+        await db.insert_conversation(uid, parent.id, "assistant", "A1",
+                                      metadata={"type": "text"},
+                                      channel="web", turn_id="t1", turn_seq=1)
+        await db.insert_conversation(uid, parent.id, "user", "Q2",
+                                      channel="web", turn_id="t2", turn_seq=0)
+        await db.insert_conversation(uid, parent.id, "assistant", "A2",
+                                      metadata={"type": "text"},
+                                      channel="web", turn_id="t2", turn_seq=1)
+
+        child = str(uuid.uuid4())
+        copied = await db.copy_conversations_prefix(
+            child, parent.id, uid, before_id=r1,
+        )
+        assert copied == 2  # 仅 Q1 + A1
+
+        hist = await db.get_conversation_history(uid, child, limit=100)
+        assert len(hist["messages"]) == 2
+    finally:
+        await db.delete_conversations(uid, child)
+        await db.delete_conversations(uid, parent.id)
+        await db.execute("DELETE FROM sessions WHERE user_id = $1", uid)
         await db.shutdown()

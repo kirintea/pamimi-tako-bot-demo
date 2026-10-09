@@ -66,11 +66,13 @@ class SessionManager:
         max_sessions: int = 100,
         storage=None,
         db=None,
+        user_service=None,
     ) -> None:
         self._config = config
         self._session_ttl = session_ttl
         self._max_sessions = max_sessions
         self._db = db  # DatabaseManager，用于 PG 回填
+        self._user_service = user_service  # UserService，用于角色解析与懒注册
         # key: (user_id, session_id) → SessionEntry
         self._sessions: dict[tuple[str, str], SessionEntry] = {}
         self._lock = asyncio.Lock()
@@ -96,7 +98,10 @@ class SessionManager:
         logger.info("SessionManager: KV 存储就绪 (backend={})", kv_cfg.backend)
 
     async def shutdown(self) -> None:
-        """关闭 KV 存储。"""
+        """关闭 KV 存储，并释放所有会话的有状态 MCP 连接。"""
+        for entry in list(self._sessions.values()):
+            await AgentFactory.close_mcp_clients(entry.agent)
+        self._sessions.clear()
         if self._kv:
             await self._kv.aclose()
             self._kv = None
@@ -151,9 +156,21 @@ class SessionManager:
                     limit=self._config.context.backfill_message_limit,
                 )
 
-            # 创建 Agent 实例（传入恢复的状态 + user_id 用于沙箱隔离）
-            agent = AgentFactory.create(
-                self._config, state=saved_state, user_id=user_id,
+            # 解析用户角色（root / normal），并懒注册用户记录
+            role = "normal"
+            if self._user_service is not None:
+                try:
+                    role = await self._user_service.get_role(user_id)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("SessionManager: 角色解析失败（降级 normal）: {}", e)
+                try:
+                    await self._user_service.get_or_create_user(user_id)
+                except Exception:  # noqa: BLE001
+                    logger.debug("SessionManager: 用户懒注册失败（已忽略）")
+
+            # 创建 Agent 实例（恢复状态 + user_id 沙箱隔离 + role 权限域）
+            agent = await AgentFactory.create(
+                self._config, state=saved_state, user_id=user_id, role=role,
             )
             entry = SessionEntry(
                 user_id=user_id,
@@ -210,69 +227,141 @@ class SessionManager:
         user_id: str,
         parent_session_id: str,
         new_title: str | None = None,
+        branch_after_message_id: int | None = None,
     ) -> str:
-        """基于父会话创建分支，返回新会话 ID
+        """基于父会话创建分支，返回新会话 ID（新式「带历史前缀的新会话」）。
 
-        流程：
-        1. 从 KV 拉取父会话 AgentState JSON，**值拷贝**到子会话 key
-           （完全独立，互不影响）
-        2. 复制父会话 meta，追加 parent_session_id / forked_at 标记
-        3. 若 storage (PostgresStorage) 可用，则落库插入 FORK 记录
+        设计（对齐 新式 ``fork_session_before_user_index``，已逐行对照源码）：
+
+        1. 复制源会话 PG ``conversations`` 前缀（支持 ``branch_after_message_id``
+           中途截断）到子会话 —— 修复原实现「fork 后空白」的根因。
+        2. 从**同一份前缀**重建子会话 AgentState（KV == PG，消除 KV↔PG 分裂）。
+           fork 本身**不做任何压缩**，仅克隆前缀 + 剔除内部行。
+        3. 动态窗口（用户建议 b）：保留最近 ``fork_window_turns`` 轮；
+           系统提示词由 AgentFactory 在 ``get_or_create`` 时注入，天然保留。
+        4. 易失状态天然不携带（前缀是已完成的历史，不含 in-progress 回复）。
+        5. 落库 sessions 行（best-effort，含父会话补写回退）。
+        6. 任一环节失败执行原子回滚，避免孤儿数据。
 
         Args:
             user_id: 用户标识
             parent_session_id: 父会话 ID
             new_title: 子会话标题，None 则沿用父标题并追加 " (分支)"
+            branch_after_message_id: 中途 fork 截断点（包含该消息）；
+                None 表示复制全部历史
 
         Returns:
             新生成的子会话 ID
 
         Raises:
-            ValueError: 父会话在 KV 中无 state（无法 fork）
             RuntimeError: KV 存储未初始化
         """
+        import asyncio
+        import uuid
+
         if self._kv is None:
             raise RuntimeError(
                 "KV 存储未初始化，无法 fork 会话；请先调用 initialize()"
             )
 
-        import asyncio
-        import uuid
-
         child_session_id = str(uuid.uuid4())
 
-        # 1. 拷贝 AgentState JSON（直接值拷贝，无需反序列化）
-        state_key_p = self._redis_key(user_id, parent_session_id)
-        state_key_c = self._redis_key(user_id, child_session_id)
-        state_json = await self._kv.get(state_key_p)
-        if state_json is None:
-            raise ValueError(
-                f"父会话没有可 fork 的状态: user={user_id} "
-                f"session={parent_session_id}"
-            )
-        await self._kv.set(
-            state_key_c, state_json, ex=self._session_ttl
-        )
+        # 1) 复制 PG 历史前缀（支持中途 fork：id <= before_id 截断）
+        copied = 0
+        if self._db is not None and getattr(self._db, "is_initialized", False):
+            try:
+                copied = await self._db.copy_conversations_prefix(
+                    child_session_id, parent_session_id, user_id,
+                    before_id=branch_after_message_id,
+                )
+                logger.info(
+                    "fork PG 复制完成: user={} parent={} child={} copied={} branch={}",
+                    user_id, parent_session_id, child_session_id,
+                    copied, branch_after_message_id,
+                )
+                if copied == 0:
+                    logger.warning(
+                        "fork 复制 0 行！可能原因：父会话无 active conversations "
+                        "或 user_id/session_id 不匹配。检查 PG conversations 表。"
+                    )
+            except Exception:
+                logger.exception(
+                    "fork 复制 PG 历史失败: user={} parent={}",
+                    user_id, parent_session_id,
+                )
 
-        # 2. 拷贝 meta，追加 parent / fork 标记
-        meta_p = await self._load_session_meta(user_id, parent_session_id)
-        if meta_p is None:
-            meta_p = {}
+        # 2) 从同一份前缀重建 child AgentState（保证 KV == PG，消除分裂）
+        child_state: AgentState | None = None
+        if copied > 0:
+            child_state = await self._backfill_from_pg(
+                user_id, child_session_id, limit=100000,
+            )
+        if child_state is None:
+            child_state = AgentState(session_id=child_session_id)
+
+        # 3) 动态窗口：系统提示词由 AgentFactory 注入；此处仅保留最近 N 轮
+        window = getattr(self._config.context, "fork_window_turns", 0)
+        if window and window > 0:
+            child_state = self._apply_fork_window(child_state, window)
+
+        # 4) 落 KV（从已完成的历史重建，天然不含 in-progress 易失状态）
+        state_json = child_state.model_dump_json()
+        try:
+            await self._kv.set(
+                self._redis_key(user_id, child_session_id),
+                state_json, ex=self._session_ttl,
+            )
+        except Exception:
+            await self._safe_rollback_child(user_id, child_session_id, copied)
+            raise
+
+        # 5) 标题：优先读 PG sessions.title 列（get_session_title 已做 COALESCE），
+        #    降级到 first_message（conversations 表首条用户消息），再降级到 KV。
+        meta_p = await self._load_session_meta(user_id, parent_session_id) or {}
+        source_title: str | None = None
+        if self._db is not None and getattr(self._db, "is_initialized", False):
+            try:
+                source_title = await self._db.get_session_title(
+                    user_id, parent_session_id,
+                )
+            except Exception:
+                logger.debug("读取源会话 PG 标题失败，降级到 first_message")
+            # 降级：读 conversations 表首条用户消息（与侧栏 get_user_sessions 逻辑一致）
+            if not source_title:
+                try:
+                    first_msg = await self._db.fetchval(
+                        'SELECT LEFT("content", 30) FROM conversations '
+                        'WHERE "user_id" = $1 AND "session_id" = $2 '
+                        'AND "role" = \'user\' AND "status" = \'active\' '
+                        'ORDER BY "id" ASC LIMIT 1',
+                        user_id, parent_session_id,
+                    )
+                    if first_msg:
+                        source_title = first_msg
+                except Exception:
+                    logger.debug("读取源会话 first_message 失败，降级到 KV")
+        # 降级：KV 元数据标题
+        if not source_title:
+            source_title = meta_p.get("title", "")
+        if not source_title:
+            source_title = "新会话"
+
         if new_title:
             title = new_title
         else:
-            base_title = meta_p.get("title", "") or "新会话"
-            title = f"{base_title} (分支)"
+            title = f"{source_title} - fork"
+
         now = time.time()
         meta_c = {
             "session_id": child_session_id,
             "user_id": user_id,
             "title": title,
-            "parent_session_id": parent_session_id,  # 标记血缘
+            "parent_session_id": parent_session_id,  # 血缘列保留但本方案不依赖/不渲染
             "forked_at": now,
+            "fork_branch_message_id": branch_after_message_id,
             "created_at": meta_p.get("created_at", now),
             "last_active": now,
-            "message_count": meta_p.get("message_count", 0),
+            "message_count": len(getattr(child_state, "context", []) or []),
         }
         await self._kv.set(
             self._redis_meta_key(user_id, child_session_id),
@@ -280,20 +369,20 @@ class SessionManager:
             ex=self._session_ttl,
         )
 
-        # 3. 若有 PostgresStorage，则落库（best-effort，失败仅记录日志；
-        #    但 CancelledError 必须 re-raise，避免干扰协程取消语义）
+        # 6) 落库 sessions 行（best-effort，含父会话补写回退）
         if self._storage is not None:
             try:
                 await self._storage.fork_session(
                     parent_session_id, user_id,
                     new_name=title,
                     new_session_id=child_session_id,
+                    branch_after_message_id=branch_after_message_id,
                 )
             except asyncio.CancelledError:
                 raise  # 不吞 CancelledError，保留协程取消语义
             except ValueError:
                 # 父会话不在 PG 中（8090 流程只写 KV 不写 PG sessions 表），
-                # 先 upsert 父会话再重试 fork，确保 depth/parent 血缘落库
+                # 先 upsert 父会话再重试 fork
                 try:
                     from core.storage_models import (
                         SessionConfig,
@@ -315,6 +404,7 @@ class SessionManager:
                         parent_session_id, user_id,
                         new_name=title,
                         new_session_id=child_session_id,
+                        branch_after_message_id=branch_after_message_id,
                     )
                 except asyncio.CancelledError:
                     raise
@@ -329,11 +419,109 @@ class SessionManager:
                     user_id, parent_session_id,
                 )
 
+        # 7) 写入 config->>'title'（侧栏读此字段，而非 config.name）
+        if self._db is not None and getattr(self._db, "is_initialized", False):
+            try:
+                await self._db.upsert_session_title(
+                    user_id, child_session_id, title,
+                )
+            except Exception:
+                logger.warning(
+                    "fork 写入 PG session title 失败: child={}", child_session_id,
+                )
+
         logger.info(
-            "fork 会话成功: user={} parent={} child={}",
-            user_id, parent_session_id, child_session_id,
+            "fork 会话成功: user={} parent={} child={} copied={} branch={}",
+            user_id, parent_session_id, child_session_id, copied,
+            branch_after_message_id,
         )
         return child_session_id
+
+    # ------------------------------------------------------------------
+    # Fork 辅助方法
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _history_to_state(
+        messages: list[dict], session_id: str
+    ) -> AgentState | None:
+        """将 PG 历史消息（``get_conversation_history`` 的结构）转为 AgentState。
+
+        跳过内部行（``thinking`` / ``tool_call``），仅保留 user 文本与
+        assistant 文本行，等价于 新式 fork 时的「隐藏/内部消息剔除」。
+        fork 与 KV 回填共用此逻辑，保证 Agent 上下文与 UI 一致且已被压缩。
+        """
+        context = []
+        for msg in messages:
+            role = msg.get("role")
+            content = msg.get("content")
+            metadata = msg.get("metadata") or {}
+            mtype = metadata.get("type")
+            if role == "user":
+                context.append(UserMsg(name="user", content=content))
+            elif role == "assistant":
+                if mtype in ("thinking", "tool_call"):
+                    continue  # 丢弃内部行（压缩）
+                context.append(AssistantMsg(name="assistant", content=content))
+            # 其他角色（system 等）跳过
+        if not context:
+            return None
+        state = AgentState(session_id=session_id)
+        state.context = context
+        return state
+
+    @staticmethod
+    def _apply_fork_window(
+        state: AgentState, window_turns: int
+    ) -> AgentState:
+        """fork 后的动态窗口（用户建议 b）：保留最近 ``window_turns`` 轮。
+
+        系统提示词由 AgentFactory 在 ``get_or_create`` 注入，不在 context 中，
+        故此处仅对 user/assistant 轮次做尾部截断。按 user 消息切分为轮次，
+        保留最后 N 轮。
+        """
+        if window_turns <= 0:
+            return state
+        context = list(getattr(state, "context", []) or [])
+        if not context:
+            return state
+        # 按 user 消息切分为轮次（每轮 = 一个 user + 其后的 assistant）
+        turns: list[list] = []
+        current: list = []
+        for msg in context:
+            role = getattr(msg, "role", "")
+            if role == "user" and current:
+                turns.append(current)
+                current = []
+            current.append(msg)
+        if current:
+            turns.append(current)
+        if len(turns) <= window_turns:
+            return state
+        kept = [m for t in turns[-window_turns:] for m in t]
+        state.context = kept
+        return state
+
+    async def _safe_rollback_child(
+        self,
+        user_id: str,
+        child_session_id: str,
+        copied: int,
+    ) -> None:
+        """fork 失败回滚：删除已复制的 PG 行与 KV 键，避免孤儿数据。"""
+        if copied > 0 and self._db is not None:
+            try:
+                await self._db.delete_conversations(user_id, child_session_id)
+            except Exception:
+                logger.warning("fork 回滚 PG 失败: {}", child_session_id)
+        if self._kv is not None:
+            try:
+                await self._kv.delete(
+                    self._redis_key(user_id, child_session_id),
+                    self._redis_meta_key(user_id, child_session_id),
+                )
+            except Exception:
+                logger.warning("fork 回滚 KV 失败: {}", child_session_id)
 
     async def save(self, user_id: str, session_id: str) -> None:
         """将指定会话的 AgentState 保存到 KV。
@@ -390,6 +578,7 @@ class SessionManager:
         if entry:
             # 先保存最终状态到 KV（可选：也可直接删除）
             await self._save_state(user_id, session_id, entry.agent)
+            await AgentFactory.close_mcp_clients(entry.agent)
             logger.info("移除会话: user={} session={}", user_id, session_id)
             return True
         return False
@@ -449,6 +638,41 @@ class SessionManager:
         except Exception:
             logger.exception("扫描用户会话失败: user={}", user_id)
 
+        return sessions
+
+    async def list_all_sessions(self) -> list[dict]:
+        """列出所有用户的全部会话（root 管理视图）
+
+        扫描 KV 后端所有 ``:meta`` key（redis SCAN / jsonl glob），
+        从 key 反解 user_id，按 last_active 倒序排列。
+
+        Returns:
+            会话元数据列表（每条含 user_id）
+        """
+        if not self._kv:
+            return []
+        meta_prefix = f"{self._redis_prefix}*:*:meta"
+        sessions: list[dict] = []
+        try:
+            keys = await self._kv.scan_keys(meta_prefix)
+            for key in keys:
+                try:
+                    meta_json = await self._kv.get(key)
+                    if not meta_json:
+                        continue
+                    meta = json.loads(meta_json)
+                    # key 形如 {prefix}{user_id}:{session_id}:meta
+                    rest = key[len(self._redis_prefix):]
+                    parts = rest.split(":")
+                    if len(parts) >= 3:
+                        meta["user_id"] = parts[0]
+                        meta["session_id"] = parts[1]
+                    sessions.append(meta)
+                except Exception:
+                    logger.warning("解析会话元数据失败: {}", key)
+            sessions.sort(key=lambda s: s.get("last_active", 0), reverse=True)
+        except Exception:
+            logger.exception("扫描全部会话失败")
         return sessions
 
     async def save_session_meta(
@@ -613,7 +837,10 @@ class SessionManager:
         """
         key = (user_id, session_id)
         async with self._lock:
-            self._sessions.pop(key, None)
+            entry = self._sessions.pop(key, None)
+
+        if entry is not None:
+            await AgentFactory.close_mcp_clients(entry.agent)
 
         deleted = False
         if self._kv:
@@ -719,46 +946,14 @@ class SessionManager:
             if not messages:
                 return None
 
-            # 转换为 AgentScope Msg 对象
-            context = []
-            for msg in messages:
-                role = msg["role"]
-                content = msg["content"]
-                metadata = msg.get("metadata") or {}
-                if role == "user":
-                    context.append(UserMsg(name="user", content=content))
-                elif role == "assistant":
-                    context.append(AssistantMsg(name="assistant", content=content))
-                    # 注入工具调用记录到 agent 上下文（用于自我排错）
-                    tool_calls = metadata.get("tool_calls")
-                    if tool_calls:
-                        for tc in tool_calls:
-                            tool_name = tc.get("tool_name", "unknown")
-                            tool_args = tc.get("tool_args", "")
-                            result = tc.get("result", "")
-                            state = tc.get("state", "")
-                            # 格式化为可读的上下文消息
-                            args_str = (
-                                json.dumps(tool_args, ensure_ascii=False)
-                                if isinstance(tool_args, dict)
-                                else str(tool_args)
-                            )
-                            tc_text = f"[Tool Call] {tool_name}({args_str})"
-                            if result:
-                                tc_text += f"\n[Tool Result] ({state}): {result}"
-                            context.append(Msg(
-                                name="system", role="assistant",
-                                content=[{"type": "text", "text": tc_text}], # type: ignore
-                            ))
-
-            if not context:
+            # 复用 fork 的历史→状态逻辑：跳过 thinking/tool_call 内部行，
+            # 仅保留 user/assistant 文本，等价于轮内压缩的「丢弃内部草稿」。
+            state = self._history_to_state(messages, session_id)
+            if state is None:
                 return None
-
-            state = AgentState(session_id=session_id)
-            state.context = context
             logger.info(
                 "PG 回填成功: user={} session={}, 加载 {} 条消息",
-                user_id, session_id, len(context),
+                user_id, session_id, len(getattr(state, "context", []) or []),
             )
             return state
         except Exception:
@@ -781,5 +976,6 @@ class SessionManager:
             # 过期前保存状态到 KV（TTL 会续期）
             entry = self._sessions.pop(key)
             await self._save_state(uid, sid, entry.agent)
+            await AgentFactory.close_mcp_clients(entry.agent)
             logger.info("清理过期会话: user={} session={}", uid, sid)
         return len(expired)

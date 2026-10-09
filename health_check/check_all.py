@@ -40,7 +40,7 @@ def _check_database():
 
 def main():
     print("=" * 50)
-    print(" AgentScope Platform Server - Health Check")
+    print(" Pamimi Tako Bot Demo - Health Check")
     print("=" * 50)
 
     results = []

@@ -11,11 +11,7 @@ import pytest
 from core.db.statements import STATEMENTS
 
 REQUIRED_NAMES = [
-    "upsert_agent",
     "upsert_session",
-    "upsert_mcp",
-    "upsert_skill",
-    "upsert_schedule",
     "insert_conversation",
     "upsert_session_title",
     "get_session_title",
@@ -56,24 +52,9 @@ def test_pg_upsert_variant_has_returning_or_plain_insert(name):
         assert "ON CONFLICT" in stmt.pg or "INSERT" in stmt.pg
 
 
-def test_mcp_id_lookup_args():
-    stmt = STATEMENTS["upsert_mcp"]
-    # 参数顺序: $1=id $2=user_id $3=name → 回查 (user_id, name) = (2, 3)
-    assert stmt.mysql_id_sql is not None
-    assert stmt.mysql_id_args == (2, 3)
-    assert 'WHERE "user_id" = $1 AND "name" = $2' in stmt.mysql_id_sql
-
-
-def test_skill_id_lookup_args():
-    stmt = STATEMENTS["upsert_skill"]
-    # 参数顺序: $1=id $2=user_id $3=name → 同上
-    assert stmt.mysql_id_sql is not None
-    assert stmt.mysql_id_args == (2, 3)
-
-
 def test_auto_increment_statements_have_no_id_sql():
     """自增表走 lastrowid，不需要回查"""
     for name in ("insert_conversation",):
         assert STATEMENTS[name].mysql_id_sql is None
-    for name in ("upsert_agent", "upsert_session", "upsert_schedule"):
+    for name in ("upsert_session",):
         assert STATEMENTS[name].mysql_id_sql is None

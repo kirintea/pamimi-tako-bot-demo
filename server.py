@@ -28,16 +28,16 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from api.chat import router as chat_router
+from api.channels import router as channels_router
 from api.images import router as images_router
 from api.mcp import router as mcp_router
 from api.skill import router as skill_router
 from api.ws_chat import router as ws_chat_router
-# from api.agent import router as agent_router
 # from api.workspace import router as workspace_router
-# from api.schedule import router as schedule_router
 # from api.webui import router as webui_router
 
 from core.chat_service import ChatService
+from core.channels.manager import ChannelManager
 from core.config import ConfigManager
 from core.database import DatabaseManager
 from core.db.base import DatabaseUnavailableError
@@ -46,6 +46,7 @@ from core.redis_message_bus import RedisMessageBus
 from core.session import SessionManager
 from core.session_status import SessionStatusTracker
 from core.storage import PostgresStorage
+from core.user_service import UserService
 from core.workspace import LocalWorkspaceManager
 
 
@@ -201,6 +202,16 @@ def create_app(config) -> FastAPI:
                 "数据库未配置（database.url 为空），跳过初始化；/health 显示 not_configured"
             )
 
+        # 用户服务（角色解析 + 懒注册）
+        # DB 未配置时优雅降级：角色完全由 config.agent.root_user_ids +
+        # 环境变量 ROOT_USER_IDS 推导，不阻断启动。
+        user_service = UserService(config, db_mgr)
+        app.state.user_service = user_service
+        logger.info(
+            "用户服务已就绪（root 预置: {}）",
+            sorted(user_service._root_ids) if user_service._root_ids else "无",
+        )
+
         # 应用配置对象（供 /context 等端点读取 request.app.state.config）
         app.state.config = config
 
@@ -249,6 +260,7 @@ def create_app(config) -> FastAPI:
             max_sessions=getattr(config.server, "max_sessions", 100),
             storage=storage,
             db=db_mgr,
+            user_service=user_service,
         )
         # 初始化 Redis 连接（与消息总线一致：失败降级而非硬崩溃，app 仍服务 /health）
         try:
@@ -312,6 +324,66 @@ def create_app(config) -> FastAPI:
         app.state.chat_service = chat_service
         logger.info("Chat 服务已就绪")
 
+        # 创建渠道配置存储（JSON 文件驱动，热加载 + 单实例文件锁）
+        from core.channels.config_store import ChannelConfigStore
+        channel_config_store = ChannelConfigStore()
+        await channel_config_store.start()
+        app.state.channel_config_store = channel_config_store
+        logger.info(
+            "渠道配置存储已就绪（配置文件: {}）",
+            channel_config_store._path,
+        )
+
+        # 创建渠道管理器（入站→内核→出站 闭环；从 JSON 配置文件拉起启用渠道）
+        channel_manager = ChannelManager(
+            config_store=channel_config_store,
+            bus=app.state.message_bus,
+            chat_service=chat_service,
+            object_storage=obj_storage,
+        )
+        app.state.channel_manager = channel_manager
+
+        # 注册热加载回调：配置文件变更时自动 diff 启停
+        channel_config_store._on_change = channel_manager.on_config_change
+
+        # 启动期拉起所有已启用的渠道
+        await channel_manager.start_all()
+        logger.info("渠道管理器已就绪（已拉起启用中的渠道）")
+
+        # 创建 MCP 配置存储（JSON 文件驱动，单一真源）
+        # YAML 不参与 MCP 导入（AppConfig 无 mcp_servers 字段）。AgentFactory 在创建
+        # 会话时直接读取此文件，REST /mcp 也读写此文件。
+        from core.mcp.config_store import MCPConfigStore
+
+        # on_change：mcps.json 被外部编辑或 REST 写入后记录日志。
+        # 新建会话时 AgentFactory 直接读文件，天然取到最新配置；已有会话仍用创建时的客户端。
+        async def _on_mcp_change() -> None:
+            logger.info(
+                "MCPConfigStore: 配置变更（{} 条启用），新建会话时生效",
+                len(mcp_config_store.get_mcp_configs()),
+            )
+
+        mcp_config_store = MCPConfigStore(on_change=_on_mcp_change)
+        await mcp_config_store.start()
+        app.state.mcp_config_store = mcp_config_store
+        logger.info(
+            "MCP 配置存储已就绪（配置文件: {}，{} 条启用）",
+            mcp_config_store._path,
+            len(mcp_config_store.get_mcp_configs()),
+        )
+
+        # 创建 Skill 配置存储（JSON 文件驱动，管理平面元数据 + 目录自动同步）
+        # 运行时 Skill 仍由 agent_space/skills 目录（文件系统）加载；本存储仅作管理/展示目录，
+        # 并在启动与运行时定期扫描该目录，把磁盘 SKILL.md 自动同步进 skills.json。
+        from core.skill.config_store import SkillConfigStore
+
+        skill_config_store = SkillConfigStore(
+            skills_dir=os.path.join(workspace_mgr.agent_space_dir, "skills"),
+        )
+        await skill_config_store.start()
+        app.state.skill_config_store = skill_config_store
+        logger.info("Skill 配置存储已就绪（配置文件: {}）", skill_config_store._path)
+
         # 自动打开浏览器 (仅开发环境)
         if config.otel.environment == "development":
             def _open_browser():
@@ -343,6 +415,35 @@ def create_app(config) -> FastAPI:
             except Exception as _persist_err:  # noqa: BLE001
                 logger.warning("关闭时排空持久化任务失败（已忽略）: {}", _persist_err)
 
+        # 先停止所有渠道（断开 WS 长连接），再关闭会话管理器
+        channel_mgr = getattr(app.state, "channel_manager", None)
+        if channel_mgr is not None:
+            try:
+                await channel_mgr.stop_all()
+                logger.info("渠道管理器已停止")
+            except Exception as _ch_err:  # noqa: BLE001
+                logger.warning("关闭渠道管理器异常（已忽略）: {}", _ch_err)
+
+        # 停止渠道配置存储（热加载轮询 + 释放文件锁）
+        ch_cfg_store = getattr(app.state, "channel_config_store", None)
+        if ch_cfg_store is not None:
+            try:
+                await ch_cfg_store.stop()
+                logger.info("渠道配置存储已停止")
+            except Exception as _cs_err:  # noqa: BLE001
+                logger.warning("关闭渠道配置存储异常（已忽略）: {}", _cs_err)
+
+        # 停止 MCP / Skill 配置存储（热加载轮询）
+        for _store in (
+            getattr(app.state, "mcp_config_store", None),
+            getattr(app.state, "skill_config_store", None),
+        ):
+            if _store is not None:
+                try:
+                    await _store.stop()
+                except Exception as _store_err:  # noqa: BLE001
+                    logger.warning("关闭配置存储异常（已忽略）: {}", _store_err)
+
         await session_mgr.shutdown()
         logger.info("会话管理器已关闭")
 
@@ -364,9 +465,9 @@ def create_app(config) -> FastAPI:
     # 2. 创建 FastAPI 应用
     # ============================================================
     app = FastAPI(
-        title="AgentScope Platform Server",
-        description="基于 AgentScope 2.0.5 的对话智能体平台",
-        version="0.1.3",
+        title="Pamimi Tako Bot Demo",
+        description="基于 AgentScope 的对话智能体平台",
+        version="0.2.1",
         lifespan=lifespan,
     )
 
@@ -411,14 +512,13 @@ def create_app(config) -> FastAPI:
     # 3. 注册 API 路由
     # ============================================================
     app.include_router(chat_router, tags=["chat"])
+    app.include_router(channels_router)
     app.include_router(images_router, tags=["images"])
     app.include_router(mcp_router)
     app.include_router(skill_router)
     app.include_router(ws_chat_router, tags=["websocket"])
 
-    # app.include_router(agent_router)  # 暂未使用
     # app.include_router(workspace_router)
-    # app.include_router(schedule_router)  # 暂未使用
     # app.include_router(webui_router)  # WebUI 兼容层 (/webui/*)
 
     # 静态文件服务（CSS/JS 等）

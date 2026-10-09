@@ -17,13 +17,13 @@
 │  ┌─────────────────┐    ┌─────────────────────────────────┐ │
 │  │   内存缓存       │    │          Redis                   │ │
 │  │ (user_id,        │    │  ┌───────────────────────────┐  │ │
-│  │  session_id)     │    │  │ agentscope:session:       │  │ │
+│  │  session_id)     │    │  │ dmx_agent_redis:session:       │  │ │
 │  │   → SessionEntry │    │  │   {user_id}:{session_id}  │  │ │
 │  │     ├─ agent     │◄──►│  │   → AgentState JSON       │  │ │
 │  │     ├─ created_at│    │  │   (TTL: 1800s)            │  │ │
 │  │     └─ last_active│   │  └───────────────────────────┘  │ │
 │  └─────────────────┘    │  ┌───────────────────────────┐  │ │
-│                         │  │ agentscope:session:       │  │ │
+│                         │  │ dmx_agent_redis:session:       │  │ │
 │                         │  │   {user_id}:{session_id}  │  │ │
 │                         │  │   :meta                   │  │ │
 │                         │  │   → 会话元数据 JSON        │  │ │
@@ -60,10 +60,10 @@
 ### Key 结构
 
 ```
-agentscope:session:{user_id}:{session_id}        → AgentState JSON (TTL 1800s)
-agentscope:session:{user_id}:{session_id}:meta   → 会话元数据 JSON (TTL 1800s)
-agentscope:session:{session_id}:status           → 会话实时状态 JSON (TTL 300s)  ← 多端同步
-agentscope:session:{session_id}:control          → cancel 指令 JSON (TTL 60s)     ← 多端同步
+dmx_agent_redis:session:{user_id}:{session_id}        → AgentState JSON (TTL 1800s)
+dmx_agent_redis:session:{user_id}:{session_id}:meta   → 会话元数据 JSON (TTL 1800s)
+dmx_agent_redis:session:{session_id}:status           → 会话实时状态 JSON (TTL 300s)  ← 多端同步
+dmx_agent_redis:session:{session_id}:control          → cancel 指令 JSON (TTL 60s)     ← 多端同步
 ```
 
 ### AgentState 内容
@@ -107,7 +107,7 @@ agentscope:session:{session_id}:control          → cancel 指令 JSON (TTL 60s
 用于多端并发场景，设备B发消息时可立即得知"有人在说话"（不 spin-wait）。
 
 ```json
-// agentscope:session:{session_id}:status
+// dmx_agent_redis:session:{session_id}:status
 {
   "state": "generating",      // idle | generating | interrupting
   "owner": "web-a1b2c3-phone", // 持有者设备标识
@@ -117,7 +117,7 @@ agentscope:session:{session_id}:control          → cancel 指令 JSON (TTL 60s
 ```
 
 ```json
-// agentscope:session:{session_id}:control
+// dmx_agent_redis:session:{session_id}:control
 {
   "action": "cancel",         // 取消指令
   "from": "web-d4e5f6-desktop", // 发起取消的设备
@@ -290,7 +290,7 @@ WebSocket 断连后，后台生成任务不中断，重连后可实时接收进�
 `_handle_chat` 通过 `_publish_event()` 将每个生成事件广播到 Redis Pub/Sub，与 `ChatService.run()` 使用相同的 channel：
 
 ```
-Channel: agentscope:session:{session_id}:events
+Channel: dmx_agent_redis:session:{session_id}:events
 ```
 
 | 事件类型           | 触发时机      | 携带数据                                   |
@@ -461,7 +461,7 @@ GET /sessions/{user_id}/{session_id}/context
 # configs/dev.yaml
 redis:
   url: "${REDIS_URL:-redis://localhost:6379/0}"
-  key_prefix: "agentscope:session:"
+  key_prefix: "dmx_agent_redis:session:"
   session_ttl: 1800    # 秒（30 分钟）
 
 database:

@@ -208,6 +208,27 @@ export function MCPPage() {
 		return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 	};
 
+	/* ---- transport helpers ---- */
+	/** 校验连接字段完整性，返回错误文案；null 表示通过 */
+	const validateConnection = (
+		transport: string,
+		command?: string,
+		url?: string,
+	): string | null => {
+		if (transport === 'stdio') {
+			return command && command.trim()
+				? null
+				: t('mcp.commandRequired', {
+						defaultValue: 'stdio 类型需要填写启动命令',
+					});
+		}
+		return url && url.trim()
+			? null
+			: t('mcp.urlRequired', {
+					defaultValue: 'HTTP 类型需要填写 URL',
+				});
+	};
+
 	/* ---- build CreateMcpRequest from form ---- */
 	const buildRequest = (): CreateMcpRequest => {
 		const isStdio = form.transport === 'stdio';
@@ -234,6 +255,15 @@ export function MCPPage() {
 	const handleSaveForm = async () => {
 		if (!form.name.trim()) {
 			toast.error(t('mcp.nameRequired', { defaultValue: '请输入服务名称' }));
+			return;
+		}
+		const connErr = validateConnection(
+			form.transport,
+			form.command,
+			form.url,
+		);
+		if (connErr) {
+			toast.error(connErr);
 			return;
 		}
 		setSubmitting(true);
@@ -281,19 +311,55 @@ export function MCPPage() {
 				return;
 			}
 			const [name, cfg] = entries[0];
-			const env = cfg.env && typeof cfg.env === 'object' ? cfg.env as Record<string, string> : undefined;
+			const command = typeof cfg.command === 'string' ? cfg.command : undefined;
+			const args = Array.isArray(cfg.args) ? (cfg.args as string[]) : undefined;
+			const url = typeof cfg.url === 'string' ? cfg.url : undefined;
+			const env = cfg.env && typeof cfg.env === 'object'
+				? (cfg.env as Record<string, string>)
+				: undefined;
+			const cfgHeaders = cfg.headers && typeof cfg.headers === 'object'
+				? (cfg.headers as Record<string, string>)
+				: undefined;
+
+			// transport 归一：streamableHttp / streamable-http → streamable_http
+			const rawTransport =
+				typeof cfg.transport === 'string' ? cfg.transport.trim() : '';
+			const normalized = rawTransport
+				? rawTransport.toLowerCase().replace(/-/g, '_')
+				: '';
+			// 未指定传输时按连接字段推断：有 url → streamable_http，否则 stdio
+			const transport =
+				normalized === 'streamablehttp'
+					? 'streamable_http'
+					: normalized || (url ? 'streamable_http' : 'stdio');
+
 			req = {
 				name,
-				transport: 'stdio',
-				command: typeof cfg.command === 'string' ? cfg.command : undefined,
-				args: Array.isArray(cfg.args) ? (cfg.args as string[]) : undefined,
-				headers: env,
+				transport,
+				command,
+				args,
+				url,
+				// stdio 的环境变量按后端约定暂存于 headers；HTTP 族优先取 headers
+				headers: transport === 'stdio' ? env : cfgHeaders ?? env,
+				display_name: typeof cfg.display_name === 'string' ? cfg.display_name : undefined,
+				description: typeof cfg.description === 'string' ? cfg.description : undefined,
 			};
 		} else if (typeof parsed.name === 'string' && typeof parsed.transport === 'string') {
 			// Flat CreateMcpRequest shape
 			req = parsed as unknown as CreateMcpRequest;
 		} else {
 			toast.error(t('mcp.jsonParseError', { defaultValue: 'JSON 解析失败' }));
+			return;
+		}
+
+		// 连接字段完整性校验（与后端 422 规则一致），避免保存空壳记录
+		const jsonConnErr = validateConnection(
+			req.transport,
+			req.command,
+			req.url,
+		);
+		if (jsonConnErr) {
+			toast.error(jsonConnErr);
 			return;
 		}
 

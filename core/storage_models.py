@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
 
-"""存储层数据模型 — 定义所有持久化资源的 Pydantic 模型
+"""存储层数据模型 — 定义仍落库资源的 Pydantic 模型
 
 参考 AgentScope 的 storage._model，简化为平台所需的子集。
 所有记录共用 _RecordBase（id + created_at + updated_at）。
+注：Agent / Schedule / Channel / MCP / Skill 的记录模型均已删除（对应表已从 DDL 移除，
+配置改由 JSON 文件驱动），当前仅保留 Session 相关模型。
 """
 
 from __future__ import annotations
@@ -40,42 +42,6 @@ class _RecordBase(BaseModel):
         default_factory=datetime.now,
         description="更新时间",
     )
-
-
-# ============================================================
-# Agent 记录
-# ============================================================
-
-class AgentData(BaseModel):
-    """Agent 配置数据"""
-
-    name: str = Field(description="Agent 名称")
-    system_prompt: str = Field(
-        default="You're a helpful assistant.",
-        description="系统提示词",
-    )
-    context_config: dict = Field(
-        default_factory=lambda: {
-            "trigger_ratio": 0.8,
-            "reserve_ratio": 0.1,
-        },
-        description="上下文压缩配置",
-    )
-    react_config: dict = Field(
-        default_factory=lambda: {
-            "max_iters": 50,
-            "stop_on_reject": False,
-        },
-        description="ReAct 配置",
-    )
-
-
-class AgentRecord(_RecordBase):
-    """Agent 持久化记录"""
-
-    user_id: str = Field(description="所属用户 ID")
-    source: str = Field(default="user", description="来源: user / team")
-    data: AgentData = Field(description="Agent 配置数据")
 
 
 # ============================================================
@@ -134,74 +100,9 @@ class SessionRecord(_RecordBase):
 
 
 # ============================================================
-# MCP 记录
+# MCP / Skill 记录 — 已从 storage_models 移除
 # ============================================================
-
-class MCPRecord(_RecordBase):
-    """已安装 MCP 记录"""
-
-    user_id: str = Field(description="所属用户 ID")
-    name: str = Field(description="MCP 名称（唯一）")
-    transport: str = Field(default="stdio", description="传输方式: stdio / http / streamableHttp / streamable_http")
-    command: str | None = Field(default=None, description="stdio 命令")
-    args: list[str] = Field(default_factory=list, description="stdio 参数")
-    url: str | None = Field(default=None, description="HTTP MCP 地址")
-    headers: dict[str, str] = Field(default_factory=dict, description="HTTP 请求头")
-    display_name: str | None = Field(default=None, description="显示名称")
-    description: str = Field(default="", description="描述")
-    author: str | None = Field(default=None, description="作者")
-    icon_url: str | None = Field(default=None, description="图标 URL")
-    tags: list[str] = Field(default_factory=list, description="标签")
-    hub_id: str | None = Field(default=None, description="来源 Hub ID")
-    card_id: str | None = Field(default=None, description="Hub 卡片 ID")
-    version: str | None = Field(default=None, description="版本")
-    enabled: bool = Field(default=True, description="是否启用")
-
-
-# ============================================================
-# Skill 记录
-# ============================================================
-
-class SkillRecord(_RecordBase):
-    """已安装 Skill 记录"""
-
-    user_id: str = Field(description="所属用户 ID")
-    name: str = Field(description="Skill 名称（唯一）")
-    display_name: str | None = Field(default=None, description="显示名称")
-    description: str = Field(default="", description="描述")
-    markdown: str = Field(default="", description="SKILL.md 内容")
-    tags: list[str] = Field(default_factory=list, description="标签")
-    author: str | None = Field(default=None, description="作者")
-    icon_url: str | None = Field(default=None, description="图标 URL")
-    hub_id: str | None = Field(default=None, description="来源 Hub ID")
-    card_id: str | None = Field(default=None, description="Hub 卡片 ID")
-    version: str | None = Field(default=None, description="版本")
-    enabled: bool = Field(default=True, description="是否启用")
-
-
-# ============================================================
-# Schedule 记录
-# ============================================================
-
-class ScheduleSource(str, Enum):
-    """调度来源"""
-    USER = "user"
-    SYSTEM = "system"
-
-
-class ScheduleRecord(_RecordBase):
-    """定时任务记录"""
-
-    user_id: str = Field(description="所属用户 ID")
-    agent_id: str = Field(description="关联 Agent ID")
-    session_id: str | None = Field(default=None, description="关联会话 ID")
-    name: str = Field(description="任务名称")
-    cron_expr: str = Field(description="Cron 表达式")
-    prompt: str = Field(description="触发时发送的提示词")
-    source: ScheduleSource = Field(
-        default=ScheduleSource.USER,
-        description="来源",
-    )
-    enabled: bool = Field(default=True, description="是否启用")
-    last_run_at: datetime | None = Field(default=None, description="上次执行时间")
-    next_run_at: datetime | None = Field(default=None, description="下次执行时间")
+# MCP 配置改由 configs/mcps.json（MCPConfigStore）文件驱动，运行时单一真源；
+# Skill 元数据改由 configs/skills.json（SkillConfigStore）文件驱动（管理平面）。
+# 二者均不再落库，故对应 Pydantic 记录模型已删除（见 core/mcp/config_store.py、
+# core/skill/config_store.py 的 *ConfigEntry）。

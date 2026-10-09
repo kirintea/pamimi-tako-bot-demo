@@ -10,7 +10,8 @@ import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
 import { skillApi } from '@/api/skill';
-import type { SkillInfo } from '@/api/types';
+import type { SkillInfo, CreateSkillRequest } from '@/api/types';
+import { UploadTab } from '@/components/skill/UploadTab';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Spinner } from '@/components/ui/spinner';
@@ -221,12 +222,12 @@ function SkillCard({ skill, onToggle, onDelete }: SkillCardProps) {
   return (
     <div
       className={cn(
-        'group relative min-h-[132px] rounded-[16px] border border-border bg-white dark:bg-[#303030] p-6 transition-shadow',
+        'group flex flex-col rounded-[16px] border border-border bg-white dark:bg-[#303030] transition-shadow',
         'hover:shadow-[0_1px_2px_rgba(24,25,28,0.05)]',
       )}
     >
-      {/* Top row */}
-      <div className="mt-0.5 flex items-center justify-between">
+      {/* Top row: icon + name + actions */}
+      <div className="flex items-center justify-between px-6 pt-5 pb-4">
         <div className="flex items-center gap-3">
           <div
             className={cn(
@@ -261,13 +262,24 @@ function SkillCard({ skill, onToggle, onDelete }: SkillCardProps) {
         </div>
       </div>
 
-      {/* Description */}
-      <p className="mt-4 line-clamp-2 text-xs text-[#9CA3AF]">
-        {skill.description || ' '}
-      </p>
+      {/* Divider */}
+      <div className="mx-6 border-t border-[#F3F4F6] dark:border-[#383838]" />
 
-      {/* Bottom row */}
-      <div className="absolute inset-x-6 bottom-4 flex items-center justify-between">
+      {/* Description — truncated, full text on hover */}
+      <div className="flex-1 px-6 py-4">
+        <p
+          className="line-clamp-3 text-xs leading-5 text-[#9CA3AF]"
+          title={skill.description || undefined}
+        >
+          {skill.description || ' '}
+        </p>
+      </div>
+
+      {/* Divider */}
+      <div className="mx-6 border-t border-[#F3F4F6] dark:border-[#383838]" />
+
+      {/* Bottom row: status + toggle */}
+      <div className="flex items-center justify-between px-6 py-4">
         <div className="flex items-center gap-2">
           <span
             className={cn(
@@ -298,7 +310,7 @@ function SkillCard({ skill, onToggle, onDelete }: SkillCardProps) {
 }
 
 // ---------------------------------------------------------------------------
-// InstallDialog — dual‑tab (form / paste)
+// InstallDialog — three tabs (form / paste / upload)
 // ---------------------------------------------------------------------------
 
 interface InstallDialogProps {
@@ -306,7 +318,7 @@ interface InstallDialogProps {
   onInstalled: () => Promise<void>;
 }
 
-type TabKey = 'form' | 'paste';
+type TabKey = 'form' | 'paste' | 'upload';
 
 function InstallDialog({ onClose, onInstalled }: InstallDialogProps) {
   const { t } = useTranslation();
@@ -401,11 +413,12 @@ function InstallDialog({ onClose, onInstalled }: InstallDialogProps) {
         </p>
 
         {/* Tab row */}
-        <div className="mt-5 flex h-8 w-[220px] gap-1 rounded-[8px] bg-[#F3F4F6] dark:bg-[#383838] p-1">
+        <div className="mt-5 flex h-8 w-[330px] gap-1 rounded-[8px] bg-[#F3F4F6] dark:bg-[#383838] p-1">
           {(
             [
               { key: 'form' as TabKey, label: t('skill.tabForm', { defaultValue: '表单' }) },
               { key: 'paste' as TabKey, label: t('skill.tabPaste', { defaultValue: '粘贴' }) },
+              { key: 'upload' as TabKey, label: t('skill.tabUpload', { defaultValue: '上传压缩包' }) },
             ] as const
           ).map((tb) => (
             <button
@@ -425,7 +438,7 @@ function InstallDialog({ onClose, onInstalled }: InstallDialogProps) {
         </div>
 
         {/* Tab content */}
-        {tab === 'form' ? (
+        {tab === 'form' && (
           <FormTab
             name={name}
             setName={setName}
@@ -438,28 +451,49 @@ function InstallDialog({ onClose, onInstalled }: InstallDialogProps) {
             iconName={iconName}
             setIconName={setIconName}
           />
-        ) : (
+        )}
+        {tab === 'paste' && (
           <PasteTab content={pasteContent} setContent={setPasteContent} />
         )}
+        {tab === 'upload' && (
+          <UploadTab
+            onInstall={async (data: CreateSkillRequest) => {
+              setSubmitting(true);
+              try {
+                await skillApi.create(data);
+                toast.success(t('skill.toastInstalled', { defaultValue: '技能已安装' }));
+                await onInstalled();
+              } catch (e) {
+                toast.error(t('skill.toastInstallFailed', { defaultValue: '安装失败' }));
+                throw e;
+              } finally {
+                setSubmitting(false);
+              }
+            }}
+            installing={submitting}
+          />
+        )}
 
-        {/* Footer */}
-        <div className="mt-6 flex justify-end gap-3">
-          <Button
-            variant="outline"
-            className="h-9 w-[110px] rounded-[8px] border border-border text-[14px] font-semibold hover:bg-[#F3F4F6] dark:bg-[#383838]"
-            onClick={onClose}
-          >
-            {t('common.cancel', { defaultValue: '取消' })}
-          </Button>
-          <Button
-            className="h-9 w-[110px] rounded-[8px] bg-primary text-[14px] font-semibold text-white hover:bg-primary-hover"
-            disabled={!canSubmit || submitting}
-            onClick={handleSubmit}
-          >
-            {submitting && <Loader2 className="mr-1 size-3.5 animate-spin" />}
-            {t('skill.installBtn', { defaultValue: '安装' })}
-          </Button>
-        </div>
+        {/* Footer — hidden for upload tab (it has its own install button) */}
+        {tab !== 'upload' && (
+          <div className="mt-6 flex justify-end gap-3">
+            <Button
+              variant="outline"
+              className="h-9 w-[110px] rounded-[8px] border border-border text-[14px] font-semibold hover:bg-[#F3F4F6] dark:bg-[#383838]"
+              onClick={onClose}
+            >
+              {t('common.cancel', { defaultValue: '取消' })}
+            </Button>
+            <Button
+              className="h-9 w-[110px] rounded-[8px] bg-primary text-[14px] font-semibold text-white hover:bg-primary-hover"
+              disabled={!canSubmit || submitting}
+              onClick={handleSubmit}
+            >
+              {submitting && <Loader2 className="mr-1 size-3.5 animate-spin" />}
+              {t('skill.installBtn', { defaultValue: '安装' })}
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   );

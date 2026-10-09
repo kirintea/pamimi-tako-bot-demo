@@ -11,8 +11,9 @@ import { ModelsPage } from './ModelsPage';
 import { McpSettingsPage } from './McpSettingsPage';
 import { SkillsSettingsPage } from './SkillsSettingsPage';
 import { SecurityPage } from './SecurityPage';
+import { ChannelsSettingsPage } from './ChannelsSettingsPage';
 
-const VALID_SECTIONS: SettingsSection[] = ['general', 'models', 'mcp', 'skills', 'security'];
+const VALID_SECTIONS: SettingsSection[] = ['general', 'models', 'mcp', 'skills', 'security', 'channels'];
 
 export function SettingsPage() {
 	const navigate = useNavigate();
@@ -35,6 +36,8 @@ export function SettingsPage() {
 				return <McpSettingsPage />;
 			case 'skills':
 				return <SkillsSettingsPage />;
+			case 'channels':
+				return <ChannelsSettingsPage />;
 			case 'security':
 				return <SecurityPage />;
 			default:

@@ -9,10 +9,10 @@
 # 重建镜像:   docker compose -f docker-compose.sandbox.yml build
 
 x-app-image: &app-image
-  image: platform-server-8090:0.1.0
+  image: pamimi-tako-bot-demo:0.2.1
 
 x-sandbox-image: &sandbox-image
-  image: platform-server-8090-sandbox:0.1.0
+  image: pamimi-tako-bot-demo-sandbox:0.2.1
 
 services:
   # ============================================================
@@ -20,7 +20,7 @@ services:
   # ============================================================
   app:
     <<: *app-image
-    container_name: platform-server-8090
+    container_name: pamimi-tako-bot-demo
     command: ["sleep", "infinity"]
     ports:
       - "8090:8090"
@@ -37,7 +37,7 @@ services:
       - DATABASE_URL=postgresql://user:password@host.docker.internal:5432/dmx_agent_db
       - OTEL_ENDPOINT=http://host.docker.internal:4317
       # 沙箱容器名（DockerSandboxProxy 用此名称连接沙箱）
-      - SANDBOX_CONTAINER=platform-sandbox
+      - SANDBOX_CONTAINER=pamimi-tako-bot-demo-sandbox
       # 沙箱模式: local（默认，不启用容器沙箱）/ docker（启用）
       - SANDBOX_BACKEND=${SANDBOX_BACKEND:-local}
     extra_hosts:
@@ -53,10 +53,14 @@ services:
   # ============================================================
   sandbox:
     <<: *sandbox-image
-    container_name: platform-sandbox
+    container_name: pamimi-tako-bot-demo-sandbox
     volumes:
       # 绑定挂载宿主机 workspaces/，与 app 容器共享同一目录
       - ./workspaces:/workspace/workspaces
+      # 双域防御纵深：agent_space 以只读挂入沙箱，
+      # 防止容器内 Bash/Python 工具越权改写 Agent 共享资产
+      # （PathGuard 是主机侧权威边界；此处为容器侧纵深防御，见方案 §4.1）
+      - ./workspaces/agent_space:/workspace/workspaces/agent_space:ro
     stdin_open: true
     tty: true
     environment:
@@ -66,8 +70,8 @@ services:
     command: ["sleep", "infinity"]
     restart: unless-stopped
     networks:
-      - platform-net
+      - pamimi-tako-bot-demo-net
 
 networks:
-  platform-net:
+  pamimi-tako-bot-demo-net:
     driver: bridge
