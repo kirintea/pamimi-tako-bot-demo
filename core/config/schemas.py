@@ -402,13 +402,8 @@ class AppConfig(BaseModel):
     server: ServerConfig = Field(default_factory=ServerConfig)
     auth: AuthConfig = Field(default_factory=AuthConfig, description="API 认证配置")
     agent: AgentConfig = Field(default_factory=AgentConfig)
-    mcp_servers: list[MCPConfig] | None = Field(default_factory=list, description="MCP 服务列表")
-
-    @field_validator("mcp_servers", mode="before")
-    @classmethod
-    def _coerce_mcp_servers(cls, v: Any) -> list[MCPConfig]:
-        """YAML 中 mcp_servers: 下全部注释时解析为 None，兜底为空列表。"""
-        return v if v is not None else []
+    # NOTE: MCP 配置不在 YAML 中 —— 唯一真源是 configs/mcps.json（见 core/mcp/config_store.py）。
+    # AppConfig 是 extra="forbid"，YAML 写 mcp_servers 会直接启动失败，避免「配了不生效」的静默陷阱。
 
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     redis: RedisConfig = Field(default_factory=RedisConfig)

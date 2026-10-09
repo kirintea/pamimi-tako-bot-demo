@@ -6,7 +6,8 @@
 - 替代数据库存储 MCP 安装配置，改为 JSON 文件（指定路径）
 - 单一真源：运行时 AgentFactory 加载 MCP 客户端直接读此文件，
   REST 端点 /mcp 也读写此文件，不再使用数据库
-- 配置文件不存在时：若传入 seed（来自 YAML mcp_servers）则写入，否则生成空默认文件
+- YAML 不参与 MCP 导入（AppConfig 无 mcp_servers 字段，写入即启动失败）
+- 配置文件不存在时生成空默认文件，由前端 / REST /mcp 填充
 - 配置文件路径可通过环境变量 MCPS_CONFIG_PATH 覆盖
 
 注意：MCP 为按需连接（stdio 子进程每实例独立 / HTTP 无状态），无 channels 那样的多实例
@@ -105,6 +106,44 @@ class MCPConfigEntry:
 
 
 # ============================================================
+# 连接字段校验（API / 前端共用的判定规则）
+# ============================================================
+
+_HTTP_FAMILY = frozenset({"http", "https", "sse", "streamable_http", "streamablehttp"})
+
+
+def normalize_transport(transport: str | None) -> str:
+    """归一传输别名：大小写不敏感，连字符视作下划线。"""
+    return (transport or "").strip().lower().replace("-", "_")
+
+
+def validate_connection_fields(
+    transport: str | None,
+    command: str | None = None,
+    url: str | None = None,
+) -> str | None:
+    """校验连接字段完整性，返回错误信息；None 表示通过。
+
+    - stdio 必须有 command
+    - http 族（http / https / sse / streamable_http / streamableHttp）必须有 url
+    - 未知 transport 拒绝
+
+    用于阻止"只存名字、连接字段全空"的空壳记录（该记录会静默影子掉
+    YAML 中的同名有效配置，导致 Agent 永远拿不到 MCP 工具）。
+    """
+    t = normalize_transport(transport)
+    if t == "stdio":
+        if not (command or "").strip():
+            return "stdio 类型必须提供 command（启动命令）"
+        return None
+    if t in _HTTP_FAMILY:
+        if not (url or "").strip():
+            return f"{transport} 类型必须提供 url（服务地址）"
+        return None
+    return f"未知 transport '{transport}'（支持 stdio / http / sse / streamable_http）"
+
+
+# ============================================================
 # 模块级同步读取（供 ConfigManager 在启动时同步加载）
 # ============================================================
 
@@ -136,11 +175,9 @@ class MCPConfigStore:
         self,
         config_path: str | None = None,
         on_change: Callable[[], Any] | None = None,
-        seed_mcp_configs: list[MCPConfig] | None = None,
     ) -> None:
         self._path = config_path or MCPS_CONFIG_PATH
         self._on_change = on_change
-        self._seed = seed_mcp_configs or []
         self._entries: dict[str, MCPConfigEntry] = {}
         self._mtime: float = 0.0
         self._lock = asyncio.Lock()
@@ -250,30 +287,11 @@ class MCPConfigStore:
             logger.exception("MCPConfigStore: 写入配置文件失败")
 
     async def _create_default_config(self) -> None:
-        """配置文件不存在时生成默认文件（优先用 seed 写入既有 YAML 配置）"""
+        """配置文件不存在时生成空默认文件（由前端 / REST /mcp 填充）"""
         try:
-            default_entries: list[MCPConfigEntry] = []
-            for cfg in self._seed:
-                default_entries.append(
-                    MCPConfigEntry(
-                        name=cfg.name,
-                        transport=cfg.transport,
-                        command=cfg.command,
-                        args=list(cfg.args or []),
-                        url=cfg.url,
-                        headers=dict(cfg.headers or {}),
-                        enabled=True,
-                    )
-                )
-            self._entries = {e.name: e for e in default_entries}
+            self._entries = {}
             await self._save_config()
-            if default_entries:
-                logger.info(
-                    "MCPConfigStore: 已从 YAML 迁移 {} 条 MCP 配置到 {}",
-                    len(default_entries), self._path,
-                )
-            else:
-                logger.info("MCPConfigStore: 已生成默认空配置文件 {}", self._path)
+            logger.info("MCPConfigStore: 已生成默认空配置文件 {}", self._path)
         except Exception:  # noqa: BLE001
             logger.exception("MCPConfigStore: 生成默认配置文件失败")
 

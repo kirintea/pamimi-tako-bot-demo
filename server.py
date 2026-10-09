@@ -351,31 +351,25 @@ def create_app(config) -> FastAPI:
         logger.info("渠道管理器已就绪（已拉起启用中的渠道）")
 
         # 创建 MCP 配置存储（JSON 文件驱动，单一真源）
-        # 首次启动若配置文件不存在，则从 YAML mcp_servers 一次性迁移写入。
-        # 之后运行时 AgentFactory 直接读取此文件（覆盖 YAML），REST /mcp 也读写此文件。
+        # YAML 不参与 MCP 导入（AppConfig 无 mcp_servers 字段）。AgentFactory 在创建
+        # 会话时直接读取此文件，REST /mcp 也读写此文件。
         from core.mcp.config_store import MCPConfigStore
 
-        # on_change：mcps.json 被外部编辑或 REST 写入后，把最新启用配置同步进运行时
-        # config.mcp_servers（新会话生效；已有会话仍用启动时加载的客户端）。
+        # on_change：mcps.json 被外部编辑或 REST 写入后记录日志。
+        # 新建会话时 AgentFactory 直接读文件，天然取到最新配置；已有会话仍用创建时的客户端。
         async def _on_mcp_change() -> None:
-            config.mcp_servers = mcp_config_store.get_mcp_configs()
             logger.info(
-                "MCPConfigStore: 配置变更，已热更新运行时（{} 条启用）",
-                len(config.mcp_servers),
+                "MCPConfigStore: 配置变更（{} 条启用），新建会话时生效",
+                len(mcp_config_store.get_mcp_configs()),
             )
 
-        mcp_config_store = MCPConfigStore(
-            seed_mcp_configs=config.mcp_servers,
-            on_change=_on_mcp_change,
-        )
+        mcp_config_store = MCPConfigStore(on_change=_on_mcp_change)
         await mcp_config_store.start()
-        # 运行时单一真源：用文件中的 MCP 配置覆盖 YAML 值
-        config.mcp_servers = mcp_config_store.get_mcp_configs()
         app.state.mcp_config_store = mcp_config_store
         logger.info(
             "MCP 配置存储已就绪（配置文件: {}，{} 条启用）",
             mcp_config_store._path,
-            len(config.mcp_servers),
+            len(mcp_config_store.get_mcp_configs()),
         )
 
         # 创建 Skill 配置存储（JSON 文件驱动，管理平面元数据 + 目录自动同步）

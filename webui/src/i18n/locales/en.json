@@ -790,6 +790,8 @@
 		"disabledLabel": "Disabled",
 		"loadError": "Failed to load MCP list",
 		"nameRequired": "Please enter a service name",
+		"commandRequired": "stdio transport requires a start command",
+		"urlRequired": "HTTP transport requires a URL",
 		"updateSuccess": "MCP service updated",
 		"createSuccess": "MCP service added",
 		"saveError": "Save failed, please retry",

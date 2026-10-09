@@ -790,6 +790,8 @@
 		"disabledLabel": "已停用",
 		"loadError": "加载 MCP 列表失败",
 		"nameRequired": "请输入服务名称",
+		"commandRequired": "stdio 类型需要填写启动命令",
+		"urlRequired": "HTTP 类型需要填写 URL",
 		"updateSuccess": "MCP 服务已更新",
 		"createSuccess": "MCP 服务已添加",
 		"saveError": "保存失败，请重试",

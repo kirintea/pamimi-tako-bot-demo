@@ -5,7 +5,7 @@
 # endpoint: OTLP gRPC 上报地址（Jaeger / OTEL Collector）
 # channel:  消息渠道 Resource tag，多渠道部署时按实例区分（web / feishu / wechat）
 otel:
-  enabled: false
+  enabled: true
   endpoint: "${OTEL_ENDPOINT:-http://localhost:4317}"
   service_name: "platform-agent"
   service_version: "0.1.0"
@@ -80,7 +80,7 @@ agent:
   tool_guard:
     enabled: false
     mode: "allowlist" # allowlist | blocklist
-    tools: []
+    tools: ["Skill"]
 
   command_guard:
     enabled: true
@@ -100,22 +100,9 @@ agent:
   tool_manager:
     config_path: "configs/tools.yaml"
 
-# MCP 服务列表（可选，取消注释即启用；对应 API Key 见 .env.example 第 8 节）
-mcp_servers:
-  # - name: "baidu-maps"
-  #   transport: "http"
-  #   url: "https://mcp.api-inference.modelscope.net/20cc3a3b3d6740/mcp"
-  #   headers:
-  #     Authorization: "Bearer ${BAIDU_MAPS_API_KEY:-}"
-  # - name: "market-cmgjmcp00074997"
-  #   transport: "http"
-  #   url: "https://dashscope.aliyuncs.com/api/v1/mcps/market-cmgjmcp00074997/mcp"
-  #   headers:
-  #     Authorization: "Bearer ${DASHSCOPE_API_KEY:-}"
-  # - name: "filesystem"
-  #   transport: "stdio"
-  #   command: "npx"
-  #   args: ["-y", "@modelcontextprotocol/server-filesystem", "/workspace"]
+# MCP 服务不在 YAML 中配置 —— 唯一真源是 configs/mcps.json
+# （前端 /webui 或 REST /mcp 管理，保存即热加载，新建会话生效）
+# 注意：AppConfig 为 extra="forbid"，此处写 mcp_servers 会直接启动失败。
 
 database:
   # ------------------------------------------------------------

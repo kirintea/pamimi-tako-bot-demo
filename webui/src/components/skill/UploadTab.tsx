@@ -208,13 +208,32 @@ export function UploadTab({ onInstall, installing = false }: UploadTabProps) {
       return;
     }
 
-    // 打包所有文件为 Record<string, string>（只处理文本文件）
+    // 检测并剥离公共根目录前缀
+    // 避免后端 skill_dir / file_path 时多嵌套一层
+    let commonPrefix = '';
+    if (archiveFiles.length > 0) {
+      const firstParts = archiveFiles[0].path.split('/');
+      if (firstParts.length > 1) {
+        const candidate = firstParts[0] + '/';
+        const allHavePrefix = archiveFiles.every(af => af.path.startsWith(candidate));
+        if (allHavePrefix) {
+          commonPrefix = candidate;
+        }
+      }
+    }
+
+    // 打包所有文件为 Record<string, string>（只处理文本文件，跳过 SKILL.md 因为后端已单独写入）
     const filesRecord: Record<string, string> = {};
     let skippedBinary = 0;
 
     for (const af of archiveFiles) {
-      if (isTextFile(af.path)) {
-        filesRecord[af.path] = new TextDecoder().decode(af.content);
+      const relativePath = commonPrefix ? af.path.slice(commonPrefix.length) : af.path;
+      // SKILL.md 由后端 _create_skill_file 单独写入，跳过以避免重复
+      if (relativePath === 'SKILL.md' || relativePath.endsWith('/SKILL.md')) {
+        continue;
+      }
+      if (isTextFile(relativePath)) {
+        filesRecord[relativePath] = new TextDecoder().decode(af.content);
       } else {
         skippedBinary++;
       }

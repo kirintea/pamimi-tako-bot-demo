@@ -81,6 +81,9 @@ class TestPermissionConfigSchema:
 class TestPermissionSetup:
     """验证 PermissionContext 注入逻辑"""
 
+    # AgentFactory.create 为异步接口，需 asyncio 事件循环
+    pytestmark = pytest.mark.asyncio(loop_scope="session")
+
     def _make_config(self, **overrides):
         """构建最小 AppConfig"""
         from core.config.schemas import (
@@ -104,33 +107,33 @@ class TestPermissionSetup:
         defaults.update(overrides)
         return AppConfig(**defaults)
 
-    def test_permission_mode_bypass(self):
+    async def test_permission_mode_bypass(self):
         from agentscope.permission import PermissionMode
 
         config = self._make_config()
         config.agent.permission.mode = "bypass"
 
         from core.agent.factory import AgentFactory
-        agent = AgentFactory.create(config)
+        agent = await AgentFactory.create(config)
 
         perm_ctx = getattr(agent.state, "permission_context", None)
         if perm_ctx is not None:
             assert perm_ctx.mode == PermissionMode.BYPASS
 
-    def test_permission_mode_default(self):
+    async def test_permission_mode_default(self):
         from agentscope.permission import PermissionMode
 
         config = self._make_config()
         config.agent.permission.mode = "default"
 
         from core.agent.factory import AgentFactory
-        agent = AgentFactory.create(config)
+        agent = await AgentFactory.create(config)
 
         perm_ctx = getattr(agent.state, "permission_context", None)
         if perm_ctx is not None:
             assert perm_ctx.mode == PermissionMode.DEFAULT
 
-    def test_deny_rules_injected(self):
+    async def test_deny_rules_injected(self):
         from core.config.schemas import PermissionRuleEntry
 
         config = self._make_config()
@@ -149,7 +152,7 @@ class TestPermissionSetup:
         ]
 
         from core.agent.factory import AgentFactory
-        agent = AgentFactory.create(config)
+        agent = await AgentFactory.create(config)
 
         perm_ctx = getattr(agent.state, "permission_context", None)
         if perm_ctx is not None:
@@ -158,7 +161,7 @@ class TestPermissionSetup:
             assert "Write" in perm_ctx.deny_rules
             assert len(perm_ctx.deny_rules["Write"]) >= 1
 
-    def test_allow_rules_injected(self):
+    async def test_allow_rules_injected(self):
         from core.config.schemas import PermissionRuleEntry
 
         config = self._make_config()
@@ -172,7 +175,7 @@ class TestPermissionSetup:
         ]
 
         from core.agent.factory import AgentFactory
-        agent = AgentFactory.create(config)
+        agent = await AgentFactory.create(config)
 
         perm_ctx = getattr(agent.state, "permission_context", None)
         if perm_ctx is not None:

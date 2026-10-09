@@ -59,7 +59,18 @@ class TestAppConfig:
         )
         assert cfg.server.port == 8090
         assert cfg.agent.name == "platform_agent"
-        assert cfg.mcp_servers == []
+
+    def test_mcp_servers_rejected(self):
+        """MCP 唯一真源是 configs/mcps.json —— YAML 写 mcp_servers 必须启动失败"""
+        import pytest
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            AppConfig(
+                otel=OTelConfig(endpoint="http://localhost:4317", environment="dev"),
+                llm=LLMConfig(api_key="sk-xxx", base_url="http://llm/v1", model="glm-5"),
+                mcp_servers=[],
+            )
 
 
 # ============================================================

@@ -70,7 +70,9 @@ agent:
       - "certutil*"             # 拦截 Windows 下载
       - "curl *|*"              # 拦截 curl 管道 (curl 下载可以，管道不行)
 
-mcp_servers: []
+# MCP 服务不在 YAML 中配置 —— 唯一真源是 configs/mcps.json
+# （前端 /webui 或 REST /mcp 管理，保存即热加载，新建会话生效）
+# 注意：AppConfig 为 extra="forbid"，此处写 mcp_servers 会直接启动失败。
 
 database:
   # ------------------------------------------------------------
