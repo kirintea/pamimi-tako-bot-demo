@@ -7,8 +7,8 @@
 otel:
   enabled: true
   endpoint: "${OTEL_ENDPOINT:-http://localhost:4317}"
-  service_name: "platform-agent"
-  service_version: "0.1.0"
+  service_name: "pamimi-tako-bot-demo"
+  service_version: "0.2.1"
   environment: "development"
   channel: "${OTEL_CHANNEL:-web}"
   headers: {}
@@ -43,7 +43,7 @@ server:
   log_backup_count: 7
 
 agent:
-  name: "platform_agent"
+  name: "pamimi_tako_bot_demo"
   # 系统提示词（从 configs/prompt.py 加载，修改提示词编辑该文件即可）
   system_prompt:
     module_path: "configs.prompt"
@@ -65,7 +65,7 @@ agent:
     context_buffer_ratio: 0.15            # 压缩阈值前 15% 开始预警
     emit_hint_event: true                 # 前端可渲染注入内容
     extra_fields:
-      platform: "AgentScope Platform Server"
+      platform: "Pamimi Tako Bot Demo"
 
   permission_mode: "bypass"
   # 沙箱配置（双域布局：agent_space/ 共享只读 + user_spaces/{user_id}/ 私有可读写）
@@ -122,7 +122,7 @@ database:
 
 redis:
   url: "${REDIS_URL:-redis://localhost:6379/0}"
-  key_prefix: "agentscope:session:"
+  key_prefix: "dmx_agent_redis:session:"
   session_ttl: 1800
 
 # KV 存储（会话状态 / 元数据持久化层）
@@ -161,7 +161,7 @@ middleware:
 sandbox:
   # backend: "${SANDBOX_BACKEND:-local}"
   backend: "docker"
-  container: "platform-sandbox"
+  container: "pamimi-tako-bot-demo-sandbox"
   project_root: "/workspace"
   # 额外挂载（宿主机路径 → 容器内路径）
   # ⚠ host 路径需与 agent.sandbox_skills 的实际加载路径一致：

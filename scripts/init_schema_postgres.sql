@@ -1,5 +1,5 @@
 -- ============================================================
--- AgentScope Platform Server — PostgreSQL 建表脚本
+-- Pamimi Tako Bot Demo — PostgreSQL 建表脚本
 -- 数据库: dmx_agent_db
 -- 执行方式: psql -h <host> -U <user> -d dmx_agent_db -f init_schema_postgres.sql
 -- 说明: 所有 CREATE TABLE 均带 IF NOT EXISTS，可重复执行

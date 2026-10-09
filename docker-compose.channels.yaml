@@ -1,0 +1,38 @@
+# docker-compose.channels.yaml — 带渠道依赖的应用服务编排
+# 包含企业微信等渠道所需的额外依赖
+#
+# 容器启动:   docker compose -f docker-compose.channels.yaml up -d
+# 容器停止:   docker compose -f docker-compose.channels.yaml down
+# 进入容器:   docker compose -f docker-compose.channels.yaml exec app bash
+# 启动服务:   docker compose -f docker-compose.channels.yaml exec app python main.py
+# 重建镜像:   docker compose -f docker-compose.channels.yaml build && docker compose -f docker-compose.channels.yaml up -d
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.channels
+    image: pamimi-tako-bot-demo-channels:0.2.1
+    container_name: pamimi-tako-bot-demo-channels
+    ports:
+      - "8090:8090"
+    volumes:
+      # 代码外挂 — 宿主机项目目录挂载到容器 /workspace
+      - .:/workspace
+    stdin_open: true
+    tty: true
+    environment:
+      - APP_ENV=${APP_ENV:-dev}
+      # 数据库地址指向宿主机（docker/deploy_yml/ 中的服务映射到 localhost）
+      - REDIS_URL=redis://host.docker.internal:6390/0
+      - DATABASE_URL=postgresql://user:password@host.docker.internal:5432/dmx_agent_db
+      - OTEL_ENDPOINT=http://host.docker.internal:4317
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    networks:
+      - pamimi-tako-bot-demo-net
+
+networks:
+  pamimi-tako-bot-demo-net:
+    driver: bridge

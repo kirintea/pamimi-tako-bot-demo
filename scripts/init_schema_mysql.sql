@@ -1,5 +1,5 @@
 -- ============================================================
--- AgentScope Platform Server — MySQL 建表脚本
+-- Pamimi Tako Bot Demo — MySQL 建表脚本
 -- 数据库: dmx_agent_db (MySQL >= 5.7.22)
 -- 执行方式: mysql -h <host> -u <user> -p dmx_agent_db < init_schema_mysql.sql
 -- 说明: CREATE TABLE 带 IF NOT EXISTS；索引重复创建会报 1061 可忽略

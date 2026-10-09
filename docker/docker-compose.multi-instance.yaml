@@ -1,18 +1,18 @@
 # docker-compose.multi-instance.yaml
-# 多实例部署：N 个 platform-server + Nginx 负载均衡 + Redis + PostgreSQL
+# 多实例部署：N 个 pamimi-tako-bot-demo + Nginx 负载均衡 + Redis + PostgreSQL
 #
 # 启动（默认 2 副本）：
 #   cd docker
 #   docker compose -f docker-compose.multi-instance.yaml up -d
 #
 # 指定副本数：
-#   docker compose -f docker-compose.multi-instance.yaml up -d --scale platform-server=3
+#   docker compose -f docker-compose.multi-instance.yaml up -d --scale pamimi-tako-bot-demo=3
 #
 # 停止：
 #   docker compose -f docker-compose.multi-instance.yaml down
 #
 # 查看日志：
-#   docker compose -f docker-compose.multi-instance.yaml logs -f platform-server
+#   docker compose -f docker-compose.multi-instance.yaml logs -f pamimi-tako-bot-demo
 
 services:
   # ============================================================
@@ -26,15 +26,15 @@ services:
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
-      - platform-server
+      - pamimi-tako-bot-demo
     restart: unless-stopped
     networks:
-      - platform-net
+      - pamimi-tako-bot-demo-net
 
   # ============================================================
-  # Platform Server — 可水平扩展
+  # Pamimi Tako Bot Demo — 可水平扩展
   # ============================================================
-  platform-server:
+  pamimi-tako-bot-demo:
     build:
       context: ..
       dockerfile: Dockerfile
@@ -109,7 +109,7 @@ services:
       start_period: 10s
     restart: unless-stopped
     networks:
-      - platform-net
+      - pamimi-tako-bot-demo-net
 
 volumes:
   redis-data:

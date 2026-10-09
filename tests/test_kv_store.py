@@ -39,7 +39,7 @@ async def test_delete(kv):
 
 async def test_scan_keys_glob(kv):
     await kv.ping()
-    prefix = "agentscope:session:"
+    prefix = "dmx_agent_redis:session:"
     await kv.set(f"{prefix}u1:s1:meta", "{}")
     await kv.set(f"{prefix}u1:s2:meta", "{}")
     await kv.set(f"{prefix}u2:s3:meta", "{}")

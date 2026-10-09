@@ -20,8 +20,10 @@ WORKDIR /workspace
 
 # 先只拷依赖文件，利用 Docker 缓存层
 COPY requirements.txt .
+COPY requirements-channels.txt .
 RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple \
-    && pip install --no-cache-dir -r requirements.txt
+    && pip install --no-cache-dir -r requirements.txt \
+    && pip install --no-cache-dir -r requirements-channels.txt
 
 # 拷贝应用代码（利用 .dockerignore 排除无关文件）
 COPY main.py server.py ./
