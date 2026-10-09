@@ -98,7 +98,10 @@ class SessionManager:
         logger.info("SessionManager: KV 存储就绪 (backend={})", kv_cfg.backend)
 
     async def shutdown(self) -> None:
-        """关闭 KV 存储。"""
+        """关闭 KV 存储，并释放所有会话的有状态 MCP 连接。"""
+        for entry in list(self._sessions.values()):
+            await AgentFactory.close_mcp_clients(entry.agent)
+        self._sessions.clear()
         if self._kv:
             await self._kv.aclose()
             self._kv = None
@@ -166,7 +169,7 @@ class SessionManager:
                     logger.debug("SessionManager: 用户懒注册失败（已忽略）")
 
             # 创建 Agent 实例（恢复状态 + user_id 沙箱隔离 + role 权限域）
-            agent = AgentFactory.create(
+            agent = await AgentFactory.create(
                 self._config, state=saved_state, user_id=user_id, role=role,
             )
             entry = SessionEntry(
@@ -575,6 +578,7 @@ class SessionManager:
         if entry:
             # 先保存最终状态到 KV（可选：也可直接删除）
             await self._save_state(user_id, session_id, entry.agent)
+            await AgentFactory.close_mcp_clients(entry.agent)
             logger.info("移除会话: user={} session={}", user_id, session_id)
             return True
         return False
@@ -833,7 +837,10 @@ class SessionManager:
         """
         key = (user_id, session_id)
         async with self._lock:
-            self._sessions.pop(key, None)
+            entry = self._sessions.pop(key, None)
+
+        if entry is not None:
+            await AgentFactory.close_mcp_clients(entry.agent)
 
         deleted = False
         if self._kv:
@@ -969,5 +976,6 @@ class SessionManager:
             # 过期前保存状态到 KV（TTL 会续期）
             entry = self._sessions.pop(key)
             await self._save_state(uid, sid, entry.agent)
+            await AgentFactory.close_mcp_clients(entry.agent)
             logger.info("清理过期会话: user={} session={}", uid, sid)
         return len(expired)

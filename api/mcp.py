@@ -19,10 +19,8 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
-from core.mcp.config_store import MCPConfigEntry
+from core.mcp.config_store import MCPConfigEntry, validate_connection_fields
 from core.validators import is_auth_enabled, require_user_id
-
-from loguru import logger
 
 router = APIRouter(prefix="/mcp", tags=["mcp"])
 
@@ -118,18 +116,6 @@ _REQUIRES_NEW_SESSION_NOTE = (
 )
 
 
-def _refresh_runtime_mcp(request: Request) -> None:
-    """把文件中的 MCP 配置同步进运行时 config.mcp_servers（新会话生效；老会话不变）。"""
-    config = getattr(request.app.state, "config", None)
-    if config is None:
-        return
-    store = request.app.state.mcp_config_store
-    try:
-        config.mcp_servers = store.get_mcp_configs()
-    except Exception as e:  # noqa: BLE001
-        logger.warning("刷新运行时 MCP 配置失败（下次重启生效）: {}", e)
-
-
 # ============================================================
 # 端点
 # ============================================================
@@ -162,6 +148,11 @@ async def create_mcp(
     require_user_id(user_id, is_auth_enabled(config))
     store = request.app.state.mcp_config_store
 
+    # 连接字段完整性校验：拒绝只存名字的空壳记录（否则会静默影子掉 YAML 同名配置）
+    err = validate_connection_fields(body.transport, body.command, body.url)
+    if err:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=err)
+
     if store.get_by_name(body.name):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -180,7 +171,6 @@ async def create_mcp(
         enabled=True,
     )
     await store.upsert(entry)
-    _refresh_runtime_mcp(request)
     created = store.get_by_name(body.name)
     resp = _entry_to_response(created)
     resp.note = _REQUIRES_NEW_SESSION_NOTE
@@ -223,7 +213,6 @@ async def update_mcp(
         entry.description = body.description
 
     await store.upsert(entry)
-    _refresh_runtime_mcp(request)
     resp = _entry_to_response(entry)
     resp.note = _REQUIRES_NEW_SESSION_NOTE
     return resp
@@ -245,7 +234,6 @@ async def delete_mcp(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"MCP '{mcp_id}' 不存在",
         )
-    _refresh_runtime_mcp(request)
     return ActionResponse(
         ok=True,
         message=f"MCP '{mcp_id}' 已删除",
