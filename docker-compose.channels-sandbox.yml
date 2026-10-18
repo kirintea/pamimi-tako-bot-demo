@@ -1,0 +1,111 @@
+# docker-compose.channels-sandbox.yml — 前端编译 + 渠道 + 沙箱分离部署
+# webui 使用 Dockerfile.webui（Node 24 容器内编译前端）
+# app 使用 Dockerfile.channels（含渠道依赖），sandbox 使用 Dockerfile.sandbox
+#
+# 启动:       docker compose -f docker-compose.channels-sandbox.yml up -d
+# 停止:       docker compose -f docker-compose.channels-sandbox.yml down
+# 查看日志:   docker compose -f docker-compose.channels-sandbox.yml logs -f app
+# 进入 app:   docker compose -f docker-compose.channels-sandbox.yml exec app bash
+# 进入沙箱:   docker compose -f docker-compose.channels-sandbox.yml exec sandbox bash
+# 查看编译:   docker compose -f docker-compose.channels-sandbox.yml logs webui
+# 重建镜像:   docker compose -f docker-compose.channels-sandbox.yml build
+
+x-app-image: &app-image
+  image: pamimi-tako-bot-channels:0.2.1
+
+x-sandbox-image: &sandbox-image
+  image: pamimi-tako-bot-sandbox:0.2.1
+
+x-webui-image: &webui-image
+  image: pamimi-tako-bot-webui:0.2.1
+
+services:
+  # ============================================================
+  # 前端编译 — Node 24 容器内执行 npm install + npm run build
+  # 产物 webui/dist/ 落在宿主机，app 通过 volume 挂载直接使用
+  # 首次启动或 node_modules 缺失时自动 npm install，后续跳过
+  # ============================================================
+  webui:
+    <<: *webui-image
+    build:
+      context: .
+      dockerfile: Dockerfile.webui
+    container_name: pamimi-tako-bot-webui
+    volumes:
+      - ./webui:/app
+    stdin_open: true
+    tty: true
+    networks:
+      - pamimi-tako-bot-net
+
+  # ============================================================
+  # 应用服务 — 渠道版（含飞书/微信等渠道依赖）+ Docker 沙箱支持
+  # ============================================================
+  app:
+    <<: *app-image
+    build:
+      context: .
+      dockerfile: Dockerfile.channels
+    container_name: pamimi-tako-bot-channels
+    # 容器启动即运行 main.py（开发调试时可改为 ["sleep", "infinity"] 手动启动）
+    command: ["python", "main.py"]
+    ports:
+      - "8090:8090"
+    volumes:
+      # 代码外挂 — 完整项目
+      - .:/workspace
+      # 挂载 Docker Socket — 让 app 容器能管理 sandbox 容器
+      - /var/run/docker.sock:/var/run/docker.sock
+    stdin_open: true
+    tty: true
+    environment:
+      - APP_ENV=${APP_ENV:-dev}
+      # 数据库地址（按实际环境修改）
+      - REDIS_URL=${REDIS_URL:-redis://192.168.5.220:6379/0}
+      - DATABASE_URL=${DATABASE_URL:-mysql://user:password@192.168.5.220:3306/dmx_agent_db}
+      - OTEL_ENDPOINT=${OTEL_ENDPOINT:-http://192.168.5.220:4317}
+      # 渠道标识（OTel Resource tag，区分 web / feishu / wechat 等）
+      - OTEL_CHANNEL=${OTEL_CHANNEL:-web}
+      # 沙箱配置
+      - SANDBOX_CONTAINER=pamimi-tako-bot-sandbox
+      - SANDBOX_BACKEND=${SANDBOX_BACKEND:-local}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      webui:
+        condition: service_completed_successfully
+      sandbox:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - pamimi-tako-bot-net
+
+  # ============================================================
+  # 沙箱容器 — 只暴露 workspaces/，不可见项目源码和配置
+  # ============================================================
+  sandbox:
+    <<: *sandbox-image
+    build:
+      context: .
+      dockerfile: Dockerfile.sandbox
+    container_name: pamimi-tako-bot-sandbox
+    volumes:
+      # 绑定挂载宿主机 workspaces/，与 app 容器共享同一目录
+      - ./workspaces:/workspace/workspaces
+      # 双域防御纵深：agent_space 以只读挂入沙箱，
+      # 防止容器内 Bash/Python 工具越权改写 Agent 共享资产
+      - ./workspaces/agent_space:/workspace/workspaces/agent_space:ro
+    stdin_open: true
+    tty: true
+    environment:
+      - APP_ENV=${APP_ENV:-dev}
+    working_dir: /workspace/workspaces
+    # 保持容器运行
+    command: ["sleep", "infinity"]
+    restart: unless-stopped
+    networks:
+      - pamimi-tako-bot-net
+
+networks:
+  pamimi-tako-bot-net:
+    driver: bridge

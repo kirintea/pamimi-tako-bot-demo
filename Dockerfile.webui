@@ -1,0 +1,10 @@
+FROM node:24-bookworm-slim
+
+WORKDIR /app
+
+# 基础镜像 — 源码通过 volume 挂载 (./webui:/app)
+# install + build 由 docker-compose command 驱动
+CMD ["sh", "-c", "\
+    if [ ! -d node_modules ]; then \
+        npm install --registry=https://registry.npmmirror.com; \
+    fi && npm run build"]

@@ -1,0 +1,101 @@
+# docker-compose.channels-sandbox-2.yml — 第二个 Agent 实例（与原实例互不干扰）
+# 复用同一套镜像，容器名/端口/网络均与 docker-compose.channels-sandbox.yml 错开
+#
+# 启动:       docker compose -f docker-compose.channels-sandbox-2.yml up -d
+# 停止:       docker compose -f docker-compose.channels-sandbox-2.yml down
+# 查看日志:   docker compose -f docker-compose.channels-sandbox-2.yml logs -f app
+# 进入 app:   docker compose -f docker-compose.channels-sandbox-2.yml exec app bash
+# 进入沙箱:   docker compose -f docker-compose.channels-sandbox-2.yml exec sandbox bash
+# 查看编译:   docker compose -f docker-compose.channels-sandbox-2.yml logs webui
+# 重建镜像:   docker compose -f docker-compose.channels-sandbox-2.yml build
+
+x-app-image: &app-image
+  image: pamimi-tako-bot-channels:0.2.1
+
+x-sandbox-image: &sandbox-image
+  image: pamimi-tako-bot-sandbox:0.2.1
+
+x-webui-image: &webui-image
+  image: pamimi-tako-bot-webui:0.2.1
+
+services:
+  # ============================================================
+  # 前端编译 — 第二个实例独立编译（产物挂载到各自的 app）
+  # ============================================================
+  webui:
+    <<: *webui-image
+    build:
+      context: .
+      dockerfile: Dockerfile.webui
+    container_name: pamimi-tako-bot-webui-2
+    volumes:
+      - ./webui:/app
+    stdin_open: true
+    tty: true
+    networks:
+      - pamimi-tako-bot-net-2
+
+  # ============================================================
+  # 应用服务 — 第二个实例（端口 8091，容器名 -2 后缀）
+  # ============================================================
+  app:
+    <<: *app-image
+    build:
+      context: .
+      dockerfile: Dockerfile.channels
+    container_name: pamimi-tako-bot-channels-2
+    command: ["python", "main.py"]
+    ports:
+      - "8091:8090"
+    volumes:
+      - .:/workspace
+      - /var/run/docker.sock:/var/run/docker.sock
+    stdin_open: true
+    tty: true
+    environment:
+      - APP_ENV=${APP_ENV:-dev}
+      # 数据库 — 与原实例共享同一 DB，会话靠 user_id+session_id 隔离
+      - REDIS_URL=${REDIS_URL:-redis://192.168.5.220:6379/0}
+      - DATABASE_URL=${DATABASE_URL:-mysql://user:password@192.168.5.220:3306/dmx_agent_db}
+      - OTEL_ENDPOINT=${OTEL_ENDPOINT:-http://192.168.5.220:4317}
+      # 渠道标识 — 区分两个实例的 OTel 追踪
+      - OTEL_CHANNEL=${OTEL_CHANNEL:-webtest}
+      # 沙箱配置 — 指向本实例的沙箱容器
+      - SANDBOX_CONTAINER=pamimi-tako-bot-sandbox-2
+      - SANDBOX_BACKEND=${SANDBOX_BACKEND:-local}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      webui:
+        condition: service_completed_successfully
+      sandbox:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - pamimi-tako-bot-net-2
+
+  # ============================================================
+  # 沙箱容器 — 第二个实例独立沙箱
+  # ============================================================
+  sandbox:
+    <<: *sandbox-image
+    build:
+      context: .
+      dockerfile: Dockerfile.sandbox
+    container_name: pamimi-tako-bot-sandbox-2
+    volumes:
+      - ./workspaces:/workspace/workspaces
+      - ./workspaces/agent_space:/workspace/workspaces/agent_space:ro
+    stdin_open: true
+    tty: true
+    environment:
+      - APP_ENV=${APP_ENV:-dev}
+    working_dir: /workspace/workspaces
+    command: ["sleep", "infinity"]
+    restart: unless-stopped
+    networks:
+      - pamimi-tako-bot-net-2
+
+networks:
+  pamimi-tako-bot-net-2:
+    driver: bridge
