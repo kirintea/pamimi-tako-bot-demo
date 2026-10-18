@@ -160,7 +160,10 @@
 		"scrollToBottom": "Scroll to bottom",
 		"header": {
 			"toggleSidebar": "Toggle sidebar",
-			"toggleTheme": "Toggle theme"
+			"toggleTheme": "Toggle theme",
+			"sessionId": "Session ID",
+			"copySessionId": "Copy session ID",
+			"sessionIdCopied": "Copied"
 		},
 		"promptNavigator": {
 			"open": "Open prompt navigator",
@@ -1039,6 +1042,11 @@
 			"secretPlaceholder": "Secret",
 			"allowFromPlaceholder": "Allowed senders (comma or newline separated; empty = allow all)",
 			"welcomePlaceholder": "Welcome message (optional)",
+			"idleHoursPlaceholder": "Default 24h if empty; 0 = never",
+			"idleHoursHint": "Auto-start a new session after this many idle hours (like /new, with notice + session ID); empty = default 24, 0 = never",
+			"idleHoursShort": "24h",
+			"idleHoursInvalid": "Session idle threshold must be a number",
+			"idleHoursSaveFailed": "Failed to save session idle threshold",
 			"enabledOnCreate": "Enable and start immediately after creation",
 			"start": "Start",
 			"stop": "Stop",

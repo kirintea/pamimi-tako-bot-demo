@@ -160,7 +160,10 @@
 		"scrollToBottom": "滚动到底部",
 		"header": {
 			"toggleSidebar": "切换侧边栏",
-			"toggleTheme": "切换主题"
+			"toggleTheme": "切换主题",
+			"sessionId": "会话ID",
+			"copySessionId": "复制会话ID",
+			"sessionIdCopied": "已复制"
 		},
 		"promptNavigator": {
 			"open": "打开提示词导航",
@@ -1039,6 +1042,11 @@
 			"secretPlaceholder": "Secret",
 			"allowFromPlaceholder": "允许发送者白名单（逗号或换行分隔，留空 = 全部允许）",
 			"welcomePlaceholder": "欢迎语（可选）",
+			"idleHoursPlaceholder": "留空默认 24 小时；0 = 不自动新开",
+			"idleHoursHint": "会话空闲超过该小时数自动新开会话（等同 /new，有提示和会话ID）；留空=默认 24，0=不自动新开",
+			"idleHoursShort": "24h",
+			"idleHoursInvalid": "会话空闲阈值须为数字",
+			"idleHoursSaveFailed": "保存会话空闲阈值失败",
 			"enabledOnCreate": "创建后立即启用并启动",
 			"start": "启动",
 			"stop": "停止",

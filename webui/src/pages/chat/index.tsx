@@ -254,9 +254,10 @@ export function ChatPage() {
 
 	return (
 		<div className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-			{/* 悬浮头部（右上 3 图标工具栏） */}
+			{/* 悬浮头部（左上会话ID + 右上 3 图标工具栏） */}
 			<ThreadHeader
 				connectionStatus={connectionStatus}
+				sessionId={activeSessionId ?? undefined}
 				promptNavigatorAction={
 					<PromptNavigator messages={messages} onJumpToPrompt={jumpToPrompt} />
 				}
