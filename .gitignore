@@ -50,3 +50,5 @@ skills
 
 # WebUI 前端
 webui/node_modules/
+# 测试长文本 fixture（由 tests/fixtures/gen_long_prompt.py 从本地语料生成）
+tests/fixtures/long_prompt.txt
