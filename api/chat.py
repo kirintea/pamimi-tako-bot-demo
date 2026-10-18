@@ -43,6 +43,7 @@ from loguru import logger
 from core.chat_service import acquire_session_lock, session_lock_key
 from core.session_status import SessionBusyError, SessionStatusTracker
 from core.token_counter import count_tokens
+from core.command import get_command_service
 from core.validators import coerce_id, coerce_id_strict, is_auth_enabled, require_user_id
 
 
@@ -217,7 +218,7 @@ class ChatRequest(BaseModel):
 def _sse_event(event_type: str, data: dict | str) -> str:
     """格式化为 SSE 事件"""
     payload = json.dumps(data, ensure_ascii=False) if isinstance(data, dict) else data
-    return f"event: {event_type}\ndata: {payload}\n"
+    return f"event: {event_type}\ndata: {payload}\n\n"
 
 
 # ============================================================
@@ -246,6 +247,32 @@ async def chat_stream(request: Request, body: ChatRequest):
     session_id = body.session_id or str(uuid.uuid4())
     session_id = coerce_id(session_id, default=str(uuid.uuid4()))
     device_id = body.device_id or "unknown"
+
+    # 指令拦截（/new /stop /compact /help）：命中即回执，不进 LLM。
+    # 放在 busy 检查之前，保证生成中也能发 /stop（D6）。
+    if isinstance(body.message, str):
+        cmd_result = await get_command_service().try_handle(
+            text=body.message,
+            user_id=user_id,
+            session_id=session_id,
+            transport="web",
+            session_mgr=session_mgr,
+            status_tracker=status_tracker,
+        )
+        if cmd_result is not None:
+            out_sid = cmd_result.new_session_id or session_id
+
+            async def _cmd_events():
+                yield _sse_event("session", {"user_id": user_id, "session_id": out_sid})
+                yield _sse_event("text_delta", {"delta": cmd_result.text})
+                yield _sse_event("reply_end", {
+                    "text": cmd_result.text,
+                    "finished": True,
+                    "command": True,
+                    "new_session_id": cmd_result.new_session_id,
+                })
+
+            return StreamingResponse(_cmd_events(), media_type="text/event-stream")
 
     # 多端并发：检查会话是否已被其他设备占用
     if status_tracker:
@@ -655,15 +682,31 @@ async def get_me(request: Request, user_id: str = "anonymous"):
 async def admin_list_sessions(
     request: Request,
     viewer: str | None = None,
+    limit: int = 200,
 ):
-    """root 管理视图：列出所有用户的全部会话（跨用户扫描）
+    """root 管理视图：列出所有用户的全部会话（跨用户查询）
 
     仅 root 可访问。``viewer`` 为查询参数，表示调用者身份
     （demo 阶段用查询参数表达调用者；生产环境应改由认证 token 解析）。
+
+    优先从 PG 数据库查询（数据持久化，不会因 KV TTL 过期而丢失）；
+    PG 不可用时降级到 KV 扫描（仅返回未过期的会话）。
     """
     role = await _resolve_viewer_role(request, viewer)
     if role != "root":
         raise HTTPException(status_code=403, detail="需要 root 角色")
+
+    db = getattr(request.app.state, "database_manager", None)
+
+    # 优先从 PG 查询（数据持久化，不会因 KV TTL 过期而丢失）
+    if db and db.is_initialized:
+        try:
+            sessions = await db.get_all_sessions(limit=limit)
+            return {"sessions": sessions, "total": len(sessions)}
+        except Exception:
+            logger.exception("从 PG 查询全部会话失败，降级到 KV")
+
+    # 降级：从 KV 扫描（仅返回未过期的会话）
     session_mgr = request.app.state.session_manager
     sessions = await session_mgr.list_all_sessions()
     return {"sessions": sessions, "total": len(sessions)}
@@ -811,7 +854,7 @@ class ChatTriggerRequest(BaseModel):
 
 class ChatTriggerResponse(BaseModel):
     """Fire-and-Forget 触发响应"""
-    status: str = Field(description="状态: started")
+    status: str = Field(description="状态: started | command")
     session_id: str = Field(description="会话 ID")
 
 
@@ -981,6 +1024,35 @@ async def chat_trigger(request: Request, body: ChatTriggerRequest):
     session_id = body.session_id or str(uuid.uuid4())
     session_id = coerce_id(session_id, default=str(uuid.uuid4()))
     device_id = body.device_id or "unknown"
+
+    # 指令拦截：命中即向事件总线发布回执并返回（订阅端 SSE/WS 可见）
+    if isinstance(body.message, str):
+        cmd_result = await get_command_service().try_handle(
+            text=body.message,
+            user_id=user_id,
+            session_id=session_id,
+            transport="web",
+            session_mgr=request.app.state.session_manager,
+            status_tracker=status_tracker,
+        )
+        if cmd_result is not None:
+            from agentscope.app.message_bus import MessageBusKeys
+
+            events_key = MessageBusKeys.session_events(session_id)
+            for evt in (
+                {"type": "text_delta", "delta": cmd_result.text},
+                {
+                    "type": "reply_end", "text": cmd_result.text, "finished": True,
+                    "command": True,
+                    "new_session_id": cmd_result.new_session_id,
+                },
+            ):
+                entry_id = await message_bus.log_append(events_key, evt, max_len=1000)
+                await message_bus.publish(events_key, {**evt, "_entry_id": entry_id})
+            return ChatTriggerResponse(
+                status="command",
+                session_id=cmd_result.new_session_id or session_id,
+            )
 
     # 多端并发：检查会话是否已被其他设备占用
     if status_tracker:

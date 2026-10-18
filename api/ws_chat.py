@@ -38,6 +38,7 @@ from agentscope.message import Msg, UserMsg
 from loguru import logger
 
 from core.chat_service import acquire_session_lock
+from core.command import get_command_service
 from core.multimodal import (
     ContentPart,
     ImageContent,
@@ -323,6 +324,31 @@ async def websocket_chat(
                 msg_type = data.get("type", "")
 
                 if msg_type == "chat":
+                    raw_message = data.get("payload", {}).get("message", "")
+                    if not raw_message:
+                        await _send_json(ws, "error", {"message": "消息不能为空"})
+                        continue
+
+                    # 指令拦截：命中即回执，不进 LLM；置于 busy 检查之前（D6）
+                    if isinstance(raw_message, str):
+                        cmd_result = await get_command_service().try_handle(
+                            text=raw_message,
+                            user_id=user_id,
+                            session_id=session_id,
+                            transport="web",
+                            session_mgr=session_mgr,
+                            status_tracker=status_tracker,
+                        )
+                        if cmd_result is not None:
+                            await _send_json(ws, "text_delta", {"delta": cmd_result.text})
+                            await _send_json(ws, "reply_end", {
+                                "text": cmd_result.text,
+                                "finished": True,
+                                "command": True,
+                                "new_session_id": cmd_result.new_session_id,
+                            })
+                            continue
+
                     # 防止并发生成（当前连接 + 上一连接遗留的后台任务）
                     if current_task and not current_task.done():
                         await _send_json(ws, "error", {
@@ -345,11 +371,6 @@ async def websocket_chat(
                                 "message": "其他设备正在回复中，请等待或发送 interrupt",
                             })
                             continue
-
-                    raw_message = data.get("payload", {}).get("message", "")
-                    if not raw_message:
-                        await _send_json(ws, "error", {"message": "消息不能为空"})
-                        continue
 
                     # 解析多模态消息
                     message: str | list[ContentPart] = raw_message
