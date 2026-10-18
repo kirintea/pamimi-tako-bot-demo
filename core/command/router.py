@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""斜杠命令路由 — 移植自 nanobot command/router.py，适配本平台无状态形态。
+"""斜杠命令路由 — 移植自 upstream command/router.py，适配本平台无状态形态。
 
-与 nanobot 的差异：
+与 upstream 的差异：
 - OutboundMessage → CommandResult（平台侧结果对象，不绑定渠道协议）
 - CommandContext 不持有 AgentLoop；session_mgr / session_map / status_tracker
   由各入站口按需注入（请求驱动、多实例无状态）
@@ -74,7 +74,7 @@ Handler = Callable[[CommandContext], Awaitable["CommandResult | None"]]
 class CommandRouter:
     """纯字典分发：exact 精确匹配 → prefix 最长前缀 → 未命中策略（D3）。
 
-    取消了 nanobot 的 priority 档：本平台指令拦截发生在入站口 busy 检查之前
+    取消了 upstream 的 priority 档：本平台指令拦截发生在入站口 busy 检查之前
     （D6），所有指令天然可抢占，无需单独一档。
     """
 
