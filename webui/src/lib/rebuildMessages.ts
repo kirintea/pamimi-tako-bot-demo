@@ -154,5 +154,18 @@ export function rebuildChatMessages(res: MessagesResponse): ChatMessage[] {
 		}
 	}
 
+	// 附上 DB 原始 created_at 字符串（按 dbId 回填，管理视图时间展示用；
+	// 不做日期换算，保持数据库 datetime 字符串原样）
+	const timeById = new Map<number, string>();
+	for (const m of res.messages) {
+		if (m.created_at) timeById.set(m.id, m.created_at);
+	}
+	for (const msg of rebuilt) {
+		if (msg.dbId != null) {
+			const t = timeById.get(msg.dbId);
+			if (t) msg.created_at = t;
+		}
+	}
+
 	return rebuilt;
 }

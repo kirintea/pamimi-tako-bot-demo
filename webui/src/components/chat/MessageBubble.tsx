@@ -27,20 +27,22 @@ interface Props {
   onFork?: () => void;
   /** 透传到根元素（消息间距 / 选中态用） */
   className?: string;
+  /** 消息时间文本（已格式化），显示在「复制」按钮左侧；提供时常显不随 hover */
+  timeText?: string;
 }
 
-export function MessageBubble({ message, onFork, className }: Props) {
+export function MessageBubble({ message, onFork, className, timeText }: Props) {
   const isUser = message.role === 'user';
 
   if (isUser) {
-    return <UserMessage message={message} className={className} />;
+    return <UserMessage message={message} className={className} timeText={timeText} />;
   }
 
-  return <AssistantMessage message={message} onFork={onFork} className={className} />;
+  return <AssistantMessage message={message} onFork={onFork} className={className} timeText={timeText} />;
 }
 
 /** 用户消息：右对齐气泡，无头像 */
-function UserMessage({ message, className }: { message: ChatMessage; className?: string }) {
+function UserMessage({ message, className, timeText }: { message: ChatMessage; className?: string; timeText?: string }) {
   const [copied, setCopied] = useState(false);
   const copyResetRef = useState<number | null>(null);
 
@@ -73,7 +75,15 @@ function UserMessage({ message, className }: { message: ChatMessage; className?:
       {/* 操作栏 */}
       {(hasText || hasImages) && (
         <TooltipProvider>
-          <div className="flex min-h-8 items-center justify-end gap-1.5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity">
+          <div
+            className={cn(
+              'flex min-h-8 items-center justify-end gap-1.5 text-muted-foreground transition-opacity',
+              timeText ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
+            )}
+          >
+            {timeText && (
+              <span className="text-xs text-muted-foreground tabular-nums">{timeText}</span>
+            )}
             {hasText && (
               <CopyButton content={message.content} copied={copied} onCopy={handleCopy} />
             )}
@@ -85,7 +95,7 @@ function UserMessage({ message, className }: { message: ChatMessage; className?:
 }
 
 /** 助手消息：全宽纯文本，无气泡 */
-function AssistantMessage({ message, onFork, className }: { message: ChatMessage; onFork?: () => void; className?: string }) {
+function AssistantMessage({ message, onFork, className, timeText }: { message: ChatMessage; onFork?: () => void; className?: string; timeText?: string }) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = useCallback(() => {
@@ -126,7 +136,15 @@ function AssistantMessage({ message, onFork, className }: { message: ChatMessage
       {/* 操作栏 */}
       {(hasContent || hasToolCalls) && (
         <TooltipProvider>
-          <div className="message-actions mt-2 flex min-h-8 flex-wrap items-center gap-x-2 gap-y-1 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity">
+          <div
+            className={cn(
+              'message-actions mt-2 flex min-h-8 flex-wrap items-center gap-x-2 gap-y-1 text-muted-foreground transition-opacity',
+              timeText ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
+            )}
+          >
+            {timeText && (
+              <span className="text-xs text-muted-foreground tabular-nums">{timeText}</span>
+            )}
             {hasContent && (
               <CopyButton content={message.content} copied={copied} onCopy={handleCopy} />
             )}
