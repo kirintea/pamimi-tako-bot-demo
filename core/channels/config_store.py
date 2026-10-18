@@ -18,6 +18,7 @@
       "type": "wecom",
       "name": "企微主机器人",
       "enabled": true,
+      "session_idle_hours": 24,
       "config": {
         "bot_id": "...",
         "secret": "..."
@@ -37,6 +38,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+import math
 import os
 import time
 import uuid
@@ -67,6 +69,21 @@ _LOCK_DIR = os.path.join(os.path.dirname(CHANNELS_CONFIG_PATH), ".locks")
 # 热加载轮询间隔（秒）
 _POLL_INTERVAL = 2.0
 
+# 会话空闲自动新开阈值（小时）默认值：渠道条目未配置 session_idle_hours 时回退。
+# 条目值 <=0 禁用该渠道的自动轮换。
+DEFAULT_SESSION_IDLE_HOURS = 24.0
+
+
+def _parse_idle_hours(raw: Any) -> float | None:
+    """解析条目级 session_idle_hours：缺失/非法返回 None（生效时回退默认）。"""
+    if raw is None or isinstance(raw, bool):
+        return None
+    try:
+        v = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return v if math.isfinite(v) else None
+
 
 # ============================================================
 # 数据模型
@@ -80,15 +97,20 @@ class ChannelEntry:
     name: str
     enabled: bool
     config: dict[str, Any] = field(default_factory=dict)
+    #: 会话空闲自动新开阈值（小时，按 id 对应）；None = 未配置（回退 DEFAULT_SESSION_IDLE_HOURS）
+    session_idle_hours: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        d = {
             "id": self.id,
             "type": self.type,
             "name": self.name,
             "enabled": self.enabled,
             "config": dict(self.config),
         }
+        if self.session_idle_hours is not None:
+            d["session_idle_hours"] = self.session_idle_hours
+        return d
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ChannelEntry":
@@ -98,6 +120,7 @@ class ChannelEntry:
             name=data.get("name", data.get("type", "unnamed")),
             enabled=data.get("enabled", False),
             config=dict(data.get("config", {})),
+            session_idle_hours=_parse_idle_hours(data.get("session_idle_hours")),
         )
 
 
@@ -110,6 +133,8 @@ _DEFAULT_CONFIG: dict[str, Any] = {
     "_comment": (
         "渠道连接配置文件（热加载）。修改后保存即生效，无需重启。"
         "secret 字段以明文存储，请确保此文件权限为 600 且已加入 .gitignore。"
+        "session_idle_hours（条目级）：该渠道会话空闲多少小时后自动新开会话"
+        "（<=0 禁用，缺省 24）。"
     ),
     "channels": [
         {
@@ -117,6 +142,7 @@ _DEFAULT_CONFIG: dict[str, Any] = {
             "type": "wecom",
             "name": "企业微信示例（请修改配置后启用）",
             "enabled": False,
+            "session_idle_hours": DEFAULT_SESSION_IDLE_HOURS,
             "config": {
                 "bot_id": "",
                 "secret": "",

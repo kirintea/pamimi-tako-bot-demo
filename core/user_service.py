@@ -78,12 +78,14 @@ class UserService:
         self,
         user_id: object,
         display_name: str | None = None,
+        channel: str = "web",
     ) -> dict:
         """懒注册/更新用户，返回用户记录字典
 
         Args:
             user_id: 外部用户标识（经 coerce_id 规范化）
             display_name: 可选展示名
+            channel: 用户来源渠道（web / wecom / feishu ...）
 
         Returns:
             ``{"user_id": ..., "role": ..., "is_root": bool}``
@@ -92,6 +94,12 @@ class UserService:
         role = "root" if self.is_configured_root(uid) else "normal"
         is_root = role == "root"
 
+        # 空串归一（COALESCE 只挡 NULL，不挡 ''）+ 长度截断
+        if display_name is not None:
+            display_name = display_name.strip() or None
+            if display_name is not None and len(display_name) > 128:
+                display_name = display_name[:128]
+
         if self._db is not None and self._db.is_initialized:
             try:
                 await self._db.upsert_user(
@@ -99,6 +107,7 @@ class UserService:
                     role=role,
                     display_name=display_name,
                     is_root=is_root,
+                    channel=channel,
                 )
             except Exception as e:  # noqa: BLE001
                 logger.warning("UserService.upsert_user 失败（已忽略）: {}", e)
