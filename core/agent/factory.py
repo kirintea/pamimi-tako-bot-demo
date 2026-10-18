@@ -39,7 +39,7 @@ from core.validators import coerce_id
 from loguru import logger
 from middleware.context_guard import ContextGuardMiddleware
 from core.formatter import SiliconFlowFormatter
-from core.workspace import LocalWorkspaceManager
+from core.workspace import LocalWorkspaceManager, UserScopedOffloader
 from middleware.tool_guard import ToolGuardMiddleware
 from middleware.command_guard import CommandGuardMiddleware
 from middleware.tool_manager import ToolManagerMiddleware
@@ -202,6 +202,8 @@ class AgentFactory:
         )
 
         # 6. 创建 Agent（传入已有状态用于会话恢复，挂载 Offloader）
+        # 框架调用 offload_context/offload_tool_result 时只传 session_id
+        # （不带 user_id），需用 UserScopedOffloader 绑定用户域后挂载。
         agent = Agent(
             name=config.agent.name,
             system_prompt=config.agent.system_prompt,
@@ -211,7 +213,7 @@ class AgentFactory:
             react_config=react_config,
             context_config=context_config,
             injection_config=injection_config,
-            offloader=workspace_manager,
+            offloader=UserScopedOffloader(workspace_manager, user_id=user_id),
             state=state,
         )
 

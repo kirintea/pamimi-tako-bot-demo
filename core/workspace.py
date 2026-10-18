@@ -416,3 +416,33 @@ class LocalWorkspaceManager:
 
         logger.info("Offloaded tool result {} to {}", tool_id, filepath)
         return str(filepath)
+
+
+class UserScopedOffloader:
+    """Offloader 协议适配器 — 把框架调用绑定到固定 user_id（用户域隔离）
+
+    AgentScope 2.0.7 调用 offload_context / offload_tool_result 时只传
+    session_id，不带 user_id（见 agentscope/agent/_agent.py 两处调用点），
+    而卸载目录按用户域隔离要求 user_id。AgentFactory 创建 Agent 时用本
+    适配器绑定 user_id，再挂载为 Agent 的 offloader，框架卸载即可正常
+    落入 user_spaces/{user_id}/sessions/{session_id}/。
+
+    裸 LocalWorkspaceManager 的 offload_* 保持 user_id 必填、缺失抛错，
+    隔离保证不因适配器而放松。
+    """
+
+    def __init__(self, manager: LocalWorkspaceManager, user_id: str) -> None:
+        self._manager = manager
+        self._user_id = user_id
+
+    async def offload_context(self, session_id: str, msgs: list) -> str:
+        """持久化被压缩的消息（Offloader 协议，user_id 由绑定补全）"""
+        return await self._manager.offload_context(
+            session_id, msgs, user_id=self._user_id,
+        )
+
+    async def offload_tool_result(self, session_id: str, tool_result) -> str:
+        """持久化被截断的工具结果（Offloader 协议，user_id 由绑定补全）"""
+        return await self._manager.offload_tool_result(
+            session_id, tool_result, user_id=self._user_id,
+        )
