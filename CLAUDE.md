@@ -97,11 +97,11 @@ pamimi-tako-bot-demo/
 
 ### 访问入口
 
-| 前端 | 地址 | 说明 |
-|------|------|------|
-| 新版 WebUI | `http://localhost:8090/webui` | React 19 SPA（需先构建） |
-| 旧版静态界面 | `http://localhost:8090/` | api/static/index.html |
-| Swagger 文档 | `http://localhost:8090/docs` | API 文档 |
+| 前端         | 地址                            | 说明                     |
+| ------------ | ------------------------------- | ------------------------ |
+| 新版 WebUI   | `http://localhost:8090/webui` | React 19 SPA（需先构建） |
+| 旧版静态界面 | `http://localhost:8090/`      | api/static/index.html    |
+| Swagger 文档 | `http://localhost:8090/docs`  | API 文档                 |
 
 ### 统一沙箱与工作路径 — workspaces/
 
@@ -139,46 +139,46 @@ APP_ENV=dev
 
 ### 对话（chat）
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | `/chat/stream` | 流式对话（SSE 事件流） |
-| POST | `/chat/` | Fire-and-Forget 触发（事件驱动） |
-| GET | `/sessions/{session_id}/stream` | SSE 事件流订阅 |
-| GET | `/health` | 健康检查 |
+| 方法 | 路径                              | 说明                             |
+| ---- | --------------------------------- | -------------------------------- |
+| POST | `/chat/stream`                  | 流式对话（SSE 事件流）           |
+| POST | `/chat/`                        | Fire-and-Forget 触发（事件驱动） |
+| GET  | `/sessions/{session_id}/stream` | SSE 事件流订阅                   |
+| GET  | `/health`                       | 健康检查                         |
 
 ### WebSocket 对话
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| WS | `/ws/chat?user_id={user_id}&session_id={session_id}` | 全双工 WebSocket 对话通道 |
+| 方法 | 路径                                                   | 说明                      |
+| ---- | ------------------------------------------------------ | ------------------------- |
+| WS   | `/ws/chat?user_id={user_id}&session_id={session_id}` | 全双工 WebSocket 对话通道 |
 
 ### 会话（session）
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/sessions` | 列出内存中活跃会话（可选 `user_id` 过滤） |
-| GET | `/sessions/{user_id}` | 列出用户所有历史会话（Redis SCAN） |
-| GET | `/sessions/{user_id}/{session_id}/messages` | 获取会话消息历史 |
-| POST | `/sessions/{user_id}/{session_id}/fork` | 基于父会话创建分支 |
-| DELETE | `/sessions/{user_id}/{session_id}` | 删除会话 |
+| 方法   | 路径                                          | 说明                                       |
+| ------ | --------------------------------------------- | ------------------------------------------ |
+| GET    | `/sessions`                                 | 列出内存中活跃会话（可选`user_id` 过滤） |
+| GET    | `/sessions/{user_id}`                       | 列出用户所有历史会话（Redis SCAN）         |
+| GET    | `/sessions/{user_id}/{session_id}/messages` | 获取会话消息历史                           |
+| POST   | `/sessions/{user_id}/{session_id}/fork`     | 基于父会话创建分支                         |
+| DELETE | `/sessions/{user_id}/{session_id}`          | 删除会话                                   |
 
 ### MCP 管理
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/mcp` | 列出已安装 MCP |
-| POST | `/mcp` | 添加 MCP |
-| PATCH | `/mcp/{mcp_id}` | 更新 MCP（启用/禁用、改名） |
-| DELETE | `/mcp/{mcp_id}` | 删除 MCP |
+| 方法   | 路径              | 说明                        |
+| ------ | ----------------- | --------------------------- |
+| GET    | `/mcp`          | 列出已安装 MCP              |
+| POST   | `/mcp`          | 添加 MCP                    |
+| PATCH  | `/mcp/{mcp_id}` | 更新 MCP（启用/禁用、改名） |
+| DELETE | `/mcp/{mcp_id}` | 删除 MCP                    |
 
 ### Skill 管理
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/skill` | 列出已安装 Skill |
-| POST | `/skill` | 添加 Skill |
-| GET | `/skill/{skill_id}` | 获取单个 Skill |
-| DELETE | `/skill/{skill_id}` | 删除 Skill |
+| 方法   | 路径                  | 说明             |
+| ------ | --------------------- | ---------------- |
+| GET    | `/skill`            | 列出已安装 Skill |
+| POST   | `/skill`            | 添加 Skill       |
+| GET    | `/skill/{skill_id}` | 获取单个 Skill   |
+| DELETE | `/skill/{skill_id}` | 删除 Skill       |
 
 ## 会话与持久化
 
@@ -238,13 +238,14 @@ kv:
 database:
   backend: "auto"               # auto / postgres / mysql（auto 按 URL scheme 推断）
   url: "${DATABASE_URL:-postgresql://user:password@localhost:5432/dmx_agent_db}"
-  # MySQL 示例: mysql://user:password@localhost:3306/platform（需带库名，>= 5.7.22）
+  # MySQL 示例: mysql://user:password@localhost:3306/dmx_agent_db（需带库名，>= 8.0.20）
   pool_size: 10
   auto_create_tables: true      # 启动时执行幂等 DDL（受限账号场景设 false）
   verify_tables: true           # 连接后校验必需表（禁用 DDL 时尤其重要）
+  timezone: "Asia/Shanghai"     # 时间列时区：created_at/last_active 等应用侧生成传参（DB NOW() 可能是 UTC）
 ```
 
-`DatabaseManager` 在 `server.py` lifespan 中初始化，按 `backend`/URL scheme 分派 `PostgresBackend`（asyncpg）或 `MySQLBackend`（aiomysql）。`auto_create_tables=true` 时执行幂等 DDL，`verify_tables=true` 时校验 `core/db/ddl.py REQUIRED_TABLES` 的 6 张必需表。初始化失败固定 fail-fast（ERROR 日志 + 抛出 → 启动中止进程退出；`verify_tables` 缺表时日志列出缺表清单）。未配置 URL（空串）时跳过初始化。提供 `execute / fetch / fetchrow / fetchval` 通用接口、`execute_named / fetch_named / fetchval_named`（按方言取注册表 SQL）、`insert_returning_id`（PG RETURNING / MySQL lastrowid 或回查），以及 `insert_conversation / get_conversation_history` 便捷方法（消息写入显式携带 `channel` 列，默认 `web`，为飞书/微信渠道预留；OTel Resource 同步上报 `channel` tag，配置项 `otel.channel`）。未初始化（URL 未配置）时访问 `/mcp` `/skill` 等未守卫路由返回 **503**（`DatabaseUnavailableError` 统一处理器）；启动后的运行期数据库故障由 `/health` 503 与各路由异常覆盖，进程不退出。
+`DatabaseManager` 在 `server.py` lifespan 中初始化，按 `backend`/URL scheme 分派 `PostgresBackend`（asyncpg）或 `MySQLBackend`（aiomysql）。`auto_create_tables=true` 时执行幂等 DDL，`verify_tables=true` 时校验 `core/db/ddl.py REQUIRED_TABLES` 的 6 张必需表。初始化失败固定 fail-fast（ERROR 日志 + 抛出 → 启动中止进程退出；`verify_tables` 缺表时日志列出缺表清单）。未配置 URL（空串）时跳过初始化。提供 `execute / fetch / fetchrow / fetchval` 通用接口、`execute_named / fetch_named / fetchval_named`（按方言取注册表 SQL）、`insert_returning_id`（PG RETURNING / MySQL lastrowid 或回查），以及 `insert_conversation / get_conversation_history` 便捷方法（消息写入显式携带 `channel` 列，默认 `web`，为飞书/微信渠道预留；OTel Resource 同步上报 `channel` tag，配置项 `otel.channel`）。时间列（`conversations.created_at`、`users.last_active`、`sessions.updated_at` 等）由 `DatabaseManager.now()` 按 `database.timezone`（默认 `Asia/Shanghai`）应用侧生成后显式传参——MySQL 侧 naive 墙钟、PG 侧 aware；DB `NOW()/DEFAULT` 仅作兜底（服务端可能跑 UTC，会差 8 小时）；读路径经 `_serialize_dt` 统一序列化（aware 转配置时区，naive 原样）。未初始化（URL 未配置）时访问 `/mcp` `/skill` 等未守卫路由返回 **503**（`DatabaseUnavailableError` 统一处理器）；启动后的运行期数据库故障由 `/health` 503 与各路由异常覆盖，进程不退出。
 
 ## 健康检查
 
@@ -262,11 +263,11 @@ database:
 
 ## 相关文档
 
-| 文档 | 说明 |
-|------|------|
-| [docs/dangerous-commands.md](docs/dangerous-commands.md) | 命令安全守卫说明 |
-| [docs/middleware-guards.md](docs/middleware-guards.md) | 中间件守卫体系（工具守卫 / 命令守卫 / 路径守卫 / 压缩守卫 / 速率限制） |
-| [docs/budget-control.md](docs/budget-control.md) | 预算控制（回复预算 / 上下文压缩 / 回填预算） |
-| [docs/上下文管理.md](docs/上下文管理.md) | 上下文注入、压缩与卸载 |
-| [docs/docker-deployment.md](docs/docker-deployment.md) | Docker 容器化部署指南 |
-| [docs/sandbox-guide.md](docs/sandbox-guide.md) | 沙箱隔离指南 |
+| 文档                                                    | 说明                                                                   |
+| ------------------------------------------------------- | ---------------------------------------------------------------------- |
+| [docs/dangerous-commands.md](docs/dangerous-commands.md) | 命令安全守卫说明                                                       |
+| [docs/middleware-guards.md](docs/middleware-guards.md)   | 中间件守卫体系（工具守卫 / 命令守卫 / 路径守卫 / 压缩守卫 / 速率限制） |
+| [docs/budget-control.md](docs/budget-control.md)         | 预算控制（回复预算 / 上下文压缩 / 回填预算）                           |
+| [docs/上下文管理.md](docs/上下文管理.md)                 | 上下文注入、压缩与卸载                                                 |
+| [docs/docker-deployment.md](docs/docker-deployment.md)   | Docker 容器化部署指南                                                  |
+| [docs/sandbox-guide.md](docs/sandbox-guide.md)           | 沙箱隔离指南                                                           |
