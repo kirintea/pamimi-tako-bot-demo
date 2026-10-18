@@ -335,11 +335,20 @@ def create_app(config) -> FastAPI:
         )
 
         # 创建渠道管理器（入站→内核→出站 闭环；从 JSON 配置文件拉起启用渠道）
+        from core.channels.session_map import ChannelSessionMap
+
+        session_map = ChannelSessionMap(
+            session_mgr.kv, app.state.config.redis.key_prefix,
+        )
         channel_manager = ChannelManager(
             config_store=channel_config_store,
             bus=app.state.message_bus,
             chat_service=chat_service,
             object_storage=obj_storage,
+            db=getattr(app.state, "database_manager", None),
+            session_mgr=session_mgr,
+            session_map=session_map,
+            status_tracker=status_tracker,
         )
         app.state.channel_manager = channel_manager
 
