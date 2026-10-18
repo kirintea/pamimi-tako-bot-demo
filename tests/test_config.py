@@ -29,7 +29,7 @@ class TestOTelConfig:
     def test_valid(self):
         cfg = OTelConfig(endpoint="http://localhost:4317", environment="development")
         assert cfg.enabled is True
-        assert cfg.service_name == "platform-agent"
+        assert cfg.service_name == "pamimi-tako-bot-demo"
 
     def test_missing_required(self):
         with pytest.raises(ValidationError):
@@ -58,7 +58,7 @@ class TestAppConfig:
             llm=LLMConfig(api_key="sk-xxx", base_url="http://llm/v1", model="glm-5"),
         )
         assert cfg.server.port == 8090
-        assert cfg.agent.name == "platform_agent"
+        assert cfg.agent.name == "pamimi_tako_bot_demo"
 
     def test_mcp_servers_rejected(self):
         """MCP 唯一真源是 configs/mcps.json —— YAML 写 mcp_servers 必须启动失败"""
