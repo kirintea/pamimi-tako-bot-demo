@@ -71,9 +71,11 @@ async def test_insert_returning_id_incrementing(db_manager):
     """自增表 ID 走 lastrowid（Task 9 之前仅用注册表路径）"""
     id1 = await db_manager.insert_returning_id(
         "insert_conversation", "it_user", "it_sess", "user", "你好", None, "web",
+        None, None,
     )
     id2 = await db_manager.insert_returning_id(
         "insert_conversation", "it_user", "it_sess", "assistant", "嗨", None, "web",
+        None, None,
     )
     assert isinstance(id1, int) and isinstance(id2, int)
     assert id2 > id1
@@ -101,7 +103,10 @@ async def test_storage_session_title_merge(db_manager):
 
 
 async def test_get_user_sessions_with_title(db_manager):
-    """get_user_sessions：JSON_UNQUOTE 取自定义标题 + message_count 聚合"""
+    """get_user_sessions：JSON_UNQUOTE 取自定义标题 + message_count 聚合
+
+    message_count 只统计 role='user' 行（PG COUNT FILTER / MySQL SUM(CASE) 双方言一致）。
+    """
     # 清理历史累积（dmx_agent_db 复用库 + 本测试可重跑，message_count 断言需确定性）
     await db_manager.execute(
         "DELETE FROM conversations WHERE user_id = 'it_user2' AND session_id = 'it-sess-us'",
@@ -112,10 +117,14 @@ async def test_get_user_sessions_with_title(db_manager):
     await db_manager.insert_conversation(
         "it_user2", "it-sess-us", "assistant", "第一条回复", None,
     )
+    await db_manager.insert_conversation(
+        "it_user2", "it-sess-us", "user", "第二条消息", None,
+    )
     await db_manager.upsert_session_title("it_user2", "it-sess-us", "会话标题X")
     sessions = await db_manager.get_user_sessions("it_user2", limit=10)
     target = [s for s in sessions if s["session_id"] == "it-sess-us"]
     assert target and target[0]["title"] == "会话标题X"
+    # 2 条 user 消息（assistant 行不计入）
     assert target[0]["message_count"] == 2
 
 
@@ -155,3 +164,114 @@ async def test_insert_conversation_channel_roundtrip(db_manager):
         "SELECT channel FROM conversations WHERE id = %s", id2,
     )
     assert row2["channel"] == "web"
+
+
+# ============================================================
+# 回归 — MySQL 1052：ODKU 行别名下旧值引用歧义（2026-10-09 线上故障）
+# ============================================================
+
+async def test_upsert_user_display_name_null_keeps_old(db_manager):
+    """upsert_user 冲突更新：display_name=NULL 保留旧值（COALESCE 旧值分支）
+
+    修复前 AS new_values 行别名下裸列名歧义 → 1052
+    "Column 'display_name' in field list is ambiguous"（线上 warning 吞掉）。
+    """
+    uid = "it_user_1052"
+    await db_manager.upsert_user(uid, "normal", "Alice", False)
+    # NULL 不覆盖 → 保留 'Alice'；role/is_root 照常更新
+    await db_manager.upsert_user(uid, "root", None, True)
+    row = await db_manager.fetchrow(
+        'SELECT "role", "display_name", "is_root" FROM users WHERE "user_id" = $1', uid,
+    )
+    assert row["display_name"] == "Alice"
+    assert row["role"] == "root"
+    # 非 NULL 照常覆盖
+    await db_manager.upsert_user(uid, "root", "Alicia", True)
+    row2 = await db_manager.fetchrow(
+        'SELECT "display_name" FROM users WHERE "user_id" = $1', uid,
+    )
+    assert row2["display_name"] == "Alicia"
+
+
+async def test_upsert_user_returns_id_on_conflict(db_manager):
+    """upsert_user 冲突更新时回查 user_id（mysql_id_sql 路径）"""
+    uid = "it_user_1052_id"
+    assert await db_manager.upsert_user(uid, "normal", None, False) == uid
+    assert await db_manager.upsert_user(uid, "normal", None, False) == uid
+
+
+async def test_upsert_session_title_conflict_updates(db_manager):
+    """upsert_session_title 二次写入走冲突更新（修复前 1052 'config' 歧义）"""
+    await db_manager.upsert_session_title("it_user", "it-sess-1052", "标题一")
+    await db_manager.upsert_session_title("it_user", "it-sess-1052", "标题二")
+    title = await db_manager.get_session_title("it_user", "it-sess-1052")
+    assert title == "标题二"
+    row = await db_manager.fetchrow(
+        'SELECT "config" FROM sessions WHERE "id" = $1', "it-sess-1052",
+    )
+    cfg = row["config"]
+    if isinstance(cfg, str):
+        cfg = json.loads(cfg)
+    # JSON_MERGE_PATCH(旧 config, 新 config)：title 取新值
+    assert cfg["title"] == "标题二"
+
+
+async def test_upsert_session_fork_fields_preserved(db_manager):
+    """upsert_session 冲突更新：parent/depth 传空时保留原有 fork 血缘
+
+    修复前 AS new_values 行别名下 "parent_session_id"/"depth" 裸引用歧义 → 1052。
+    """
+    from core.storage import PostgresStorage
+    from core.storage_models import SessionConfig
+
+    storage = PostgresStorage(db_manager)
+    cfg = SessionConfig(name="1052-fork")
+    rec = await storage.upsert_session(
+        "it_user_1052s", "default", cfg,
+        state_json="{}", parent_session_id="it-parent-1052", depth=3,
+    )
+    # 更新不带 fork 信息（parent=None, depth=None→0）→ 血缘保留
+    await storage.upsert_session(
+        "it_user_1052s", "default", cfg,
+        state_json="{}", session_id=rec.id,
+    )
+    row = await db_manager.fetchrow(
+        'SELECT "parent_session_id", "depth" FROM sessions WHERE "id" = $1', rec.id,
+    )
+    assert row["parent_session_id"] == "it-parent-1052"
+    assert row["depth"] == 3
+
+
+async def test_upsert_user_display_name_empty_string_keeps_old(db_manager):
+    """upsert_user 冲突更新：display_name='' 归一为 None → 保留旧值"""
+    uid = "it_user_empty_name"
+    await db_manager.upsert_user(uid, "normal", "Alice", False)
+    await db_manager.upsert_user(uid, "normal", "", False)
+    row = await db_manager.fetchrow(
+        'SELECT "display_name" FROM users WHERE "user_id" = $1', uid,
+    )
+    assert row["display_name"] == "Alice"
+    await db_manager.upsert_user(uid, "normal", "   ", False)
+    row2 = await db_manager.fetchrow(
+        'SELECT "display_name" FROM users WHERE "user_id" = $1', uid,
+    )
+    assert row2["display_name"] == "Alice"
+
+
+async def test_get_all_sessions_returns_display_name_and_channel(db_manager):
+    """get_all_sessions 返回 display_name + channel 字段"""
+    await db_manager.upsert_user("admin_user_1", "normal", "张三", False)
+    await db_manager.insert_conversation(
+        user_id="admin_user_1",
+        session_id="admin-sess-001",
+        role="user",
+        content="你好",
+        metadata=None,
+        channel="wecom",
+    )
+    sessions = await db_manager.get_all_sessions(limit=10)
+    assert len(sessions) >= 1
+    target = next((s for s in sessions if s["session_id"] == "admin-sess-001"), None)
+    assert target is not None
+    assert target["display_name"] == "张三"
+    assert target["channel"] == "wecom"

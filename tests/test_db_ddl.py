@@ -35,8 +35,8 @@ class TestParity:
         assert _created_tables(DDL_MYSQL) == set(REQUIRED_TABLES)
 
     def test_pg_ddl_statement_count(self):
-        """DDL_POSTGRES = 原样迁出 29 条 + Task 13 追加 3 条 channel ALTER = 32 条"""
-        assert len(DDL_POSTGRES) == 32
+        """DDL_POSTGRES 条数 tripwire（禁表/迁移后需同步更新）"""
+        assert len(DDL_POSTGRES) == 26
 
 
 class TestMysqlDdlHasNoPgSyntax:

@@ -118,6 +118,7 @@ DDL_POSTGRES = [
     # users 表 — 用户身份与角色
     #   role:    'normal'（普通用户）/ 'root'（预置管理员）
     #   is_root: 冗余布尔，便于索引与快速判断（与 role 保持一致）
+    #   channel: 用户来源渠道（web / wecom / feishu ...，与 conversations/sessions 对齐）
     #   root 身份的权威来源是 config.agent.root_user_ids + 环境变量 ROOT_USER_IDS，
     #   DB 中的 role/is_root 仅作记录与审计。
     """
@@ -126,6 +127,7 @@ DDL_POSTGRES = [
         "role"         VARCHAR(16) NOT NULL DEFAULT 'normal',
         "display_name" VARCHAR(128),
         "is_root"      BOOLEAN NOT NULL DEFAULT FALSE,
+        "channel"      VARCHAR(16) NOT NULL DEFAULT 'web',
         "created_at"   TIMESTAMPTZ DEFAULT NOW(),
         "last_active"  TIMESTAMPTZ DEFAULT NOW()
     )
@@ -133,6 +135,11 @@ DDL_POSTGRES = [
     """
     CREATE INDEX IF NOT EXISTS idx_users_role
     ON users("role")
+    """,
+
+    # 迁移：给已有 users 表补 channel 列（无则跳过）
+    """
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS "channel" VARCHAR(16) NOT NULL DEFAULT 'web'
     """,
 
     # ============================================================
@@ -237,10 +244,8 @@ DDL_MYSQL = [
         "updated_at"        DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3)
     )
     """,
-    # 迁移：给已有 sessions 表补 title 列（无则跳过）
-    """
-    ALTER TABLE sessions ADD COLUMN IF NOT EXISTS "title" VARCHAR(256) NULL
-    """,
+    # 迁移：给已有 sessions 表补 title 列（无则跳过；1060 ER_DUP_FIELDNAME 兜底）
+    'ALTER TABLE sessions ADD COLUMN "title" VARCHAR(256) NULL',
     'CREATE INDEX idx_sessions_user_agent ON sessions("user_id", "agent_id")',
     'CREATE INDEX idx_sessions_team ON sessions("team_id")',
     'CREATE INDEX idx_sessions_status ON sessions("status")',
@@ -260,11 +265,13 @@ DDL_MYSQL = [
         "role"         VARCHAR(16) NOT NULL DEFAULT 'normal',
         "display_name" VARCHAR(128) NULL,
         "is_root"      TINYINT(1) NOT NULL DEFAULT 0,
+        "channel"      VARCHAR(16) NOT NULL DEFAULT 'web',
         "created_at"   DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
         "last_active"  DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3)
     )
     """,
     'CREATE INDEX idx_users_role ON users("role")',
+    'ALTER TABLE users ADD COLUMN "channel" VARCHAR(16) NOT NULL DEFAULT \'web\'',
 
     # [已禁用] channels 表（同 PG，已改 JSON 文件驱动）
 
