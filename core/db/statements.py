@@ -63,13 +63,14 @@ STATEMENTS: dict[str, Statement] = {
             INSERT INTO sessions ("id", "user_id", "agent_id", "source", "config", "state_json",
                                   "parent_session_id", "depth", "created_at", "updated_at")
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            AS new_values
             ON DUPLICATE KEY UPDATE
-                "config" = VALUES("config"),
-                "state_json" = VALUES("state_json"),
-                "source" = VALUES("source"),
-                "parent_session_id" = COALESCE(VALUES("parent_session_id"), "parent_session_id"),
-                "depth" = COALESCE(NULLIF(VALUES("depth"), 0), "depth"),
-                "updated_at" = VALUES("updated_at")
+                "config" = new_values."config",
+                "state_json" = new_values."state_json",
+                "source" = new_values."source",
+                "parent_session_id" = COALESCE(new_values."parent_session_id", sessions."parent_session_id"),
+                "depth" = COALESCE(NULLIF(new_values."depth", 0), sessions."depth"),
+                "updated_at" = new_values."updated_at"
         """,
     ),
     # [已禁用] upsert_mcp — mcps 表已从 DDL 移除（改 configs/mcps.json 文件驱动，运行时单一真源）
@@ -79,25 +80,30 @@ STATEMENTS: dict[str, Statement] = {
     # ---------------------------------------------------------------
     # user_service.upsert_user — 客户端主键 (user_id) 冲突更新
     # ---------------------------------------------------------------
+    # 时间列（created_at / last_active）由应用侧按 database.timezone 生成传参
+    # （$5/$6）：DB 服务端时区可能是 UTC，NOW()/DEFAULT 落库会差 8 小时。
     "upsert_user": Statement(
         pg="""
-            INSERT INTO users ("user_id", "role", "display_name", "is_root", "created_at", "last_active")
-            VALUES ($1, $2, $3, $4, NOW(), NOW())
+            INSERT INTO users ("user_id", "role", "display_name", "is_root", "channel", "created_at", "last_active")
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
             ON CONFLICT ("user_id") DO UPDATE SET
                 "role" = EXCLUDED."role",
                 "display_name" = COALESCE(EXCLUDED."display_name", users."display_name"),
                 "is_root" = EXCLUDED."is_root",
-                "last_active" = NOW()
+                "channel" = EXCLUDED."channel",
+                "last_active" = EXCLUDED."last_active"
             RETURNING "user_id"
         """,
         mysql="""
-            INSERT INTO users ("user_id", "role", "display_name", "is_root", "created_at", "last_active")
-            VALUES ($1, $2, $3, $4, NOW(), NOW())
+            INSERT INTO users ("user_id", "role", "display_name", "is_root", "channel", "created_at", "last_active")
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            AS new_values
             ON DUPLICATE KEY UPDATE
-                "role" = VALUES("role"),
-                "display_name" = COALESCE(VALUES("display_name"), "display_name"),
-                "is_root" = VALUES("is_root"),
-                "last_active" = NOW()
+                "role" = new_values."role",
+                "display_name" = COALESCE(new_values."display_name", users."display_name"),
+                "is_root" = new_values."is_root",
+                "channel" = new_values."channel",
+                "last_active" = new_values."last_active"
         """,
         # upsert 在 MySQL 侧 update 时 lastrowid 为 0，故回查现有行 user_id
         mysql_id_sql='SELECT "user_id" FROM users WHERE "user_id" = $1',
@@ -117,37 +123,41 @@ STATEMENTS: dict[str, Statement] = {
     # ---------------------------------------------------------------
     # database.insert_conversation — 自增主键纯 INSERT
     # ---------------------------------------------------------------
+    # created_at（$9）由应用侧按 database.timezone 生成传参，不依赖
+    # DATETIME DEFAULT CURRENT_TIMESTAMP(3)（DB 服务端跑 UTC 时会差 8 小时）
     "insert_conversation": Statement(
         pg="""
-            INSERT INTO conversations ("user_id", "session_id", "role", "content", "metadata", "channel", "turn_id", "turn_seq")
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            INSERT INTO conversations ("user_id", "session_id", "role", "content", "metadata", "channel", "turn_id", "turn_seq", "created_at")
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             RETURNING "id"
         """,
         mysql="""
-            INSERT INTO conversations ("user_id", "session_id", "role", "content", "metadata", "channel", "turn_id", "turn_seq")
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            INSERT INTO conversations ("user_id", "session_id", "role", "content", "metadata", "channel", "turn_id", "turn_seq", "created_at")
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         """,
     ),
     # ---------------------------------------------------------------
     # database.upsert_session_title — 写入 title 列 + config.title（双写兼容）
     # 参数：$1=session_id, $2=user_id, $3=title(VARCHAR), $4=config(JSON)
     # ---------------------------------------------------------------
+    # created_at/updated_at（$5/$6）由应用侧按 database.timezone 生成传参（同上，避免 DB NOW() UTC）
     "upsert_session_title": Statement(
         pg="""
-            INSERT INTO sessions ("id", "user_id", "agent_id", "title", "config", "status")
-            VALUES ($1, $2, 'default', $3, $4::jsonb, 'active')
+            INSERT INTO sessions ("id", "user_id", "agent_id", "title", "config", "status", "created_at", "updated_at")
+            VALUES ($1, $2, 'default', $3, $4::jsonb, 'active', $5, $6)
             ON CONFLICT ("id") DO UPDATE SET
                 "title" = EXCLUDED."title",
                 "config" = COALESCE(sessions."config", '{}'::jsonb) || EXCLUDED."config",
-                "updated_at" = NOW()
+                "updated_at" = EXCLUDED."updated_at"
         """,
         mysql="""
-            INSERT INTO sessions ("id", "user_id", "agent_id", "title", "config", "status")
-            VALUES ($1, $2, 'default', $3, CAST($4 AS JSON), 'active')
+            INSERT INTO sessions ("id", "user_id", "agent_id", "title", "config", "status", "created_at", "updated_at")
+            VALUES ($1, $2, 'default', $3, CAST($4 AS JSON), 'active', $5, $6)
+            AS new_values
             ON DUPLICATE KEY UPDATE
-                "title" = VALUES("title"),
-                "config" = JSON_MERGE_PATCH(COALESCE("config", JSON_OBJECT()), VALUES("config")),
-                "updated_at" = NOW()
+                "title" = new_values."title",
+                "config" = JSON_MERGE_PATCH(COALESCE(sessions."config", JSON_OBJECT()), new_values."config"),
+                "updated_at" = new_values."updated_at"
         """,
     ),
     # ---------------------------------------------------------------
@@ -216,6 +226,67 @@ STATEMENTS: dict[str, Statement] = {
             GROUP BY c."session_id", s."title", s."config"
             ORDER BY last_active DESC
             LIMIT $2
+        """,
+    ),
+    # ---------------------------------------------------------------
+    # database.get_all_sessions — root 管理视图：跨用户查询所有会话
+    # ---------------------------------------------------------------
+    "get_all_sessions": Statement(
+        pg="""
+            SELECT
+                c."user_id",
+                c."session_id",
+                MIN(c."created_at") AS created_at,
+                MAX(c."created_at") AS last_active,
+                COUNT(*) FILTER (WHERE c."role" = 'user') AS message_count,
+                COALESCE(s."title", s."config"->>'title') AS custom_title,
+                (
+                    SELECT LEFT(x."content", 30)
+                    FROM conversations x
+                    WHERE x."user_id" = c."user_id"
+                      AND x."session_id" = c."session_id"
+                      AND x."role" = 'user'
+                      AND x."status" = 'active'
+                    ORDER BY x."id" ASC
+                    LIMIT 1
+                ) AS first_message,
+                MAX(c."channel") AS channel,
+                u."display_name"
+            FROM conversations c
+            LEFT JOIN sessions s ON s."id" = c."session_id" AND s."user_id" = c."user_id" AND s."status" = 'active'
+            LEFT JOIN users u ON u."user_id" = c."user_id"
+            WHERE c."status" = 'active'
+            GROUP BY c."user_id", c."session_id", s."title", s."config", u."display_name"
+            ORDER BY last_active DESC
+            LIMIT $1
+        """,
+        mysql="""
+            SELECT
+                c."user_id",
+                c."session_id",
+                MIN(c."created_at") AS created_at,
+                MAX(c."created_at") AS last_active,
+                SUM(CASE WHEN c."role" = 'user' THEN 1 ELSE 0 END) AS message_count,
+                COALESCE(s."title", JSON_UNQUOTE(JSON_EXTRACT(s."config", '$.title'))) AS custom_title,
+                (
+                    SELECT LEFT(x."content", 30)
+                    FROM conversations x
+                    WHERE x."user_id" = c."user_id"
+                      AND x."session_id" = c."session_id"
+                      AND x."role" = 'user'
+                      AND x."status" = 'active'
+                    ORDER BY x."id" ASC
+                    LIMIT 1
+                ) AS first_message,
+                MAX(c."channel") AS channel,
+                u."display_name"
+            FROM conversations c
+            LEFT JOIN sessions s ON s."id" = c."session_id" AND s."user_id" = c."user_id" AND s."status" = 'active'
+            LEFT JOIN users u ON u."user_id" = c."user_id"
+            WHERE c."status" = 'active'
+            GROUP BY c."user_id", c."session_id", s."title", s."config", u."display_name"
+            ORDER BY last_active DESC
+            LIMIT $1
         """,
     ),
 }

@@ -22,7 +22,8 @@ from utils import CheckReport, load_config
 from core.db.ddl import REQUIRED_TABLES
 from core.db.mysql_backend import MySQLBackend
 
-MIN_VERSION = (5, 7, 22)
+# MySQL 8.0.26 兼容性：使用 VALUES() 别名语法，最低要求 8.0.20
+MIN_VERSION = (8, 0, 20)
 
 
 def _parse_version(version_str: str) -> tuple[int, ...] | None:

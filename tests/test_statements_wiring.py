@@ -71,8 +71,10 @@ async def test_insert_conversation_returns_id():
     assert sql == STATEMENTS["insert_conversation"].pick("mysql")
     assert result == 101
     assert args[:4] == ("u1", "s1", "user", "你好")
-    assert json.loads(args[-2]) == {"a": 1}
-    assert args[-1] == "web"
+    # 参数顺序: (user_id, session_id, role, content, metadata_json, channel, turn_id, turn_seq)
+    assert json.loads(args[4]) == {"a": 1}
+    assert args[5] == "web"
+    assert args[6] is None and args[7] is None
 
 
 async def test_upsert_session_title_mysql_json_merge_patch():
@@ -81,9 +83,10 @@ async def test_upsert_session_title_mysql_json_merge_patch():
     sql, args = _last(fake)
     assert sql == STATEMENTS["upsert_session_title"].pick("mysql")
     assert "JSON_MERGE_PATCH" in sql
-    # 参数顺序: (session_id, user_id, config_json)
+    # 参数顺序: (session_id, user_id, title, config_json)
     assert args[0] == "s1" and args[1] == "u1"
-    assert json.loads(args[2]) == {"title": "新标题"}
+    assert args[2] == "新标题"
+    assert json.loads(args[3]) == {"title": "新标题"}
 
 
 async def test_get_session_title_mysql_json_unquote():

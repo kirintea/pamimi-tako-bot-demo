@@ -2,9 +2,10 @@
 
 """MySQL 后端 — aiomysql 连接池实现
 
-要求 MySQL >= 5.7.22（推荐 8.0）/ MariaDB >= 10.3。
+要求 MySQL >= 8.0.20（推荐 8.0.26+）/ MariaDB >= 10.3。
 URL 形如: mysql://user:password@host:3306/dbname（必须带库名）。
 通用 SQL 在此翻译为 %s 占位符（见 core/db/dialect.py）。
+兼容性说明：使用 VALUES() 别名语法（MySQL 8.0.20+ 弃用 VALUES() 函数）。
 """
 
 from __future__ import annotations

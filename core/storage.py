@@ -13,7 +13,6 @@ Session / Conversation 相关 CRUD。
 from __future__ import annotations
 
 import json
-from datetime import datetime
 
 from core.database import DatabaseManager
 from core.storage_models import (
@@ -67,7 +66,8 @@ class PostgresStorage:
         Returns:
             SessionRecord
         """
-        now = datetime.now()
+        # 时间列按 database.timezone 应用侧生成（与 insert_conversation 等一致）
+        now = self._db.now()
         sid = session_id or _generate_id()
         final_depth = 0 if depth is None else depth
 
@@ -204,11 +204,12 @@ class PostgresStorage:
         state_json: str,
     ) -> None:
         """更新 Session 的 AgentState（热路径）"""
+        # updated_at 应用侧按 database.timezone 生成（DB NOW() 可能是 UTC）
         sql = """
-            UPDATE sessions SET "state_json" = $1, "updated_at" = NOW()
-            WHERE "user_id" = $2 AND "id" = $3
+            UPDATE sessions SET "state_json" = $1, "updated_at" = $2
+            WHERE "user_id" = $3 AND "id" = $4
         """
-        await self._db.execute(sql, state_json, user_id, session_id)
+        await self._db.execute(sql, state_json, self._db.now(), user_id, session_id)
 
     async def delete_session(
         self,

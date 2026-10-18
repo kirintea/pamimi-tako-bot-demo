@@ -1,9 +1,10 @@
 -- ============================================================
 -- Pamimi Tako Bot Demo — MySQL 建表脚本
--- 数据库: dmx_agent_db (MySQL >= 5.7.22)
+-- 数据库: dmx_agent_db (MySQL >= 8.0.26 / MariaDB >= 10.3)
 -- 执行方式: mysql -h <host> -u <user> -p dmx_agent_db < init_schema_mysql.sql
 -- 说明: CREATE TABLE 带 IF NOT EXISTS；索引重复创建会报 1061 可忽略
 --       所有列名统一反引号，避免与 SQL 保留字冲突
+-- 兼容性: 适配 MySQL 8.0.26，使用 VALUES() 别名语法（MySQL 8.0.20+ 弃用 VALUES() 函数）
 -- ============================================================
 
 -- 1. 对话历史表（核心）

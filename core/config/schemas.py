@@ -228,12 +228,27 @@ class DatabaseConfig(BaseModel):
         default=True,
         description="初始化后校验必需表是否存在（关闭建表时强烈建议开启）",
     )
+    timezone: str = Field(
+        default="Asia/Shanghai",
+        description="时间列时区：应用侧生成 created_at/last_active 等显式传参（DB NOW() 可能是 UTC，仅作兜底）",
+    )
 
     @field_validator("backend")
     @classmethod
     def _validate_backend(cls, v: str) -> str:
         if v not in ("auto", "postgres", "mysql"):
             raise ValueError(f"backend 必须是 auto/postgres/mysql 之一，收到: {v!r}")
+        return v
+
+    @field_validator("timezone")
+    @classmethod
+    def _validate_timezone(cls, v: str) -> str:
+        from zoneinfo import ZoneInfo
+
+        try:
+            ZoneInfo(v)
+        except Exception as e:  # noqa: BLE001 — ZoneInfoNotFoundError/ValueError 统一转 ValueError
+            raise ValueError(f"无效时区 {v!r}: {e}") from e
         return v
 
 
