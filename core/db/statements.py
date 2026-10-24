@@ -289,4 +289,422 @@ STATEMENTS: dict[str, Statement] = {
             LIMIT $1
         """,
     ),
+    # ============================================================
+    # 运营统计聚合（core/stats.py 消费）
+    # 口径见 .draft/2026-10-22-ops-stats-dashboard.md
+    #
+    # 占位符约定（各语句自成一体，见下方注释）：
+    #   *_series: $1=granularity $2=tz $3=start $4=end $5=channel（NULL=全部）
+    #   *_total / stats_channel_*: $1=start $2=end [$3=channel]
+    #
+    # MySQL 侧 created_at 是按 database.timezone 落的 naive 墙钟，分桶无需
+    # 时区转换，故 mysql 变体不引用 $2。translate_placeholders 按出现顺序
+    # 重排参数、多余参数安全忽略，因此双方言可共用同一 args 元组。
+    # ============================================================
+
+    # 使用人数(UV) + 对话轮次(Turns) —— 按桶
+    # turns = COUNT(DISTINCT turn_id)（NULL 自动忽略）
+    #       + turn_id IS NULL 且 role='user' 的旧行数
+    "stats_conv_series": Statement(
+        pg="""
+            SELECT date_trunc($1::text, "created_at" AT TIME ZONE $2::text) AS "bucket",
+                   COUNT(DISTINCT "user_id") AS "uv",
+                   COUNT(DISTINCT "turn_id") AS "turns_v3",
+                   SUM(CASE WHEN "turn_id" IS NULL AND "role" = 'user'
+                            THEN 1 ELSE 0 END) AS "turns_legacy"
+            FROM "conversations"
+            WHERE "status" = 'active'
+              AND "created_at" >= $3 AND "created_at" < $4
+              AND ($5::text IS NULL OR "channel" = $5)
+            GROUP BY 1
+            ORDER BY 1
+        """,
+        mysql="""
+            SELECT CASE $1
+                     WHEN 'day' THEN DATE("created_at")
+                     WHEN 'week' THEN DATE_SUB(DATE("created_at"),
+                                               INTERVAL WEEKDAY("created_at") DAY)
+                     WHEN 'month' THEN STR_TO_DATE(DATE_FORMAT("created_at", '%Y-%m-01'),
+                                                   '%Y-%m-%d')
+                   END AS "bucket",
+                   COUNT(DISTINCT "user_id") AS "uv",
+                   COUNT(DISTINCT "turn_id") AS "turns_v3",
+                   SUM(CASE WHEN "turn_id" IS NULL AND "role" = 'user'
+                            THEN 1 ELSE 0 END) AS "turns_legacy"
+            FROM "conversations"
+            WHERE "status" = 'active'
+              AND "created_at" >= $3 AND "created_at" < $4
+              AND ($5 IS NULL OR "channel" = $5)
+            GROUP BY 1
+            ORDER BY 1
+        """,
+    ),
+
+    # 使用人数 + 对话轮次 —— 整窗合计（uv/turns 跨桶不可加，必须单独算）
+    "stats_conv_total": Statement(
+        pg="""
+            SELECT COUNT(DISTINCT "user_id") AS "uv",
+                   COUNT(DISTINCT "turn_id") AS "turns_v3",
+                   SUM(CASE WHEN "turn_id" IS NULL AND "role" = 'user'
+                            THEN 1 ELSE 0 END) AS "turns_legacy"
+            FROM "conversations"
+            WHERE "status" = 'active'
+              AND "created_at" >= $1 AND "created_at" < $2
+              AND ($3::text IS NULL OR "channel" = $3)
+        """,
+        mysql="""
+            SELECT COUNT(DISTINCT "user_id") AS "uv",
+                   COUNT(DISTINCT "turn_id") AS "turns_v3",
+                   SUM(CASE WHEN "turn_id" IS NULL AND "role" = 'user'
+                            THEN 1 ELSE 0 END) AS "turns_legacy"
+            FROM "conversations"
+            WHERE "status" = 'active'
+              AND "created_at" >= $1 AND "created_at" < $2
+              AND ($3 IS NULL OR "channel" = $3)
+        """,
+    ),
+
+    # 活跃会话数 —— 按桶（活动日归属，同会话跨天各计一次）
+    # INNER JOIN sessions：两口径分母一致（都以 sessions 表为会话真源）
+    "stats_active_series": Statement(
+        pg="""
+            SELECT date_trunc($1::text, c."created_at" AT TIME ZONE $2::text) AS "bucket",
+                   COUNT(DISTINCT c."session_id") AS "sessions_active"
+            FROM "conversations" c
+            JOIN "sessions" s ON s."id" = c."session_id" AND s."status" = 'active'
+            WHERE c."status" = 'active'
+              AND c."created_at" >= $3 AND c."created_at" < $4
+              AND ($5::text IS NULL OR c."channel" = $5)
+            GROUP BY 1
+            ORDER BY 1
+        """,
+        mysql="""
+            SELECT CASE $1
+                     WHEN 'day' THEN DATE(c."created_at")
+                     WHEN 'week' THEN DATE_SUB(DATE(c."created_at"),
+                                               INTERVAL WEEKDAY(c."created_at") DAY)
+                     WHEN 'month' THEN STR_TO_DATE(DATE_FORMAT(c."created_at", '%Y-%m-01'),
+                                                   '%Y-%m-%d')
+                   END AS "bucket",
+                   COUNT(DISTINCT c."session_id") AS "sessions_active"
+            FROM "conversations" c
+            JOIN "sessions" s ON s."id" = c."session_id" AND s."status" = 'active'
+            WHERE c."status" = 'active'
+              AND c."created_at" >= $3 AND c."created_at" < $4
+              AND ($5 IS NULL OR c."channel" = $5)
+            GROUP BY 1
+            ORDER BY 1
+        """,
+    ),
+
+    # 活跃会话数 —— 整窗去重合计
+    "stats_active_total": Statement(
+        pg="""
+            SELECT COUNT(DISTINCT c."session_id") AS "sessions_active"
+            FROM "conversations" c
+            JOIN "sessions" s ON s."id" = c."session_id" AND s."status" = 'active'
+            WHERE c."status" = 'active'
+              AND c."created_at" >= $1 AND c."created_at" < $2
+              AND ($3::text IS NULL OR c."channel" = $3)
+        """,
+        mysql="""
+            SELECT COUNT(DISTINCT c."session_id") AS "sessions_active"
+            FROM "conversations" c
+            JOIN "sessions" s ON s."id" = c."session_id" AND s."status" = 'active'
+            WHERE c."status" = 'active'
+              AND c."created_at" >= $1 AND c."created_at" < $2
+              AND ($3 IS NULL OR c."channel" = $3)
+        """,
+    ),
+
+    # 新增会话数 —— 按桶（创建日归属，每会话只计一次）
+    # sessions.channel 不可信（upsert_session_title 不写，默认 'web'），
+    # 渠道过滤走派生渠道：该会话 active 消息的 MIN(channel)。
+    "stats_new_series": Statement(
+        pg="""
+            SELECT date_trunc($1::text, t."created_at" AT TIME ZONE $2::text) AS "bucket",
+                   COUNT(*) AS "sessions_new"
+            FROM (
+                SELECT s."id" AS "sid", s."created_at" AS "created_at",
+                       COALESCE((SELECT MIN(c."channel") FROM "conversations" c
+                                 WHERE c."session_id" = s."id"
+                                   AND c."status" = 'active'), '') AS "channel"
+                FROM "sessions" s
+                WHERE s."status" = 'active'
+                  AND s."created_at" >= $3 AND s."created_at" < $4
+            ) t
+            WHERE ($5::text IS NULL OR t."channel" = $5)
+            GROUP BY 1
+            ORDER BY 1
+        """,
+        mysql="""
+            SELECT CASE $1
+                     WHEN 'day' THEN DATE(t."created_at")
+                     WHEN 'week' THEN DATE_SUB(DATE(t."created_at"),
+                                               INTERVAL WEEKDAY(t."created_at") DAY)
+                     WHEN 'month' THEN STR_TO_DATE(DATE_FORMAT(t."created_at", '%Y-%m-01'),
+                                                   '%Y-%m-%d')
+                   END AS "bucket",
+                   COUNT(*) AS "sessions_new"
+            FROM (
+                SELECT s."id" AS "sid", s."created_at" AS "created_at",
+                       COALESCE((SELECT MIN(c."channel") FROM "conversations" c
+                                 WHERE c."session_id" = s."id"
+                                   AND c."status" = 'active'), '') AS "channel"
+                FROM "sessions" s
+                WHERE s."status" = 'active'
+                  AND s."created_at" >= $3 AND s."created_at" < $4
+            ) t
+            WHERE ($5 IS NULL OR t."channel" = $5)
+            GROUP BY 1
+            ORDER BY 1
+        """,
+    ),
+
+    # 新增会话数 —— 整窗合计（等于 sessions 表行数）
+    "stats_new_total": Statement(
+        pg="""
+            SELECT COUNT(*) AS "sessions_new"
+            FROM (
+                SELECT s."id" AS "sid",
+                       COALESCE((SELECT MIN(c."channel") FROM "conversations" c
+                                 WHERE c."session_id" = s."id"
+                                   AND c."status" = 'active'), '') AS "channel"
+                FROM "sessions" s
+                WHERE s."status" = 'active'
+                  AND s."created_at" >= $1 AND s."created_at" < $2
+            ) t
+            WHERE ($3::text IS NULL OR t."channel" = $3)
+        """,
+        mysql="""
+            SELECT COUNT(*) AS "sessions_new"
+            FROM (
+                SELECT s."id" AS "sid",
+                       COALESCE((SELECT MIN(c."channel") FROM "conversations" c
+                                 WHERE c."session_id" = s."id"
+                                   AND c."status" = 'active'), '') AS "channel"
+                FROM "sessions" s
+                WHERE s."status" = 'active'
+                  AND s."created_at" >= $1 AND s."created_at" < $2
+            ) t
+            WHERE ($3 IS NULL OR t."channel" = $3)
+        """,
+    ),
+
+    # 渠道维度 —— UV / 轮次（按 conversations.channel 分组）
+    "stats_channel_conv": Statement(
+        pg="""
+            SELECT "channel" AS "channel",
+                   COUNT(DISTINCT "user_id") AS "uv",
+                   COUNT(DISTINCT "turn_id") AS "turns_v3",
+                   SUM(CASE WHEN "turn_id" IS NULL AND "role" = 'user'
+                            THEN 1 ELSE 0 END) AS "turns_legacy"
+            FROM "conversations"
+            WHERE "status" = 'active'
+              AND "created_at" >= $1 AND "created_at" < $2
+            GROUP BY 1
+            ORDER BY 1
+        """,
+        mysql="""
+            SELECT "channel" AS "channel",
+                   COUNT(DISTINCT "user_id") AS "uv",
+                   COUNT(DISTINCT "turn_id") AS "turns_v3",
+                   SUM(CASE WHEN "turn_id" IS NULL AND "role" = 'user'
+                            THEN 1 ELSE 0 END) AS "turns_legacy"
+            FROM "conversations"
+            WHERE "status" = 'active'
+              AND "created_at" >= $1 AND "created_at" < $2
+            GROUP BY 1
+            ORDER BY 1
+        """,
+    ),
+
+    # 渠道维度 —— 活跃会话（按消息行 channel 分组；同会话内 channel 恒定）
+    "stats_channel_active": Statement(
+        pg="""
+            SELECT c."channel" AS "channel",
+                   COUNT(DISTINCT c."session_id") AS "sessions_active"
+            FROM "conversations" c
+            JOIN "sessions" s ON s."id" = c."session_id" AND s."status" = 'active'
+            WHERE c."status" = 'active'
+              AND c."created_at" >= $1 AND c."created_at" < $2
+            GROUP BY 1
+            ORDER BY 1
+        """,
+        mysql="""
+            SELECT c."channel" AS "channel",
+                   COUNT(DISTINCT c."session_id") AS "sessions_active"
+            FROM "conversations" c
+            JOIN "sessions" s ON s."id" = c."session_id" AND s."status" = 'active'
+            WHERE c."status" = 'active'
+              AND c."created_at" >= $1 AND c."created_at" < $2
+            GROUP BY 1
+            ORDER BY 1
+        """,
+    ),
+
+    # 渠道维度 —— 新增会话（按派生会话渠道分组）
+    "stats_channel_new": Statement(
+        pg="""
+            SELECT t."channel" AS "channel", COUNT(*) AS "sessions_new"
+            FROM (
+                SELECT s."id" AS "sid",
+                       COALESCE((SELECT MIN(c."channel") FROM "conversations" c
+                                 WHERE c."session_id" = s."id"
+                                   AND c."status" = 'active'), '') AS "channel"
+                FROM "sessions" s
+                WHERE s."status" = 'active'
+                  AND s."created_at" >= $1 AND s."created_at" < $2
+            ) t
+            GROUP BY 1
+            ORDER BY 1
+        """,
+        mysql="""
+            SELECT t."channel" AS "channel", COUNT(*) AS "sessions_new"
+            FROM (
+                SELECT s."id" AS "sid",
+                       COALESCE((SELECT MIN(c."channel") FROM "conversations" c
+                                 WHERE c."session_id" = s."id"
+                                   AND c."status" = 'active'), '') AS "channel"
+                FROM "sessions" s
+                WHERE s."status" = 'active'
+                  AND s."created_at" >= $1 AND s."created_at" < $2
+            ) t
+            GROUP BY 1
+            ORDER BY 1
+        """,
+    ),
+
+    # 分桶 × 渠道 —— 按天×渠道明细表（口径同 *_series，GROUP BY 再加 channel）
+    # series 式占位符：$1=granularity $2=tz $3=start $4=end $5=channel（NULL=全部）
+    "stats_bucket_channel_conv": Statement(
+        pg="""
+            SELECT date_trunc($1::text, "created_at" AT TIME ZONE $2::text) AS "bucket",
+                   "channel" AS "channel",
+                   COUNT(DISTINCT "user_id") AS "uv",
+                   COUNT(DISTINCT "turn_id") AS "turns_v3",
+                   SUM(CASE WHEN "turn_id" IS NULL AND "role" = 'user'
+                            THEN 1 ELSE 0 END) AS "turns_legacy"
+            FROM "conversations"
+            WHERE "status" = 'active'
+              AND "created_at" >= $3 AND "created_at" < $4
+              AND ($5::text IS NULL OR "channel" = $5)
+            GROUP BY 1, 2
+            ORDER BY 1, 2
+        """,
+        mysql="""
+            SELECT CASE $1
+                     WHEN 'day' THEN DATE("created_at")
+                     WHEN 'week' THEN DATE_SUB(DATE("created_at"),
+                                               INTERVAL WEEKDAY("created_at") DAY)
+                     WHEN 'month' THEN STR_TO_DATE(DATE_FORMAT("created_at", '%Y-%m-01'),
+                                                   '%Y-%m-%d')
+                   END AS "bucket",
+                   "channel" AS "channel",
+                   COUNT(DISTINCT "user_id") AS "uv",
+                   COUNT(DISTINCT "turn_id") AS "turns_v3",
+                   SUM(CASE WHEN "turn_id" IS NULL AND "role" = 'user'
+                            THEN 1 ELSE 0 END) AS "turns_legacy"
+            FROM "conversations"
+            WHERE "status" = 'active'
+              AND "created_at" >= $3 AND "created_at" < $4
+              AND ($5 IS NULL OR "channel" = $5)
+            GROUP BY 1, 2
+            ORDER BY 1, 2
+        """,
+    ),
+
+    "stats_bucket_channel_active": Statement(
+        pg="""
+            SELECT date_trunc($1::text, c."created_at" AT TIME ZONE $2::text) AS "bucket",
+                   c."channel" AS "channel",
+                   COUNT(DISTINCT c."session_id") AS "sessions_active"
+            FROM "conversations" c
+            JOIN "sessions" s ON s."id" = c."session_id" AND s."status" = 'active'
+            WHERE c."status" = 'active'
+              AND c."created_at" >= $3 AND c."created_at" < $4
+              AND ($5::text IS NULL OR c."channel" = $5)
+            GROUP BY 1, 2
+            ORDER BY 1, 2
+        """,
+        mysql="""
+            SELECT CASE $1
+                     WHEN 'day' THEN DATE(c."created_at")
+                     WHEN 'week' THEN DATE_SUB(DATE(c."created_at"),
+                                               INTERVAL WEEKDAY(c."created_at") DAY)
+                     WHEN 'month' THEN STR_TO_DATE(DATE_FORMAT(c."created_at", '%Y-%m-01'),
+                                                   '%Y-%m-%d')
+                   END AS "bucket",
+                   c."channel" AS "channel",
+                   COUNT(DISTINCT c."session_id") AS "sessions_active"
+            FROM "conversations" c
+            JOIN "sessions" s ON s."id" = c."session_id" AND s."status" = 'active'
+            WHERE c."status" = 'active'
+              AND c."created_at" >= $3 AND c."created_at" < $4
+              AND ($5 IS NULL OR c."channel" = $5)
+            GROUP BY 1, 2
+            ORDER BY 1, 2
+        """,
+    ),
+
+    "stats_bucket_channel_new": Statement(
+        pg="""
+            SELECT date_trunc($1::text, t."created_at" AT TIME ZONE $2::text) AS "bucket",
+                   t."channel" AS "channel",
+                   COUNT(*) AS "sessions_new"
+            FROM (
+                SELECT s."id" AS "sid", s."created_at" AS "created_at",
+                       COALESCE((SELECT MIN(c."channel") FROM "conversations" c
+                                 WHERE c."session_id" = s."id"
+                                   AND c."status" = 'active'), '') AS "channel"
+                FROM "sessions" s
+                WHERE s."status" = 'active'
+                  AND s."created_at" >= $3 AND s."created_at" < $4
+            ) t
+            WHERE ($5::text IS NULL OR t."channel" = $5)
+            GROUP BY 1, 2
+            ORDER BY 1, 2
+        """,
+        mysql="""
+            SELECT CASE $1
+                     WHEN 'day' THEN DATE(t."created_at")
+                     WHEN 'week' THEN DATE_SUB(DATE(t."created_at"),
+                                               INTERVAL WEEKDAY(t."created_at") DAY)
+                     WHEN 'month' THEN STR_TO_DATE(DATE_FORMAT(t."created_at", '%Y-%m-01'),
+                                                   '%Y-%m-%d')
+                   END AS "bucket",
+                   t."channel" AS "channel",
+                   COUNT(*) AS "sessions_new"
+            FROM (
+                SELECT s."id" AS "sid", s."created_at" AS "created_at",
+                       COALESCE((SELECT MIN(c."channel") FROM "conversations" c
+                                 WHERE c."session_id" = s."id"
+                                   AND c."status" = 'active'), '') AS "channel"
+                FROM "sessions" s
+                WHERE s."status" = 'active'
+                  AND s."created_at" >= $3 AND s."created_at" < $4
+            ) t
+            WHERE ($5 IS NULL OR t."channel" = $5)
+            GROUP BY 1, 2
+            ORDER BY 1, 2
+        """,
+    ),
+
+    # 渠道筛选器选项 —— 窗口内出现过的 channel（动态，不写死）
+    "stats_channel_options": Statement(
+        pg="""
+            SELECT DISTINCT "channel" AS "channel"
+            FROM "conversations"
+            WHERE "status" = 'active'
+              AND "created_at" >= $1 AND "created_at" < $2
+            ORDER BY 1
+        """,
+        mysql="""
+            SELECT DISTINCT "channel" AS "channel"
+            FROM "conversations"
+            WHERE "status" = 'active'
+              AND "created_at" >= $1 AND "created_at" < $2
+            ORDER BY 1
+        """,
+    ),
 }
