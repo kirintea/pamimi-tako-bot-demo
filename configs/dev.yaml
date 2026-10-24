@@ -1,39 +1,61 @@
-# 开发环境配置
-# 通过 APP_ENV=dev 加载 (默认)
+# ==============================================================================
+#  开发环境配置 · configs/dev.yaml
+#  （由 APP_ENV=dev 加载；本地默认就是 dev，无需额外设置）
+# ------------------------------------------------------------------------------
+#  新人须知：这个文件绝大多数情况不用改！
+#    · 模型密钥 / 地址 / 模型名   → 填在 .env（LLM_API_KEY / LLM_BASE_URL / LLM_MODEL_NAME）
+#    · 系统提示词（Agent 人设）   → 编辑 configs/prompt.py
+#    · 哪些工具可用                → 编辑 configs/tools.yaml
+#    · MCP / Skill 服务            → 在 /webui 页面管理（保存即热加载，存在 configs/*.json）
+#  只有想调「行为参数」（模型温度、上下文压缩、预算、沙箱等）时才需要动本文件。
+# ------------------------------------------------------------------------------
+#  阅读约定：
+#    【必填】不设会导致启动失败       【可选】不设走默认值
+#    ★      新手可能想改的项         ⚠       易踩坑，值得读完
+#    值形如 ${VAR} 或 ${VAR:-默认值} 都从 .env / 环境变量读取；
+#    无默认值的 ${VAR} 没设置 → 启动直接失败（fail-fast）。
+# ==============================================================================
 
-# OpenTelemetry 追踪（可选，开发默认关闭）
-# endpoint: OTLP gRPC 上报地址（Jaeger / OTEL Collector）
-# channel:  消息渠道 Resource tag，多渠道部署时按实例区分（web / feishu / wechat）
+# ── 链路追踪（可选，开发默认关闭）────────────────────────────
+# 把每次 LLM 调用 / 工具调用串成一条链路，方便排查。用 Jaeger/Collector 时再开。
 otel:
-  enabled: true
-  endpoint: "${OTEL_ENDPOINT:-http://localhost:4317}"
+  enabled: false                 # false = 不追踪
+  endpoint: "${OTEL_ENDPOINT:-http://localhost:4317}"   # OTLP gRPC 上报地址
   service_name: "pamimi-tako-bot-demo"
   service_version: "0.2.1"
   environment: "development"
-  channel: "${OTEL_CHANNEL:-web}"
+  # ⚠ 进程级渠道标签：一个进程只标一个渠道，不会按消息动态识别。
+  #   若同一实例既跑 web 又接飞书/微信，那些消息仍会被标成这里的值（默认 web）。
+  #   多渠道接入的正确姿势是「每渠道独立部署一个实例」，各自设 OTEL_CHANNEL。
+  channel: "${OTEL_CHANNEL:-web}"  # web / feishu / wechat
   headers: {}
 
-# LLM 模型配置（* 必填 api_key / base_url / model）
-# provider:  openai（兼容接口）/ dashscope 
-# stream:    是否默认流式输出
-# timeout:   调用超时（秒），流式模式下为空闲无事件超时
+# ── LLM 模型 【必填，但从 .env 读】─────────────────────────
+# 对话用的模型。api_key / base_url / model 三项在 .env 里填，这里只是把它们
+# 接进 AgentScope；要换模型就改 .env，别改这里。
 llm:
+  # ★ provider 只选 Formatter；模型层统一 OpenAIChatModel（OpenAI 协议），
+  #   所以 base_url 必须是 OpenAI 兼容端点（百炼 compatible-mode / Ollama /v1 / vLLM 等；
+  #   anthropic / gemini / dashscope 原生端点接不了）。
+  #   常用：dashscope / siliconflow / ollama / openai，完整映射见 factory.py:_select_formatter；
+  #   填映射表外的值静默退回 openai。
   provider: "openai"
   api_key: "${LLM_API_KEY}"
   base_url: "${LLM_BASE_URL}"
   model: "${LLM_MODEL_NAME:-qwen-max}"
-  stream: true
-  context_size: 128000
-  max_tokens: 4096
-  temperature: 0.7
+  stream: true                   # 默认流式输出
+  context_size: 128000           # 模型上下文窗口（token），超过触发压缩
+  max_tokens: 4096               # 单次回复最大 token
+  temperature: 0.7               # 采样温度：越高越发散，越低越刻板
 
-# API 认证（开发默认关闭；生产必须 required: true）
-# required: true 时，HTTP Header 需携带 Authorization: Bearer <api_key>
-# 代码中也可通过 AUTH_REQUIRED=true 环境变量强制开启
+# ── API 访问认证（开发默认关闭）────────────────────────────
+# 开启后，请求头需带 X-API-Key: <api_key>（不是 Authorization: Bearer）。
+# 本地调试用默认的关闭即可；生产环境建议 required: true。
 auth:
   required: false
   api_key: "${API_KEY:-}"
 
+# ── 服务监听（一般不用动）──────────────────────────────────
 server:
   host: "0.0.0.0"
   port: 8090
@@ -42,152 +64,156 @@ server:
   log_dir: "logs"
   log_backup_count: 7
 
+# ── Agent 行为 ─────────────────────────────────────────────
 agent:
   name: "pamimi_tako_bot_demo"
-  # 系统提示词（从 configs/prompt.py 加载，修改提示词编辑该文件即可）
+
+  # ★ 系统提示词：Agent 的"人设"和规矩，写在 configs/prompt.py，这里只指向它
   system_prompt:
     module_path: "configs.prompt"
     name: "SYSTEM_PROMPT"
+
+  # ★ 单次对话最多允许多少轮工具调用（防死循环），50 基本够用
   max_iters: 50
-  # trigger_ratio: 压缩触发阈值（占 context_size 比例），0.6 × 256K ≈ 153K tokens 时触发。
-  # 生产环境可调至 0.5 进一步提前触发，减少单次请求 token 消耗。
+
+  # 上下文压缩：超过 context_size × 0.6 时自动把旧内容压成摘要，
+  # 并保留最近 0.15 的原文。想更早触发可调低 trigger 比例。
   context_trigger_ratio: 0.6
-  # reserve_ratio: 压缩后保留近期上下文比例，0.15 × 256K ≈ 38K tokens
   context_reserve_ratio: 0.15
-  # tool_result_limit: 单条工具结果 token 上限，防止单次工具调用占满上下文（MCP 大结果会被截断到此值）
+  # 单条工具结果 token 上限，防止一次 MCP 大结果把上下文撑爆（超出会被截断）
   tool_result_limit: 35000
-  # reply_token_budget: 遗留字段，当前代码未引用，不生效！
-  # 实际生效的回复预算在下方 middleware.budget_control.token_budget。
+  # ⚠ 遗留字段，代码已不读取，改了没效果；真正生效的回复预算在下方 middleware.budget_control
   reply_token_budget: 500000
-  # 运行时注入配置
+
+  # 运行时注入：把当前时间/平台名等注入给模型
   injection:
     timezone: "Asia/Shanghai"
-    time_interval: 0.5                    # 每 30 分钟刷新时间
-    context_buffer_ratio: 0.15            # 压缩阈值前 15% 开始预警
-    emit_hint_event: true                 # 前端可渲染注入内容
+    time_interval: 0.5            # 时间刷新间隔（单位：小时；0.5 = 30 分钟）
+    context_buffer_ratio: 0.15    # 压缩阈值前 15% 开始预警
+    emit_hint_event: true         # 前端可渲染注入内容
     extra_fields:
       platform: "Pamimi Tako Bot Demo"
 
   permission_mode: "bypass"
-  # 沙箱配置（双域布局：agent_space/ 共享只读 + user_spaces/{user_id}/ 私有可读写）
+
+  # 沙箱目录：workspaces/（agent_space 共享只读 + user_spaces/{user_id} 私有可读写）
   sandbox_dir: "workspaces"
-  # root 预置：命中者角色为 root，可写 agent_space 并只读查看他人会话。
-  # 也可用环境变量 ROOT_USER_IDS（逗号分隔）追加，环境变量优先于此处。
+  # ★ root 用户：命中者拥有管理员权限。也可用环境变量 ROOT_USER_IDS 追加（逗号分隔，环境变量优先）
   root_user_ids:
     - "root"
-  sandbox_skills: true       # true 时 skills 从 agent_space/skills/ 加载（双域共享只读域）
-  sandbox_mcp: false         # true 时 MCP 配置从 agent_space/mcp/ 加载
-  sandbox_per_user: true    # true 时沙箱路径追加 user_id 层级（user_spaces/{user_id}/）
+  sandbox_skills: true           # true：skills 从 agent_space/skills/ 加载
+  sandbox_mcp: false             # true：MCP 配置从 agent_space/mcp/ 加载
+  sandbox_per_user: true         # true：沙箱路径按用户隔离（user_spaces/{user_id}/）
+
+  # 工具名级守卫：白名单/黑名单控制 Agent 能用哪些工具（开发默认关）
   tool_guard:
     enabled: false
-    mode: "allowlist" # allowlist | blocklist
+    mode: "allowlist"            # allowlist（只放行名单内）/ blocklist（只拦名单内）
     tools: ["Skill"]
 
+  # 命令内容守卫：拦截危险命令（开发默认开，见 docs/dangerous-commands.md）
   command_guard:
     enabled: true
-    mode: "blocklist"           # allowlist | blocklist
+    mode: "blocklist"            # allowlist | blocklist
     rules:
-      - "rm -rf /"              # 拦截删根目录
-      - "rm -rf ~"              # 拦截删 home
-      - "rm -rf /*"             # 拦截删根目录通配
-      - "*|*bash*"              # 拦截管道执行 shell
-      - "*|*sh*"                # 拦截管道执行 sh
-      - "*/dev/tcp/*"           # 拦截 Bash 反弹 shell
-      - "Invoke-Expression*"    # 拦截 PowerShell 远程执行
-      - "certutil*"             # 拦截 Windows 下载
-      - "curl *|*"              # 拦截 curl 管道 (curl 下载可以，管道不行)
+      - "rm -rf /"               # 删根目录
+      - "rm -rf ~"               # 删 home
+      - "rm -rf /*"              # 删根目录通配
+      - "*|*bash*"               # 管道执行 shell
+      - "*|*sh*"                 # 管道执行 sh
+      - "*/dev/tcp/*"            # Bash 反弹 shell
+      - "Invoke-Expression*"     # PowerShell 远程执行
+      - "certutil*"              # Windows 下载
+      - "curl *|*"               # curl 管道（curl 下载本身可以，管道不行）
 
-  # 工具管理器 — 从 configs/tools.yaml 选择性加载工具
+  # 工具管理器：从 configs/tools.yaml 选择性加载工具（改"有哪些工具"去那边）
   tool_manager:
     config_path: "configs/tools.yaml"
 
-# MCP 服务不在 YAML 中配置 —— 唯一真源是 configs/mcps.json
-# （前端 /webui 或 REST /mcp 管理，保存即热加载，新建会话生效）
-# 注意：AppConfig 为 extra="forbid"，此处写 mcp_servers 会直接启动失败。
+# ⚠ MCP 服务不写在 YAML 里 —— 唯一真源是 configs/mcps.json（/webui 或 REST /mcp 管理）。
+#   AppConfig 为 extra="forbid"，此处写 mcp_servers 会直接启动失败。
 
+# ── 数据库（存对话历史 / 用户 / MCP / Skill）───────────────
+# 连接串从 .env 的 DATABASE_URL 读；不填则用下面的本地默认串。
+# ⚠ 本地没装数据库、想直接跑：在 .env 设 DATABASE_URL=（等号后留空）跳过数据库，
+#   详情见 .env 第 3 节（哪些功能会不可用，那边有清单）。
+#   注意区分：变量「不设置」≠「留空」——不设置会用下面默认串去连，连不上就启动失败。
 database:
-  # ------------------------------------------------------------
-  # 数据库（PostgreSQL / MySQL 二选一，backend=auto 按 URL scheme 推断）
-  #   auto_create_tables: 启动时自动执行幂等 DDL 建表
-  #   verify_tables:      建表/连接后校验必需表齐全（禁用 DDL 时尤其重要）
-  #   初始化失败固定 fail-fast：ERROR 日志（根因/缺表清单）→ 抛出 → 进程启动失败退出
-  # 注意：url 默认值为本地开发凭据，仅用于 localhost。
-  # 真实部署（尤其是生产环境）必须显式设置 DATABASE_URL 环境变量，
-  # 切勿使用默认账号/密码直连数据库。
-  # ------------------------------------------------------------
-  backend: "auto"
+  backend: "auto"                # auto（按 URL 前缀自动判断）/ postgres / mysql
   url: "${DATABASE_URL:-postgresql://user:password@localhost:5432/dmx_agent_db}"
-  pool_size: 10
-  auto_create_tables: true
-  verify_tables: true
-  # 时间列时区：created_at / last_active 等由应用侧按此时区生成后显式传参
-  # （DB 服务端可能跑 UTC，NOW()/DEFAULT 只作兜底，避免入库时间差 8 小时）
+  pool_size: 10                  # 连接池大小
+  auto_create_tables: true       # 启动时自动建表（幂等）
+  verify_tables: true            # 建表后校验必需表齐全
+  # 时间列时区：应用侧按此时区生成时间再入库（DB 服务端可能跑 UTC，避免差 8 小时）
   timezone: "Asia/Shanghai"
 
+# ── Redis（可选）───────────────────────────────────────────
+# 用途：跨实例消息广播 + kv.backend=redis 时的会话存储。
+# 本地不启动 Redis 也能跑：消息总线重试 3 次（启动累计慢约 20 秒）后降级为进程内总线，
+# /health 里 redis 显示 unavailable 但整体仍 ok。降级后失去跨实例广播 / 多端状态同步，
+# 单实例对话不受影响。
 redis:
   url: "${REDIS_URL:-redis://localhost:6379/0}"
   key_prefix: "dmx_agent_redis:session:"
-  session_ttl: 1800
+  session_ttl: 1800               # 会话在内存/Redis 的存活秒数
 
-# KV 存储（会话状态 / 元数据持久化层）
-#   redis — 默认，与消息总线共用 Redis（多实例 / 生产）
-#   jsonl — 开发/资源受限：本地 JSONL 文件（workspaces/.history/kv_data/kv.jsonl），单进程，无 Redis 依赖
+# ── KV 存储（会话「记忆」放哪）─────────────────────────────
+#   redis — 放 Redis（多实例 / 生产用）
+#   jsonl — 放本地文件（workspaces/.history/kv_data/），单进程开发，不依赖 Redis
 kv:
-  backend: "${KV_BACKEND:-redis}"            # redis / jsonl（可用环境变量临时切换）
+  # 当前硬编码 jsonl（本地无 Redis 开发）。此时 .env 的 KV_BACKEND 不生效；
+  # 要改回「按环境变量切换」，注释掉本行、放开下面 ${KV_BACKEND:-redis} 那行。
+  backend: "jsonl"               # redis / jsonl
+  # backend: "${KV_BACKEND:-redis}"
   jsonl_path: "${KV_JSONL_PATH:-workspaces/.history/kv_data}"
-  jsonl_compact_threshold: 5000              # 追加行数达到阈值时压缩重写
+  jsonl_compact_threshold: 5000   # 追加行数达此阈值时压缩重写文件
 
-# 上下文回填配置
-# 当会话从 PG 恢复到 Redis 时（用户重连 / 跨实例迁移），
-# 控制回填多少条历史消息和 token 预算，避免一次性加载过多。
+# ── 上下文回填（一般不用动）────────────────────────────────
+# 会话从数据库恢复到内存时，最多回填多少历史消息 / 消耗多少 token，防止一次加载过多。
 context:
-  backfill_message_limit: 20        # 回填消息条数上限
-  backfill_token_budget: 15000      # 回填 token 预算
+  backfill_message_limit: 20
+  backfill_token_budget: 15000
 
-# 中间件配置
-# budget_control: 回复预算控制 — 单次回复加权 token 超限时自动收尾
-#   加权成本 = Σ每次模型调用(input×input_weight + output×output_weight)，单次回复内累进。
-#   MCP 大结果 + skill 全文会使每轮 input 都很大，8~10 轮工具调用的回复累进可达 50 万+，
-#   预算过小会在任务中途触发"Token 预算即将耗尽"并强制收尾（禁止再调工具）。
-# rate_limit: 速率限制（默认 10 req/min per-user，未配置则使用 schema 默认值）
+# ── 中间件（预算控制 / 速率限制）────────────────────────────
+# budget_control：单次回复累计 token 超预算时自动收尾（不让工具无休止地跑）。
+#   预算= Σ每次模型调用(输入×input_weight + 输出×output_weight)。
+#   MCP 大结果 + skill 全文会让每轮输入都很大，重工具场景单次回复能到 50 万+，
+#   预算太小会在任务中途触发"预算即将耗尽"并禁止再调工具。
 middleware:
   budget_control:
     enabled: true
-    token_budget: 500000            # 单次回复累进加权 token 预算（原 80000 过小，重工具场景 1~2 轮就耗尽）
+    token_budget: 500000         # 单次回复累计预算
     input_weight: 1
-    output_weight: 2                # 输出 token 成本更高；若仍频繁触顶可降为 1
-  # rate_limit:
+    output_weight: 2             # 输出 token 更贵；频繁触顶可降到 1
+  # rate_limit:                  # 每用户请求速率限制（未配置走 schema 默认 10 req/min）
   #   enabled: true
   #   requests_per_minute: 10
 
-# 沙箱配置
-# backend: "local" = 直接本机执行（默认），"docker" = 转发到沙箱容器
-# 设为 "docker" 前需先启动沙箱容器：
-#   docker compose -f docker-compose.sandbox.yml up -d sandbox
+# ── 沙箱（工具在哪执行）────────────────────────────────────
+# backend: local（本机直接跑）/ docker（转发到隔离容器）。
+# 用 docker 前先启动容器：docker compose -f docker-compose.sandbox.yml up -d sandbox
 sandbox:
   # backend: "${SANDBOX_BACKEND:-local}"
   backend: "docker"
   container: "pamimi-tako-bot-demo-sandbox"
   project_root: "/workspace"
   # 额外挂载（宿主机路径 → 容器内路径）
-  # ⚠ host 路径需与 agent.sandbox_skills 的实际加载路径一致：
-  #   sandbox_skills=false 时 → host: "skills"（项目根，当前配置）
-  #   sandbox_skills=true + per_user=true 时 → 需按 user_id 动态挂载
+  # ⚠ host 路径要与 agent.sandbox_skills 的实际加载路径一致；
+  #   sandbox_skills=false 时用 host: "skills"（项目根）。
   extra_mounts:
-    # 双域防御纵深：仅将 agent_space 以只读方式挂入容器，
-    # 防止容器内 Bash/Python 工具越权改写 Agent 共享资产。
-    # 用户私有域 user_spaces/{user_id} 由 DockerSandboxProxy 按会话动态挂载（读写）。
+    # 仅把 agent_space 只读挂入容器（防容器内工具越权改写共享资产）；
+    # 用户私有域 user_spaces/{user_id} 由代理按会话动态挂载（读写）。
     - host: "workspaces/agent_space"
       container: "/workspace/agent_space"
       readonly: true
 
-# 对象存储配置（图片上传等；S3/OSS 环境变量见 .env.example 第 9 节）
+# ── 对象存储（图片上传存哪，可选）──────────────────────────
+# 只实现了本地存储，s3/oss/vbs 这些未对接实现
 object_storage:
-  backend: "local"              # local / s3 / aliyun_oss
-  # 本地存储落入用户私有域：key 布局 {user_id}/uploads/{date}/{uuid}.ext
-  # → 实际磁盘 workspaces/user_spaces/{user_id}/uploads/...
-  prefix: "uploads/"            # 对象 key 前缀（位于 user_id 之后）
-  local_dir: "workspaces/user_spaces"  # 本地存储根（backend=local），与双域用户域一致
+  backend: "local"               # local / s3 / aliyun_oss
+  # 本地存储落在用户私有域：key 布局 {user_id}/uploads/{date}/{uuid}.ext
+  prefix: "uploads/"
+  local_dir: "workspaces/user_spaces"
 
   # backend=s3 时生效（AWS S3 / MinIO / Cloudflare R2）
   # s3_endpoint: "${S3_ENDPOINT:-http://localhost:9000}"
@@ -195,7 +221,7 @@ object_storage:
   # s3_secret_key: "${S3_SECRET_KEY:-minioadmin}"
   # s3_bucket: "${S3_BUCKET:-agentscope-images}"
   # s3_region: "${S3_REGION:-us-east-1}"
-  # s3_addressing_style: "path"   # MinIO 用 "path"，AWS S3 用 "virtual"
+  # s3_addressing_style: "path"  # MinIO 用 "path"，AWS S3 用 "virtual"
 
   # backend=aliyun_oss 时生效
   # oss_endpoint: "${OSS_ENDPOINT:-https://oss-cn-hangzhou.aliyuncs.com}"
@@ -203,14 +229,14 @@ object_storage:
   # oss_secret_key: "${OSS_SECRET_KEY:-}"
   # oss_bucket: "${OSS_BUCKET:-agentscope-images}"
 
-# 图片输入配置
+# ── 图片输入（一般不用动）──────────────────────────────────
 image:
   enabled: true
-  max_size_mb: 10               # 单张图片最大 MB
-  max_count_per_msg: 5          # 单条消息最多图片数
-  allowed_types:                # 允许的 MIME 类型
+  max_size_mb: 10                # 单张图片上限（MB）
+  max_count_per_msg: 5           # 单条消息最多图片数
+  allowed_types:                 # 允许的图片类型
     - "image/png"
     - "image/jpeg"
     - "image/gif"
     - "image/webp"
-  presigned_url_ttl: 300        # Presigned URL 有效期（秒）
+  presigned_url_ttl: 300         # 图片临时访问链接有效期（秒）
