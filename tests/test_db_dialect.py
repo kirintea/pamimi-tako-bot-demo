@@ -43,6 +43,24 @@ class TestTranslatePlaceholders:
         assert sql == "INSERT INTO t VALUES (%s, %s)"
         assert args == (9, 0)
 
+    def test_literal_percent_escaped(self):
+        """SQL 字面 %（如 DATE_FORMAT 的 '%Y-%m-01'）必须转义为 %%
+
+        不转义的话 pymysql 的 `query % args` 会把它当成格式符，
+        抛 ValueError: unsupported format character 'Y'。
+        """
+        sql, args = translate_placeholders(
+            "SELECT DATE_FORMAT(c, '%Y-%m-01') FROM t WHERE id = $1", ("s1",)
+        )
+        assert sql == "SELECT DATE_FORMAT(c, '%%Y-%%m-01') FROM t WHERE id = %s"
+        assert args == ("s1",)
+
+    def test_literal_percent_without_placeholder_left_alone(self):
+        """无 $N 占位符时原样返回（幂等，不改写 %）"""
+        sql, args = translate_placeholders("SELECT DATE_FORMAT(c, '%Y')", ())
+        assert sql == "SELECT DATE_FORMAT(c, '%Y')"
+        assert args == ()
+
 
 class TestFormatStatus:
     def test_insert(self):

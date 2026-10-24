@@ -17,7 +17,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from loguru import logger
@@ -124,10 +124,18 @@ class DatabaseManager:
         - PostgreSQL TIMESTAMPTZ → aware 时间（asyncpg 自动转 UTC 存储）
         """
         now = datetime.now(ZoneInfo(self._config.timezone))
-        dialect = getattr(self._backend, "dialect", "postgres")
-        if dialect == "mysql":
+        if self.dialect == "mysql":
             return now.replace(tzinfo=None)
         return now
+
+    @property
+    def dialect(self) -> str:
+        """当前后端方言（"postgres" / "mysql"）
+
+        统计模块按方言决定时间列传参形状（PG aware / MySQL naive），
+        与 now() 的分支保持同一判定来源。
+        """
+        return getattr(self._backend, "dialect", "postgres")
 
     def _serialize_dt(self, value: datetime | None) -> str | None:
         """时间列 → isoformat 字符串（读路径统一出口）
@@ -255,6 +263,7 @@ class DatabaseManager:
         session_id: str,
         before_id: int | None = None,
         limit: int = 50,
+        include_archived: bool = False,
     ) -> dict:
         """获取对话历史（游标分页，正序）
 
@@ -263,6 +272,11 @@ class DatabaseManager:
             session_id: 会话 ID
             before_id: 游标，获取此 ID 之前的消息（用于加载更多）
             limit: 返回记录数上限
+            include_archived: 是否带上 ``status='archived'`` 的行。默认否 ——
+                对话恢复 / UI 回放只要 active。观测台要看中间链路，必须传
+                True：thinking / tool_call 内部行落库后会被「轮内压缩」软删
+                成 archived，否则整条链只剩 user + text。``deleted`` 两种取
+                法都排除（那是真软删，不是内部行压缩）。
 
         Returns:
             {
@@ -271,20 +285,21 @@ class DatabaseManager:
                 "oldest_id": int | None
             }
         """
+        status_clause = '"status" != \'deleted\'' if include_archived else '"status" = \'active\''
         if before_id:
-            sql = """
+            sql = f"""
                 SELECT "id", "role", "content", "metadata", "created_at", "turn_id", "turn_seq"
                 FROM conversations
-                WHERE "user_id" = $1 AND "session_id" = $2 AND "status" = 'active' AND "id" < $3
+                WHERE "user_id" = $1 AND "session_id" = $2 AND {status_clause} AND "id" < $3
                 ORDER BY "id" DESC
                 LIMIT $4
             """
             rows = await self.fetch(sql, user_id, session_id, before_id, limit)
         else:
-            sql = """
+            sql = f"""
                 SELECT "id", "role", "content", "metadata", "created_at", "turn_id", "turn_seq"
                 FROM conversations
-                WHERE "user_id" = $1 AND "session_id" = $2 AND "status" = 'active'
+                WHERE "user_id" = $1 AND "session_id" = $2 AND {status_clause}
                 ORDER BY "id" DESC
                 LIMIT $3
             """
@@ -315,6 +330,34 @@ class DatabaseManager:
             "has_more": has_more,
             "oldest_id": oldest_id,
         }
+
+    async def session_freshness(
+        self,
+        user_id: str,
+        session_id: str,
+        *,
+        within_hours: float,
+    ) -> bool | None:
+        """会话在最近 ``within_hours`` 内是否仍有对话（渠道空闲自动新开的过期判定）。
+
+        - True  — 窗口内有对话（新鲜，延续当前会话）
+        - False — 有历史但窗口内无对话（已过期，应自动新开）
+        - None  — 无任何历史（全新对话）/ 无法判定
+
+        阈值用 ``now()`` 应用侧生成（与时间列写入同一时钟约定），
+        避免 DB 服务端 UTC 与配置时区差 8 小时。
+        """
+        threshold = self.now() - timedelta(hours=within_hours)
+        row = await self.fetchrow(
+            'SELECT MAX("created_at") AS last_at, '
+            'MAX(CASE WHEN "created_at" >= $3 THEN 1 ELSE 0 END) AS has_recent '
+            'FROM conversations '
+            'WHERE "user_id" = $1 AND "session_id" = $2 AND "status" != \'deleted\'',
+            user_id, session_id, threshold,
+        )
+        if row is None or row["last_at"] is None:
+            return None
+        return bool(row["has_recent"])
 
     async def copy_conversations_prefix(
         self,
