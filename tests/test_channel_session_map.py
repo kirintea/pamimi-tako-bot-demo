@@ -183,3 +183,81 @@ class TestResolveOrRotate:
             "u1", "wecom", "chat1", default="ch-d", idle_hours=-1, now=t0 + 10**8,
         )
         assert sid == "ch-a" and rotated is None
+
+
+class TestResolveOrRotateStaleProbe:
+    """指针缺失/无时钟时的过期判定 — stale_probe 契约
+
+    背景：指针一丢（重启/驱逐/首次接入）旧逻辑无条件固化 default（derive），
+    过期判定形同虚设 —— 旧会话永不轮换，且复活旧重上下文。
+    """
+
+    @staticmethod
+    def _probe(result, calls=None):
+        async def probe(session_id: str):
+            if calls is not None:
+                calls.append(session_id)
+            return result
+
+        return probe
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_missing_pointer_stale_rotates_from_default(self):
+        m, kv = _map()
+        calls: list[str] = []
+        sid, rotated = await m.resolve_or_rotate(
+            "u1", "wecom", "chat1", default="ch-d", idle_hours=24.0,
+            now=1_700_000_000.0, stale_probe=self._probe(False, calls),
+        )
+        assert calls == ["ch-d"]  # 判定对象是候选（default）本身
+        assert rotated == "ch-d"  # 轮换自旧会话，上层可清理 + 发提示
+        assert sid != "ch-d" and sid.startswith("ch-")
+        assert await m.resolve("u1", "wecom", "chat1") == sid
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_missing_pointer_fresh_or_unknown_binds_default(self):
+        for fresh in (True, None):
+            m, _ = _map()
+            sid, rotated = await m.resolve_or_rotate(
+                "u1", "wecom", "chat1", default="ch-d", idle_hours=24.0,
+                now=1_700_000_000.0, stale_probe=self._probe(fresh),
+            )
+            assert sid == "ch-d" and rotated is None, fresh
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_legacy_pointer_stale_rotates(self):
+        """旧格式指针（无时钟）同规则：过期 → 轮换，不再无条件续用"""
+        m, kv = _map()
+        key = m._key("u1", "wecom", "chat1")
+        await kv.set(key, json.dumps({"session_id": "ch-legacy"}))
+        sid, rotated = await m.resolve_or_rotate(
+            "u1", "wecom", "chat1", default="ch-d", idle_hours=24.0,
+            now=1_700_000_000.0, stale_probe=self._probe(False),
+        )
+        assert rotated == "ch-legacy"
+        assert sid != "ch-legacy" and sid.startswith("ch-")
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_pointer_with_clock_skips_probe(self):
+        """指针自带 last_active：按指针时钟判定，不查库（探针零调用）"""
+        m, _ = _map()
+        await m.bind("u1", "wecom", "chat1", "ch-a", now=1_700_000_000.0)
+        calls: list[str] = []
+        sid, rotated = await m.resolve_or_rotate(
+            "u1", "wecom", "chat1", default="ch-d", idle_hours=24.0,
+            now=1_700_000_000.0 + 3600, stale_probe=self._probe(False, calls),
+        )
+        assert calls == []
+        assert sid == "ch-a" and rotated is None
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_probe_error_binds_default(self):
+        async def probe(session_id: str):
+            raise RuntimeError("db down")
+
+        m, _ = _map()
+        sid, rotated = await m.resolve_or_rotate(
+            "u1", "wecom", "chat1", default="ch-d", idle_hours=24.0,
+            now=1_700_000_000.0, stale_probe=probe,
+        )
+        assert sid == "ch-d" and rotated is None

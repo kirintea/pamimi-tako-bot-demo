@@ -19,6 +19,7 @@ import hashlib
 import json
 import time
 import uuid
+from collections.abc import Awaitable, Callable
 
 from loguru import logger
 
@@ -114,6 +115,7 @@ class ChannelSessionMap:
         default: str,
         idle_hours: float = 24.0,
         now: float | None = None,
+        stale_probe: Callable[[str], Awaitable[bool | None]] | None = None,
     ) -> tuple[str, str | None]:
         """入站解析当前会话；空闲超过 idle_hours 自动轮换到全新会话。
 
@@ -122,17 +124,41 @@ class ChannelSessionMap:
 
         - 指针不存在 → 固化 default（与 get_or_init 一致）
         - idle_hours <= 0 → 禁用自动轮换（仅 /new 手动）
-        - 旧格式指针（无 last_active）→ 补写时间戳，不轮换
+        - 旧格式指针（无 last_active）→ 补写时间戳；仅当 stale_probe 判定过期才轮换
         - 恰好 idle_hours 边界不算过期（严格大于才轮换）
+        - stale_probe(session_id)：仅在指针读不到 last_active（指针缺失 / 旧格式
+          / 时钟损坏）时调用。True=窗口内仍有对话（延续）、False=已过期（轮换，
+          rotated_from=候选会话）、None=无法判定（按现状延续）。没有它，指针一丢
+          就会无条件复活 default（derive 旧会话），N 小时自动新开对这类会话
+          永不生效，且把很早之前的历史带进「新对话」。
         """
         ts = time.time() if now is None else now
         cur, last_active = await self._read(user_id, channel, chat_id)
-        if cur is None:
-            await self.bind(user_id, channel, chat_id, default, now=ts)
-            return default, None
+
         if last_active is None:
-            await self.bind(user_id, channel, chat_id, cur, now=ts)
-            return cur, None
+            # 指针缺失或无时钟：候选 = 指针 session（旧格式）或 default（derive）
+            candidate = cur if cur is not None else default
+            fresh: bool | None = None
+            if stale_probe is not None:
+                try:
+                    fresh = await stale_probe(candidate)
+                except Exception:
+                    logger.exception(
+                        "ChannelSessionMap: 会话过期探测失败 candidate={}", candidate,
+                    )
+                    fresh = None
+            if fresh is False and idle_hours > 0:
+                new_sid = mint_session_id()
+                await self.bind(user_id, channel, chat_id, new_sid, now=ts)
+                logger.info(
+                    "ChannelSessionMap: 候选会话已过期自动新开 user={} channel={} chat={} "
+                    "old={} new={} idle_h={}",
+                    user_id, channel, chat_id, candidate, new_sid, idle_hours,
+                )
+                return new_sid, candidate
+            await self.bind(user_id, channel, chat_id, candidate, now=ts)  # 固化/补写时钟
+            return candidate, None
+
         if idle_hours > 0 and (ts - last_active) > idle_hours * 3600:
             new_sid = mint_session_id()
             await self.bind(user_id, channel, chat_id, new_sid, now=ts)

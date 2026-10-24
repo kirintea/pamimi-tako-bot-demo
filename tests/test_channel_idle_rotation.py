@@ -96,13 +96,25 @@ def _config_store(idle_by_channel: dict[str, float | None]):
     return SimpleNamespace(get_by_id=get_by_id)
 
 
-def _make_manager(session_map, session_mgr, idle_by_channel) -> ChannelManager:
+class _FreshnessDb:
+    """DatabaseManager 桩 — 只实现会话新鲜度查询（session_freshness）"""
+
+    def __init__(self, values: dict[str, bool | None]) -> None:
+        self.values = values
+        self.calls: list[tuple] = []
+
+    async def session_freshness(self, user_id, session_id, *, within_hours):
+        self.calls.append((user_id, session_id, within_hours))
+        return self.values.get(session_id)
+
+
+def _make_manager(session_map, session_mgr, idle_by_channel, db=None) -> ChannelManager:
     return ChannelManager(
         config_store=_config_store(idle_by_channel),
         bus=InMemoryMessageBus(),
         chat_service=_RecordingChatService(),
         object_storage=None,
-        db=None,
+        db=db,
         session_mgr=session_mgr,
         session_map=session_map,
     )
@@ -330,4 +342,102 @@ async def test_rotation_notice_even_if_session_exists():
     first_text = inst.sent[0][1]
     assert "自动开启新会话" in first_text
     assert new_sid in first_text
+    await mgr._bus.aclose()
+
+
+# ---------------------------------------------------------------------------
+# 指针缺失/无时钟时的过期判定 — 不能复活 derive 旧会话（回归：重启后带上旧历史）
+# ---------------------------------------------------------------------------
+
+
+async def test_first_contact_stale_history_auto_rotates():
+    """指针缺失（首触/重启丢指针）且 derive 会话已过期 → 自动新开，不复活旧历史。
+
+    回归场景：指针不存在时旧逻辑无条件固化 derive 会话（原始重上下文），
+    「过 N 小时自动新开」对这类会话永不生效，重启后新对话直接吃进很早之前的旧历史。
+    """
+    kv = FakeKV()
+    smap = ChannelSessionMap(kv, PREFIX)
+    derived = ChannelManager.derive_session_id("u1", "wecom", "chat1")
+    db = _FreshnessDb({derived: False})  # 有历史，但最后对话已超出 N 小时
+    session_mgr = _SessionMgrStub(exists=False)
+    mgr = _make_manager(smap, session_mgr, {"c1": 24.0}, db=db)
+    inst = _FakeInst()
+    await _drive(mgr, inst)
+
+    new_sid = await smap.resolve("u1", "wecom", "chat1")
+    assert new_sid != derived and new_sid.startswith("ch-")
+    # 旧会话 KV 清理 + 自动新开提示（与带时钟指针的轮换同表现）
+    assert session_mgr.deleted == [("u1", derived)]
+    first_text = inst.sent[0][1]
+    assert "自动开启新会话" in first_text
+    assert "超过 24 小时" in first_text
+    assert new_sid in first_text
+    await mgr._bus.aclose()
+
+
+async def test_first_contact_fresh_history_continues():
+    """指针缺失但 derive 会话在 N 小时内仍有对话 → 延续（多轮排障不断档）"""
+    kv = FakeKV()
+    smap = ChannelSessionMap(kv, PREFIX)
+    derived = ChannelManager.derive_session_id("u1", "wecom", "chat1")
+    db = _FreshnessDb({derived: True})
+    session_mgr = _SessionMgrStub(exists=False)
+    mgr = _make_manager(smap, session_mgr, {"c1": 24.0}, db=db)
+    inst = _FakeInst()
+    await _drive(mgr, inst)
+
+    assert await smap.resolve("u1", "wecom", "chat1") == derived
+    assert session_mgr.deleted == []
+    assert all("自动开启新会话" not in text for _, text, _ in inst.sent)
+    await mgr._bus.aclose()
+
+
+async def test_first_contact_unknown_freshness_keeps_derive():
+    """新鲜度无法判定（无历史 / DB 不可用）→ 维持现状：固化 derive，不轮换"""
+    kv = FakeKV()
+    smap = ChannelSessionMap(kv, PREFIX)
+    derived = ChannelManager.derive_session_id("u1", "wecom", "chat1")
+    db = _FreshnessDb({derived: None})
+    session_mgr = _SessionMgrStub(exists=False)
+    mgr = _make_manager(smap, session_mgr, {"c1": 24.0}, db=db)
+    inst = _FakeInst()
+    await _drive(mgr, inst)
+
+    assert await smap.resolve("u1", "wecom", "chat1") == derived
+    assert session_mgr.deleted == []
+    await mgr._bus.aclose()
+
+
+async def test_legacy_pointer_without_clock_stale_rotates():
+    """旧格式指针（无 last_active）且会话已过期 → 同样自动新开，不再无条件续用"""
+    kv = FakeKV()
+    smap = ChannelSessionMap(kv, PREFIX)
+    _seed_pointer(smap, "ch-cur", None)  # 旧格式：缺时钟
+    db = _FreshnessDb({"ch-cur": False})
+    session_mgr = _SessionMgrStub(exists=True)
+    mgr = _make_manager(smap, session_mgr, {"c1": 24.0}, db=db)
+    inst = _FakeInst()
+    await _drive(mgr, inst)
+
+    new_sid = await smap.resolve("u1", "wecom", "chat1")
+    assert new_sid != "ch-cur" and new_sid.startswith("ch-")
+    assert session_mgr.deleted == [("u1", "ch-cur")]
+    assert "自动开启新会话" in inst.sent[0][1]
+    await mgr._bus.aclose()
+
+
+async def test_first_contact_stale_but_rotation_disabled():
+    """N<=0 禁用轮换：即使会话已过期也不自动新开（与指针时钟路径同语义）"""
+    kv = FakeKV()
+    smap = ChannelSessionMap(kv, PREFIX)
+    derived = ChannelManager.derive_session_id("u1", "wecom", "chat1")
+    db = _FreshnessDb({derived: False})
+    session_mgr = _SessionMgrStub(exists=False)
+    mgr = _make_manager(smap, session_mgr, {"c1": 0}, db=db)
+    inst = _FakeInst()
+    await _drive(mgr, inst)
+
+    assert await smap.resolve("u1", "wecom", "chat1") == derived
+    assert session_mgr.deleted == []
     await mgr._bus.aclose()
