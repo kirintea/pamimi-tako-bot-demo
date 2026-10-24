@@ -9,6 +9,8 @@
 
 import { format } from 'date-fns';
 import {
+	Activity,
+	BarChart3,
 	BookText,
 	Cable,
 	ChevronDown,
@@ -186,7 +188,7 @@ export function AppSidebar({
 			{!collapsed ? (
 				<aside className="flex w-[272px] shrink-0 flex-col rounded-[22px] border-r border-border bg-canvas px-3 pt-6 pb-7 transition-[width] duration-200 ease-in-out">
 					{/* Logo + 折叠 */}
-					<div className="flex items-center justify-between px-1">
+					<div className="flex shrink-0 items-center justify-between px-1">
 						<div className="flex size-8 items-center justify-center rounded-[9px] bg-primary">
 							<span className="text-[16px] font-bold leading-none text-primary-foreground">智</span>
 						</div>
@@ -210,14 +212,14 @@ export function AppSidebar({
 					<button
 						type="button"
 						onClick={onNewChat}
-						className="mt-4 flex h-[34px] w-full items-center gap-2.5 rounded-[10px] bg-primary-light px-3 text-[13px] font-semibold text-primary transition-colors hover:bg-primary/15"
+						className="mt-4 flex h-[34px] w-full shrink-0 items-center gap-2.5 rounded-[10px] bg-primary-light px-3 text-[13px] font-semibold text-primary transition-colors hover:bg-primary/15"
 					>
 						<Plus className="size-3.5" />
 						<span>{t('sidebar.newChat', { defaultValue: '新建对话' })}</span>
 					</button>
 
 					{/* 搜索 */}
-					<div className="mt-1.5 flex h-[34px] items-center gap-2.5 px-3">
+					<div className="mt-1.5 flex h-[34px] shrink-0 items-center gap-2.5 px-3">
 						<Search className="size-4 shrink-0 text-text-tertiary" />
 						<input
 							value={query}
@@ -227,12 +229,17 @@ export function AppSidebar({
 						/>
 					</div>
 
+				{/* 中部滚动区：工作台 / 管理视图 / 最近。
+				    root 全部展开时内容可能高于侧栏可视高度——整体滚动，
+				    而不是让各行 flex-shrink 压扁（h-34 被压缩）甚至底部行溢出侧栏。
+				    注意用 block 流容器：子元素不是 flex item，高度不会被压缩。 */}
+				<div className="mt-4 min-h-0 flex-1 overflow-y-auto">
 				{/* 工作台（可折叠，root 用户可收起以腾出空间看最近对话） */}
 				<button
 					type="button"
 					onClick={() => setWorkbenchOpen((v) => !v)}
 					aria-expanded={workbenchOpen}
-					className="mt-4 flex w-full items-center gap-1 px-3 text-[11px] font-semibold text-text-tertiary transition-colors hover:text-foreground"
+					className="flex w-full items-center gap-1 px-3 text-[11px] font-semibold text-text-tertiary transition-colors hover:text-foreground"
 				>
 					{workbenchOpen ? (
 						<ChevronDown className="size-3.5 shrink-0" />
@@ -272,6 +279,18 @@ export function AppSidebar({
 								active={location.pathname.startsWith('/admin/sessions')}
 								onClick={() => navigate('/admin/sessions')}
 							/>
+							<NavItem
+								icon={<Activity className="size-3.5" />}
+								label={t('sidebar.adminObserve', { defaultValue: '对话观测台' })}
+								active={location.pathname.startsWith('/admin/observe')}
+								onClick={() => navigate('/admin/observe')}
+							/>
+							<NavItem
+								icon={<BarChart3 className="size-3.5" />}
+								label={t('sidebar.adminStats', { defaultValue: '运营数据看板' })}
+								active={location.pathname.startsWith('/admin/stats')}
+								onClick={() => navigate('/admin/stats')}
+							/>
 						</nav>
 					</>
 				)}
@@ -280,7 +299,7 @@ export function AppSidebar({
 					<div className="mt-6 px-3 text-[11px] font-semibold text-text-tertiary">
 						{t('sidebar.sessions', { defaultValue: '最近' })}
 					</div>
-					<div className="mt-3 min-h-0 flex-1 overflow-y-auto">
+					<div className="mt-3">
 						{filteredSessions.length === 0 && (
 							<div className="px-3 py-2 text-[12px] text-text-tertiary">
 								{query
@@ -341,9 +360,10 @@ export function AppSidebar({
 							})}
 						</div>
 					</div>
+				</div>
 
 					{/* 底部：用户行 r0 + 设置行 r10 */}
-					<div className="mt-4 flex flex-col gap-0.5">
+					<div className="mt-4 flex shrink-0 flex-col gap-0.5">
 						<button
 							type="button"
 							onClick={() => {
@@ -444,6 +464,26 @@ export function AppSidebar({
 							</button>
 						</TooltipTrigger>
 						<TooltipContent side="right">{t('sidebar.adminAllSessions', { defaultValue: '全部用户会话' })}</TooltipContent>
+					</Tooltip>
+				)}
+				{isRoot && (
+					<Tooltip>
+						<TooltipTrigger asChild>
+							<button
+								type="button"
+								aria-label={t('sidebar.adminObserve', { defaultValue: '对话观测台' })}
+								onClick={() => navigate('/admin/observe')}
+								className={cn(
+									'flex size-[34px] items-center justify-center rounded-[10px]',
+									location.pathname.startsWith('/admin/observe')
+										? 'bg-primary-light text-primary'
+										: 'bg-secondary text-nav-label hover:bg-secondary/70',
+								)}
+							>
+								<Activity className="size-4" />
+							</button>
+						</TooltipTrigger>
+						<TooltipContent side="right">{t('sidebar.adminObserve', { defaultValue: '对话观测台' })}</TooltipContent>
 					</Tooltip>
 				)}
 				<div className="mt-auto flex flex-col items-center gap-0.5">

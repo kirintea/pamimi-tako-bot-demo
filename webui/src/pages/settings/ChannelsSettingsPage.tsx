@@ -4,9 +4,9 @@
  * 复用现有渠道 API（api/channels）：列表 / 新增 / 启用停用(热切换) / 删除。
  * 启用即热启动，停用即热停止（后端 start/stop 端点）。
  *
- * 添加渠道：下拉选择 已知可接入的全部 17 种类型（无论后端是否实现），
+ * 添加渠道：下拉选择 已知可接入的全部 15 种类型（无论后端是否实现），
  * 每行最左红/绿指示灯标记该渠道依赖是否齐全（缺失则禁用启动并提示缺哪些包），
- * 真实品牌 logo 由 channelBrands 按 type 渲染，鼠标悬停可看依赖详情。
+ * 真实品牌 logo 由 ChannelBrandLogo（lib/channelBrands）按 type 渲染，鼠标悬停可看依赖详情。
  * 仅 backend_supported=true 的类型可创建（当前仅 wecom），其余展示「后端未接入」。
  */
 
@@ -17,7 +17,7 @@ import { toast } from 'sonner';
 
 import { channelApi } from '@/api/channels';
 import type { ChannelInfo, ChannelManifest, ChannelRuntime, CreateChannelRequest } from '@/api/types';
-import { CHANNEL_BRANDS } from './channelBrands';
+import { ChannelBrandLogo } from '@/components/ChannelBrandLogo';
 import { SettingsGroup, SettingsRow } from '@/components/settings';
 import { SettingsSectionTitle } from '@/components/settings/SettingsSectionTitle';
 import { Button } from '@/components/ui/button';
@@ -51,28 +51,6 @@ function statusTone(status: string): string {
 		default:
 			return 'text-muted-foreground';
 	}
-}
-
-/** 真实品牌 logo：单色图标用品牌色着色，多色图标保留自身颜色 */
-function ChannelLogo({ type, size = 22 }: { type: string; size?: number }) {
-	const b = CHANNEL_BRANDS[type];
-	if (!b) {
-		return (
-			<div
-				style={{ width: size, height: size }}
-				className="flex items-center justify-center rounded-md bg-muted text-[9px] font-semibold text-muted-foreground"
-			>
-				{(type || '?').slice(0, 2).toUpperCase()}
-			</div>
-		);
-	}
-	return (
-		<div
-			style={{ width: size, height: size, color: b.brand }}
-			className="flex shrink-0 items-center justify-center [&>svg]:h-full [&>svg]:w-full"
-			dangerouslySetInnerHTML={{ __html: b.svg }}
-		/>
-	);
 }
 
 export function ChannelsSettingsPage() {
@@ -296,7 +274,7 @@ export function ChannelsSettingsPage() {
 								className="flex w-full items-center gap-2 rounded-2xl border border-input bg-background px-3 py-2 text-[13px]"
 								onClick={() => setShowTypeList((v) => !v)}
 							>
-								<ChannelLogo type={selectedType} size={22} />
+								<ChannelBrandLogo type={selectedType} size={22} />
 								<span className="flex-1 text-left font-medium">
 									{selectedManifest?.display_name ?? selectedType}
 								</span>
@@ -333,7 +311,7 @@ export function ChannelsSettingsPage() {
 														title={d.title}
 														className={`size-2.5 shrink-0 rounded-full ${d.dotClass}`}
 													/>
-													<ChannelLogo type={m.type} size={22} />
+													<ChannelBrandLogo type={m.type} size={22} />
 													<span className="flex-1 truncate">{m.display_name}</span>
 													{!m.backend_supported && (
 														<span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
@@ -505,7 +483,7 @@ export function ChannelsSettingsPage() {
 											title={dep.title}
 											className={`size-2.5 rounded-full ${dep.dotClass}`}
 										/>
-										<ChannelLogo type={ch.type} size={20} />
+										<ChannelBrandLogo type={ch.type} size={20} />
 										<span
 											className={`size-2 rounded-full ${state === 'running' ? 'bg-emerald-500' : state === 'failed' ? 'bg-destructive' : 'bg-muted-foreground/40'}`}
 										/>

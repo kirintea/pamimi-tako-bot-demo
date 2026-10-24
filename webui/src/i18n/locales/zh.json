@@ -1,4 +1,11 @@
 {
+	"stats": {
+		"channelNames": {
+			"web": "Web",
+			"wecom": "企业微信",
+			"unknown": "未知"
+		}
+	},
 	"common": {
 		"add": "添加",
 		"agent": "智能体",
@@ -991,30 +998,6 @@
 			"addPreset": "添加预设",
 			"active": "使用中",
 			"hint": "添加多个模型预设后可在对话中切换。后端 API 就绪后可编辑。"
-		},
-		"mcp": {
-			"title": "MCP 服务",
-			"add": "添加",
-			"empty": "暂无 MCP 服务",
-			"enabled": "已启用",
-			"disabled": "已禁用",
-			"confirmDelete": "确认删除此 MCP？",
-			"namePlaceholder": "名称",
-			"commandPlaceholder": "命令 (如 npx)",
-			"argsPlaceholder": "参数 (每行一个)",
-			"urlPlaceholder": "URL"
-		},
-		"skills": {
-			"title": "技能",
-			"add": "添加",
-			"empty": "暂无技能",
-			"enabled": "已启用",
-			"disabled": "已禁用",
-			"confirmDelete": "确认删除此 Skill？",
-			"namePlaceholder": "名称",
-			"displayNamePlaceholder": "显示名称",
-			"descPlaceholder": "描述",
-			"tagsPlaceholder": "标签 (逗号分隔)"
 		},
 		"security": {
 			"apiAuth": "API 认证",

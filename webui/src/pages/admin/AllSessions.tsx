@@ -18,12 +18,7 @@ import type { ChatMessage, SessionInfo } from '@/api/types';
 import { MessageBubble } from '@/components/chat/MessageBubble';
 import { cn, formatDateTime } from '@/lib/utils';
 import { wsManager } from '@/api/ws';
-
-/** channel → 中文映射 */
-const CHANNEL_LABELS: Record<string, string> = {
-	web: 'Web',
-	wecom: '企业微信',
-};
+import { channelLabel } from '@/lib/channel';
 
 /**
  * 消息时间展示：直接截断 DB datetime 字符串到秒，不做日期换算。
@@ -292,7 +287,7 @@ export function AllSessions() {
 											</span>
 											{s.channel && (
 												<span className="shrink-0 rounded-full bg-secondary px-1.5 py-0.5 text-[10px] text-text-tertiary">
-													{CHANNEL_LABELS[s.channel] || s.channel}
+													{channelLabel(s.channel)}
 												</span>
 											)}
 										</div>
