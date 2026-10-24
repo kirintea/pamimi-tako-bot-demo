@@ -261,6 +261,18 @@ database:
 .venv/Scripts/python.exe health_check/check_llm.py
 ```
 
+## Git 提交安全钩子
+
+提交/推送前自动拦截敏感信息（内网 IP、API 密钥前缀、私钥块），防止内网地址被提交进历史。钩子源码在 [.githooks/](.githooks/)（`pre-commit` + `pre-push` 兜底）。
+
+```bash
+# 新克隆需启用一次（core.hooksPath 是本地配置，不会随仓库下发）
+git config core.hooksPath .githooks
+```
+
+- 误报或确需绕过：`git commit --no-verify` / `git push --no-verify`
+- 定位已存在的敏感信息：`git log --all --oneline -S '<敏感串>'`
+
 ## 相关文档
 
 | 文档                                                    | 说明                                                                   |
