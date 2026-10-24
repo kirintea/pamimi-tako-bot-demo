@@ -96,6 +96,8 @@ class WecomChannel(BaseChannel):
         self._generate_req_id: Callable[[str], str] | None = None
         # 每个 chat 缓存最近一条 frame，用于 reply / reply_stream
         self._chat_frames: dict[str, Any] = {}
+        # 通讯录用户名缓存（userid → display_name），避免重复调 API
+        self._user_name_cache: dict[str, str] = {}
 
     # ------------------------------------------------------------------
     # 生命周期
@@ -176,6 +178,28 @@ class WecomChannel(BaseChannel):
         reason = frame.body if hasattr(frame, "body") else str(frame)
         self.logger.warning("WebSocket 断开：{}", reason)
 
+        # 被新连接踢掉时，SDK 故意不重连（_kicked_by_new_connection=True）。
+        # 用 asyncio.create_task 在回调返回后延迟重连，避免与 SDK 内部
+        # _handle_disconnect 的 reconnect 逻辑冲突。
+        if self._running:
+            asyncio.get_event_loop().call_later(5, self._schedule_reconnect)
+
+    def _schedule_reconnect(self) -> None:
+        """延迟回调入口：在事件循环中调度异步重连"""
+        if self._running and self._client is not None:
+            asyncio.ensure_future(self._do_reconnect())
+
+    async def _do_reconnect(self) -> None:
+        """执行重连"""
+        try:
+            self.logger.info("正在重连...")
+            await self._client.connect_async()
+            self.logger.info("重连成功")
+        except Exception:
+            self.logger.exception("重连失败，将在 10 秒后重试")
+            if self._running:
+                asyncio.get_event_loop().call_later(10, self._schedule_reconnect)
+
     async def _on_error(self, frame: Any) -> None:
         self.logger.error("企微错误：{}", frame)
 
@@ -246,11 +270,15 @@ class WecomChannel(BaseChannel):
                 msg_id = f"{body.get('chatid', '')}_{body.get('sendertime', '')}"
 
             from_info = body.get("from", {})
-            sender_id = (
-                cast(str, cast(dict[str, Any], from_info).get("userid", "unknown"))
-                if isinstance(from_info, dict)
-                else "unknown"
-            )
+            if isinstance(from_info, dict):
+                sender_id = cast(str, from_info.get("userid") or "config-file")
+                sender_name = cast(str, from_info.get("name", ""))
+            else:
+                sender_id = "config-file"
+                sender_name = ""
+
+            # [DEBUG] 企微用户名追踪 — 临时日志，调试完删除
+            self.logger.info("[DEBUG] wecom sender_name={!r}, sender_id={!r}, from_info={!r}", sender_name, sender_id, from_info)
 
             # 鉴权（白名单）。未通过直接丢弃，避免下载/转发开销。
             if not self.is_allowed(sender_id):
@@ -347,16 +375,15 @@ class WecomChannel(BaseChannel):
             # 缓存该 chat 的 frame，供出站 reply / reply_stream 使用
             self._chat_frames[chat_id] = frame
 
-            # 归属信息取自 manager 注入的 record（渠道记录 owner）
+            # channel_id 取自 manager 注入的 record
             rec = getattr(self, "_record", None)
             channel_id = getattr(rec, "id", None) or "wecom"
-            owner_user_id = getattr(rec, "user_id", None) or "unknown"
 
             await self.handle_inbound(
                 InboundMessage(
                     channel="wecom",
                     channel_id=channel_id,
-                    user_id=owner_user_id,
+                    user_id=sender_id,
                     chat_id=chat_id,
                     sender_id=sender_id,
                     content=content,
@@ -365,6 +392,7 @@ class WecomChannel(BaseChannel):
                         "message_id": msg_id,
                         "msg_type": msg_type,
                         "chat_type": chat_type,
+                        "sender_name": sender_name,
                     },
                 )
             )
@@ -402,6 +430,77 @@ class WecomChannel(BaseChannel):
         except Exception:
             self.logger.exception("下载媒体异常")
             return None
+
+    # ------------------------------------------------------------------
+    # 通讯录 API — 获取用户名（可选，大部分场景未授权，失败优雅降级）
+    # ------------------------------------------------------------------
+
+    async def _fetch_user_name(self, userid: str) -> str | None:
+        """通过企微通讯录 API 获取用户名，失败返回 None
+
+        需要配置 corp_id + contact_secret（具备通讯录读取权限）。
+        结果缓存在 self._user_name_cache，避免重复调用。
+        """
+        # 缓存命中
+        if userid in self._user_name_cache:
+            return self._user_name_cache[userid] or None
+
+        # 未配置通讯录凭据 — 跳过
+        if not self.config.corp_id or not self.config.contact_secret:
+            self._user_name_cache[userid] = ""
+            return None
+
+        try:
+            import httpx
+
+            # 1. 获取 access_token
+            async with httpx.AsyncClient(timeout=5.0) as http:
+                token_resp = await http.get(
+                    "https://qyapi.weixin.qq.com/cgi-bin/gettoken",
+                    params={
+                        "corpid": self.config.corp_id,
+                        "corpsecret": self.config.contact_secret,
+                    },
+                )
+                token_data = token_resp.json()
+                if token_data.get("errcode", 0) != 0:
+                    self.logger.warning(
+                        "[wecom] 通讯录 gettoken 失败: errcode={}, errmsg={}",
+                        token_data.get("errcode"), token_data.get("errmsg"),
+                    )
+                    self._user_name_cache[userid] = ""
+                    return None
+
+                access_token = token_data.get("access_token", "")
+                if not access_token:
+                    self._user_name_cache[userid] = ""
+                    return None
+
+                # 2. 查询用户名
+                user_resp = await http.get(
+                    "https://qyapi.weixin.qq.com/cgi-bin/user/get",
+                    params={"access_token": access_token, "userid": userid},
+                )
+                user_data = user_resp.json()
+
+        except Exception as e:
+            self.logger.warning("[wecom] 通讯录 API 请求异常: {}", e)
+            self._user_name_cache[userid] = ""
+            return None
+
+        if user_data.get("errcode", 0) != 0:
+            self.logger.warning(
+                "[wecom] 通讯录 user/get 失败: errcode={}, errmsg={} (常见 60011=无通讯录权限)",
+                user_data.get("errcode"), user_data.get("errmsg"),
+            )
+            self._user_name_cache[userid] = ""
+            return None
+
+        name = (user_data.get("name") or "").strip()
+        self._user_name_cache[userid] = name
+        if name:
+            self.logger.info("[wecom] 通讯录获取用户名: userid={} → name={!r}", userid, name)
+        return name or None
 
     # ------------------------------------------------------------------
     # 出站

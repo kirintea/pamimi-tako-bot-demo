@@ -111,10 +111,17 @@ class SessionManager:
     # 公开接口
     # ------------------------------------------------------------------
 
+    @property
+    def kv(self) -> "KVStore | None":
+        """KV 存储句柄（渠道会话指针等共享组件使用）。"""
+        return self._kv
+
     async def get_or_create(
         self,
         user_id: str,
         session_id: str,
+        display_name: str | None = None,
+        channel: str = "web",
     ) -> Agent:
         """获取或创建会话对应的 Agent 实例
 
@@ -124,6 +131,8 @@ class SessionManager:
         Args:
             user_id: 用户标识
             session_id: 会话标识
+            display_name: 可选展示名（渠道传入，用于用户懒注册）
+            channel: 用户来源渠道（web / wecom / feishu ...）
 
         Returns:
             该会话的独立 Agent 实例
@@ -164,7 +173,8 @@ class SessionManager:
                 except Exception as e:  # noqa: BLE001
                     logger.warning("SessionManager: 角色解析失败（降级 normal）: {}", e)
                 try:
-                    await self._user_service.get_or_create_user(user_id)
+                    logger.info("[DEBUG] SessionManager: get_or_create_user user_id={!r}, display_name={!r}", user_id, display_name)
+                    await self._user_service.get_or_create_user(user_id, display_name=display_name, channel=channel)
                 except Exception:  # noqa: BLE001
                     logger.debug("SessionManager: 用户懒注册失败（已忽略）")
 
@@ -172,6 +182,11 @@ class SessionManager:
             agent = await AgentFactory.create(
                 self._config, state=saved_state, user_id=user_id, role=role,
             )
+            # AgentState.session_id 默认自生成 UUID（agentscope default_factory），
+            # 必须对齐平台会话 ID：框架 offload（offload_context / offload_tool_result）
+            # 按 state.session_id 落盘，须与 get_workspace / _cleanup_offload_dir 的
+            # sessions/{session_id} 路径一致，否则卸载文件成孤儿（找不到也删不掉）
+            agent.state.session_id = session_id
             entry = SessionEntry(
                 user_id=user_id,
                 session_id=session_id,
@@ -190,6 +205,44 @@ class SessionManager:
                 len(self._sessions),
             )
             return agent
+
+    async def session_exists(self, user_id: str, session_id: str) -> bool:
+        """判断会话是否已存在（内存 / KV state / KV meta / PG 历史任一命中）。
+
+        与 get_or_create 的恢复链路一致：任一命中即视为已存在。
+        供渠道入口判断「新会话创建」（如企微在新会话首条消息前推送 session_id）。
+        检查异常时保守返回 True，避免重复推送打扰用户。
+        """
+        key = (user_id, session_id)
+        if key in self._sessions:
+            return True
+
+        if self._kv is not None:
+            try:
+                if await self._kv.get(self._redis_key(user_id, session_id)):
+                    return True
+                if await self._kv.get(self._redis_meta_key(user_id, session_id)):
+                    return True
+            except Exception:
+                logger.exception(
+                    "session_exists KV 检查失败: user={} session={}", user_id, session_id,
+                )
+                return True
+
+        if self._db is not None and getattr(self._db, "is_initialized", False):
+            try:
+                result = await self._db.get_conversation_history(
+                    user_id, session_id, limit=1,
+                )
+                if result.get("messages"):
+                    return True
+            except Exception:
+                logger.exception(
+                    "session_exists PG 检查失败: user={} session={}", user_id, session_id,
+                )
+                return True
+
+        return False
 
     async def refresh_state(self, user_id: str, session_id: str) -> None:
         """强制从 KV 重新加载 AgentState 覆盖内存中的副本
@@ -911,6 +964,10 @@ class SessionManager:
             state_json = await self._kv.get(key)
             if state_json:
                 state = AgentState.model_validate_json(state_json)
+                # 历史状态的 session_id 可能是旧版自生成 UUID，对齐平台会话 ID
+                # （与 get_or_create 的对齐保持一致，refresh_state 重载后不回退）
+                if state.session_id != session_id:
+                    state.session_id = session_id
                 logger.debug("从 KV 恢复状态: {}", key)
                 return state
         except Exception:

@@ -5,6 +5,7 @@
 PostgreSQL 使用 $N 位置占位符，MySQL 使用 %s。
 本模块提供两者的单向翻译（$N → %s，按出现顺序重排参数），
 使注册表与既有 SQL 可以统一用 $N 书写。
+翻译时会把 SQL 字面 % 转义为 %%（pymysql 随后会做 `query % args`）。
 """
 
 from __future__ import annotations
@@ -14,6 +15,9 @@ from urllib.parse import urlparse
 
 # 匹配 $1 / $10 形式的占位符（$.title 等 JSON 路径的 $ 后是 .，不会命中）
 _PLACEHOLDER_RE = re.compile(r"\$(\d+)")
+
+# $N → %s 两步替换的中间哨兵：先占位，转义字面 %，再换回 %s
+_PLACEHOLDER_SENTINEL = "\x00ph\x00"
 
 # 匹配 PG 风格双引号标识符 "column_name"（不匹配 JSON 字符串内的双引号）
 _IDENTIFIER_RE = re.compile(r'"([A-Za-z_][A-Za-z0-9_]*)"')
@@ -35,6 +39,9 @@ def translate_placeholders(sql: str, args: tuple) -> tuple[str, tuple]:
     - 无 $N 占位符时原样返回（幂等）
     - 同一 $N 重复出现时，对应参数在结果中重复
     - JSON 路径（如 '$.title'）不受影响
+    - SQL 中的字面 %（如 DATE_FORMAT 的 '%Y-%m-01'）会转义为 %%——
+      否则 pymysql 的 `query % args` 会把它当格式符，抛
+      "ValueError: unsupported format character"
 
     Args:
         sql: 含 $N 占位符的 SQL（或已无占位符的通用 SQL）
@@ -47,7 +54,10 @@ def translate_placeholders(sql: str, args: tuple) -> tuple[str, tuple]:
     if not matches:
         return sql, args
     ordered = tuple(args[int(m) - 1] for m in matches)
-    return _PLACEHOLDER_RE.sub("%s", sql), ordered
+    # 两步替换：先把 $N 换成不含 % 的哨兵，转义完字面 % 再换回 %s
+    body = _PLACEHOLDER_RE.sub(_PLACEHOLDER_SENTINEL, sql)
+    body = body.replace("%", "%%")
+    return body.replace(_PLACEHOLDER_SENTINEL, "%s"), ordered
 
 
 def format_status(verb: str, rowcount: int) -> str:

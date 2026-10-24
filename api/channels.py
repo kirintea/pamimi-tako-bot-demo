@@ -22,12 +22,14 @@
 from __future__ import annotations
 
 import importlib.util
+import math
 import os
 import subprocess
 import sys
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from core.channels.catalog import get_channel_catalog
 from core.channels.config_store import ChannelConfigStore, ChannelEntry
@@ -41,6 +43,33 @@ router = APIRouter(prefix="/channels", tags=["channels"])
 # ============================================================
 # 请求 / 响应 Schema
 # ============================================================
+
+def _validate_idle_hours(v: Any) -> float | None:
+    """N 校验：拒绝 bool / 非有限浮点（与 config_store._parse_idle_hours 同口径，
+    但 API 层选择显式报错而非静默降级，避免配置意图被吞）。
+
+    抛 HTTPException(422) 而非 ValueError：ValueError 会被 Pydantic 收成
+    RequestValidationError，其 error 详情里带着原始输入（NaN/Infinity），
+    而 FastAPI 的 JSONResponse 用 allow_nan=False 序列化会直接炸成 500。
+    HTTPException 的 detail 是纯字符串，保证 422 响应体本身 JSON 安全。
+
+    参数注解为 Any：mode="before" 收到的是原始 JSON 值（bool/str/超大整数等），
+    不能假定已是 float。
+    """
+    if v is None:
+        return None
+    if isinstance(v, bool):
+        raise HTTPException(status_code=422, detail="session_idle_hours 不能是布尔值")
+    try:
+        f = float(v)
+    except (TypeError, ValueError, OverflowError) as e:
+        # OverflowError：JSON 任意精度整数字面量（如 10**400）float() 转换溢出，
+        # 漏捕会冒成 500
+        raise HTTPException(status_code=422, detail="session_idle_hours 须为数字") from e
+    if not math.isfinite(f):
+        raise HTTPException(status_code=422, detail="session_idle_hours 须为有限数字")
+    return f
+
 
 class ChannelConfigRequest(BaseModel):
     """渠道配置（创建/局部更新共用；字段均可选）"""
@@ -56,6 +85,17 @@ class CreateChannelRequest(BaseModel):
     type: str = Field(default="wecom", description="渠道类型")
     enabled: bool = Field(default=False, description="创建后是否立即启用并启动")
     config: ChannelConfigRequest = Field(default_factory=ChannelConfigRequest)
+    session_idle_hours: float | None = Field(
+        default=None,
+        description="会话空闲自动新开阈值（小时）：未配置=默认 24，<=0=禁用",
+        allow_inf_nan=False,
+    )
+
+    @field_validator("session_idle_hours", mode="before")
+    @classmethod
+    def _check_idle_hours(cls, v):
+        # mode="before"：bool 会被 float 引擎先收成 1.0，必须在类型转换前拒掉
+        return _validate_idle_hours(v)
 
 
 class UpdateChannelRequest(BaseModel):
@@ -63,6 +103,17 @@ class UpdateChannelRequest(BaseModel):
     name: str | None = Field(default=None, description="新名称")
     enabled: bool | None = Field(default=None, description="启用/禁用（触发热切换）")
     config: ChannelConfigRequest | None = Field(default=None, description="配置覆盖")
+    session_idle_hours: float | None = Field(
+        default=None,
+        description="会话空闲自动新开阈值（小时）：未配置=默认 24，<=0=禁用",
+        allow_inf_nan=False,
+    )
+
+    @field_validator("session_idle_hours", mode="before")
+    @classmethod
+    def _check_idle_hours(cls, v):
+        # mode="before"：bool 会被 float 引擎先收成 1.0，必须在类型转换前拒掉
+        return _validate_idle_hours(v)
 
 
 class ChannelResponse(BaseModel):
@@ -73,6 +124,9 @@ class ChannelResponse(BaseModel):
     enabled: bool
     status: str = "stopped"
     config: dict = Field(default_factory=dict)
+    session_idle_hours: float | None = Field(
+        default=None, description="会话空闲自动新开阈值（小时），None=默认 24",
+    )
 
 
 class ListChannelsResponse(BaseModel):
@@ -108,6 +162,7 @@ def _entry_to_response(entry: ChannelEntry, runtime: dict | None = None) -> Chan
         enabled=entry.enabled,
         status="running" if rt.get("running") else ("stopped" if not entry.enabled else "stopped"),
         config=cfg,
+        session_idle_hours=entry.session_idle_hours,
     )
 
 
@@ -274,6 +329,7 @@ async def create_channel(
         name=body.name,
         enabled=body.enabled,
         config=body.config.model_dump(exclude_none=True),
+        session_idle_hours=body.session_idle_hours,
     )
     await store.upsert(entry)
 
@@ -322,6 +378,9 @@ async def update_channel(
     if body.config is not None:
         patch = body.config.model_dump(exclude_none=True)
         entry.config.update(patch)
+    if "session_idle_hours" in body.model_fields_set:
+        # 显式 null = 回退默认（未提及则保持原值，不能用 exclude_none 合并）
+        entry.session_idle_hours = body.session_idle_hours
 
     await store.upsert(entry)
 

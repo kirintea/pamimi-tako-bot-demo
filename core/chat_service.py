@@ -85,6 +85,8 @@ class ChatService:
         db=None,
         device_id: str = "unknown",
         object_storage: ObjectStorageBase | None = None,
+        display_name: str | None = None,
+        channel: str = "web",
     ) -> None:
         """触发一次 chat run（后台执行）
 
@@ -104,6 +106,9 @@ class ChatService:
             db: 可选 DatabaseManager，用于 PG 双写；不传则仅写 Redis
             device_id: 发起请求的设备标识（用于多端状态广播）
             object_storage: 对象存储实例（多模态消息需要读取图片）
+            display_name: 可选展示名（渠道传入，用于用户懒注册）
+            channel: 消息渠道（web / wecom / feishu ...，落库 conversations.channel；
+                渠道入口经 ChannelManager 传入，web 路径保持默认）
         """
         events_key = MessageBusKeys.session_events(session_id)
 
@@ -164,13 +169,15 @@ class ChatService:
         async with acquire_session_lock(self._bus, user_id, session_id):
             try:
                 # 标记会话为生成中（多端并发状态广播）
+                # 预览必须是 str：set_generating 内部 json.dumps，裸 list[ContentPart] 会炸
                 if self._status_tracker:
                     await self._status_tracker.set_generating(
-                        session_id, device_id, message,
+                        session_id, device_id,
+                        serialize_message_for_storage(message),
                     )
 
                 # 获取或创建 Agent
-                agent = await self._session_mgr.get_or_create(user_id, session_id)
+                agent = await self._session_mgr.get_or_create(user_id, session_id, display_name=display_name, channel=channel)
 
                 # 注入 OTel 追踪上下文（供 TracingContextMiddleware 使用）
                 agent.__tracing_context__ = {
@@ -354,7 +361,7 @@ class ChatService:
                         stored_message = serialize_message_for_storage(message)
                         await db.insert_conversation(
                             user_id, session_id, "user", stored_message,
-                            channel="web", turn_id=turn_id, turn_seq=0,
+                            channel=channel, turn_id=turn_id, turn_seq=0,
                         )
                         internal_conv_ids: list[int] = []
                         if turn_rows:
@@ -364,7 +371,7 @@ class ChatService:
                                     user_id, session_id,
                                     row["role"], row["content"],
                                     metadata=row.get("metadata"),
-                                    channel="web",
+                                    channel=channel,
                                     turn_id=turn_id,
                                     turn_seq=row["turn_seq"],
                                 )
@@ -381,7 +388,7 @@ class ChatService:
                             await db.insert_conversation(
                                 user_id, session_id, "assistant", full_reply,
                                 metadata=metadata or None,
-                                channel="web",
+                                channel=channel,
                             )
 
                         # 轮内压缩（用户建议 a）：归档 thinking/tool_call 内部行，

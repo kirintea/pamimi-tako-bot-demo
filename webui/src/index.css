@@ -51,6 +51,15 @@ svg.lucide {
 	--background: #ffffff;
 	--foreground: #111928;
 
+	/* 观测台节点类型色（kind）。与「执行结果」的绿/红/琥珀是两条独立视觉通道：
+	   结果色落在电线与圆点，类型色只落在节点名与图标上。工具链一长，靠这四个
+	   色就能一眼扫出 用户提问 / 思考 / tool / llm-answer 的分布。
+	   色相避开 success/warning/error，免得被读成状态。 */
+	--node-user: #9a3412; /* 橙棕 —— 提问是段落起点 */
+	--node-thinking: #6d28d9; /* 紫 —— 内部推理 */
+	--node-tool: #0f766e; /* 青 —— 工具调用 */
+	--node-text: #1d4ed8; /* 蓝 —— 最终正文 */
+
 	--card: #ffffff;
 	--card-foreground: #111928;
 
@@ -206,6 +215,13 @@ svg.lucide {
 	--color-code-bg: #0d1117;
 	--color-code-fg: #e6edf3;
 
+	/* 节点类型色：走 var() 间接层，暗色才能靠 .dark 覆盖 --node-* 生效
+	   （@theme inline 里写字面量十六进制会被内联死，.dark 改不到） */
+	--color-node-user: var(--node-user);
+	--color-node-thinking: var(--node-thinking);
+	--color-node-tool: var(--node-tool);
+	--color-node-text: var(--node-text);
+
 	/* 新的 shape scale（= v2 设计圆角体系 4/8/12/18/22/22/28/pill） */
 	--radius-mark: 0.25rem;
 	--radius-compact: 0.5rem;
@@ -285,6 +301,12 @@ svg.lucide {
 	--color-nav-label: #d1d5db;
 	--color-code-bg: #0d1117;
 	--color-code-fg: #e6edf3;
+
+	/* 节点类型色（暗色）—— 同亮色的色相，抬亮保证深底对比度 */
+	--node-user: #fdba74;
+	--node-thinking: #c4b5fd;
+	--node-tool: #5eead4;
+	--node-text: #93c5fd;
 
 	--color-text-secondary: #9ca3af;
 	--color-text-tertiary: #6b7280;

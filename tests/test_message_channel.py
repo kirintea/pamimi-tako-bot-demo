@@ -82,7 +82,8 @@ class TestStatementChannelParam:
         for sql in (stmt.pg, stmt.mysql):
             assert "channel" in sql
             assert "$6" in sql
-            assert "$7" not in sql
+            # v3 多行拆分后末两位是 turn_id/turn_seq（$7/$8）
+            assert "$8" in sql
 
 
 # ------------------------------------------------------------
@@ -99,15 +100,16 @@ class TestWritePathChannel:
         assert sql == STATEMENTS["insert_conversation"].pick("mysql")
         assert result == 7
         assert args[:4] == ("u1", "s1", "user", "你好")
-        assert args[-1] == "web"
-        assert json.loads(args[-2]) == {"a": 1}
+        # 参数顺序: (..., metadata_json, channel, turn_id, turn_seq)
+        assert args[5] == "web"
+        assert json.loads(args[4]) == {"a": 1}
 
     async def test_insert_conversation_explicit_feishu(self):
         db, fake = _db("mysql")
         await db.insert_conversation("u1", "s1", "user", "hi", channel="feishu")
         _, args = _last(fake)
-        assert args[-2] is None  # metadata 未传 → None
-        assert args[-1] == "feishu"
+        assert args[4] is None  # metadata 未传 → None
+        assert args[5] == "feishu"
 
 
 # ------------------------------------------------------------

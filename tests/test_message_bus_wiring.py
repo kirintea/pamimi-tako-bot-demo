@@ -53,7 +53,7 @@ class _RecordingSessionMgr:
         self._agent = agent
         self.calls: list[tuple] = []
 
-    async def get_or_create(self, user_id: str, session_id: str):
+    async def get_or_create(self, user_id: str, session_id: str, display_name=None):
         self.calls.append(("get_or_create", user_id, session_id))
         return self._agent
 

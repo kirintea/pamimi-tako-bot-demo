@@ -8,10 +8,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
+from pathlib import Path
 from typing import Literal, Union
 
+from loguru import logger
 from pydantic import BaseModel, Field
 
 from agentscope.message import UserMsg
@@ -102,3 +105,44 @@ def serialize_message_for_storage(message: str | list[ContentPart]) -> str:
         [part.model_dump() for part in message],
         ensure_ascii=False,
     )
+
+
+# ============================================================
+# 渠道本地媒体 → 多模态消息
+# ============================================================
+
+
+async def build_message_with_media(
+    content: str,
+    media: list[str] | None,
+    storage: ObjectStorageBase,
+    user_id: str = "anonymous",
+) -> str | list[ContentPart]:
+    """把渠道下载到本地的媒体文件并入消息，返回内核多模态消息
+
+    图片（扩展名命中 ``_EXT_MEDIA_MAP``）→ 读文件 → ``put_object`` 上传
+    对象存储 → ``ImageContent(key)``；非图片/读取/上传失败的文件跳过，
+    content 里的文本占位（如 ``[image: xxx]``、``[file: xxx]``）保留作
+    caption。一张图片都没并上时原样返回 content，纯文本路径零开销。
+    """
+    if not media:
+        return content
+
+    parts: list[ContentPart] = [TextContent(text=content)]
+    attached = False
+    for path in media:
+        ext = path.rsplit(".", 1)[-1].lower() if "." in path else ""
+        content_type = _EXT_MEDIA_MAP.get(ext)
+        if not content_type:
+            continue
+        try:
+            data = await asyncio.to_thread(Path(path).read_bytes)
+            key = storage.generate_key(user_id, content_type)
+            await storage.put_object(key, data, content_type)
+        except Exception:
+            logger.warning("渠道媒体并入消息失败，跳过: {}", path)
+            continue
+        parts.append(ImageContent(key=key))
+        attached = True
+
+    return parts if attached else content

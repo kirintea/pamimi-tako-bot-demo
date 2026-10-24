@@ -17,6 +17,9 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
 from loguru import logger
 
 from core.config.schemas import DatabaseConfig
@@ -105,6 +108,47 @@ class DatabaseManager:
         if self._backend is None:
             raise DatabaseUnavailableError("数据库未初始化")
         return self._backend
+
+    # ------------------------------------------------------------------
+    # 时间列（应用侧生成，按 database.timezone）
+    # ------------------------------------------------------------------
+
+    def now(self) -> datetime:
+        """按 database.timezone 生成当前时间（写入 created_at/last_active 等时间列）
+
+        背景：MySQL 服务端时区可能是 UTC，DB 侧 NOW()/DEFAULT 落库的墙钟
+        与前端本地时间差 8 小时。因此时间列统一由应用侧生成后显式传参。
+
+        方言差异：
+        - MySQL DATETIME 无时区 → naive 墙钟时间（pymysql 按字段原样写入）
+        - PostgreSQL TIMESTAMPTZ → aware 时间（asyncpg 自动转 UTC 存储）
+        """
+        now = datetime.now(ZoneInfo(self._config.timezone))
+        if self.dialect == "mysql":
+            return now.replace(tzinfo=None)
+        return now
+
+    @property
+    def dialect(self) -> str:
+        """当前后端方言（"postgres" / "mysql"）
+
+        统计模块按方言决定时间列传参形状（PG aware / MySQL naive），
+        与 now() 的分支保持同一判定来源。
+        """
+        return getattr(self._backend, "dialect", "postgres")
+
+    def _serialize_dt(self, value: datetime | None) -> str | None:
+        """时间列 → isoformat 字符串（读路径统一出口）
+
+        - aware（PG TIMESTAMPTZ 读回为 UTC）→ 转到配置时区再 isoformat，
+          带 +08:00 偏移，前端 Date.parse 与直读截断均正确
+        - naive（MySQL DATETIME 已按配置时区写入墙钟）→ 原样透出
+        """
+        if value is None:
+            return None
+        if value.tzinfo is not None:
+            value = value.astimezone(ZoneInfo(self._config.timezone))
+        return value.isoformat()
 
     # ------------------------------------------------------------------
     # 查询接口（通用 SQL：PostgreSQL 原生 $N；MySQL 由后端翻译为 %s）
@@ -199,6 +243,7 @@ class DatabaseManager:
             metadata = json.loads(metadata_str)
 
         # 自增主键：PG 取 RETURNING id，MySQL 取 lastrowid
+        # created_at 应用侧生成（database.timezone），不依赖 DB DEFAULT（服务端可能是 UTC）
         return await self.insert_returning_id(
             "insert_conversation",
             user_id,
@@ -209,6 +254,7 @@ class DatabaseManager:
             channel,
             turn_id,
             turn_seq,
+            self.now(),
         )
 
     async def get_conversation_history(
@@ -217,6 +263,7 @@ class DatabaseManager:
         session_id: str,
         before_id: int | None = None,
         limit: int = 50,
+        include_archived: bool = False,
     ) -> dict:
         """获取对话历史（游标分页，正序）
 
@@ -225,6 +272,11 @@ class DatabaseManager:
             session_id: 会话 ID
             before_id: 游标，获取此 ID 之前的消息（用于加载更多）
             limit: 返回记录数上限
+            include_archived: 是否带上 ``status='archived'`` 的行。默认否 ——
+                对话恢复 / UI 回放只要 active。观测台要看中间链路，必须传
+                True：thinking / tool_call 内部行落库后会被「轮内压缩」软删
+                成 archived，否则整条链只剩 user + text。``deleted`` 两种取
+                法都排除（那是真软删，不是内部行压缩）。
 
         Returns:
             {
@@ -233,20 +285,21 @@ class DatabaseManager:
                 "oldest_id": int | None
             }
         """
+        status_clause = '"status" != \'deleted\'' if include_archived else '"status" = \'active\''
         if before_id:
-            sql = """
+            sql = f"""
                 SELECT "id", "role", "content", "metadata", "created_at", "turn_id", "turn_seq"
                 FROM conversations
-                WHERE "user_id" = $1 AND "session_id" = $2 AND "status" = 'active' AND "id" < $3
+                WHERE "user_id" = $1 AND "session_id" = $2 AND {status_clause} AND "id" < $3
                 ORDER BY "id" DESC
                 LIMIT $4
             """
             rows = await self.fetch(sql, user_id, session_id, before_id, limit)
         else:
-            sql = """
+            sql = f"""
                 SELECT "id", "role", "content", "metadata", "created_at", "turn_id", "turn_seq"
                 FROM conversations
-                WHERE "user_id" = $1 AND "session_id" = $2 AND "status" = 'active'
+                WHERE "user_id" = $1 AND "session_id" = $2 AND {status_clause}
                 ORDER BY "id" DESC
                 LIMIT $3
             """
@@ -268,7 +321,7 @@ class DatabaseManager:
                     "role": row["role"],
                     "content": row["content"],
                     "metadata": _json.loads(row["metadata"]) if row["metadata"] else None,
-                    "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+                    "created_at": self._serialize_dt(row["created_at"]),
                     "turn_id": row["turn_id"],
                     "turn_seq": row["turn_seq"],
                 }
@@ -277,6 +330,34 @@ class DatabaseManager:
             "has_more": has_more,
             "oldest_id": oldest_id,
         }
+
+    async def session_freshness(
+        self,
+        user_id: str,
+        session_id: str,
+        *,
+        within_hours: float,
+    ) -> bool | None:
+        """会话在最近 ``within_hours`` 内是否仍有对话（渠道空闲自动新开的过期判定）。
+
+        - True  — 窗口内有对话（新鲜，延续当前会话）
+        - False — 有历史但窗口内无对话（已过期，应自动新开）
+        - None  — 无任何历史（全新对话）/ 无法判定
+
+        阈值用 ``now()`` 应用侧生成（与时间列写入同一时钟约定），
+        避免 DB 服务端 UTC 与配置时区差 8 小时。
+        """
+        threshold = self.now() - timedelta(hours=within_hours)
+        row = await self.fetchrow(
+            'SELECT MAX("created_at") AS last_at, '
+            'MAX(CASE WHEN "created_at" >= $3 THEN 1 ELSE 0 END) AS has_recent '
+            'FROM conversations '
+            'WHERE "user_id" = $1 AND "session_id" = $2 AND "status" != \'deleted\'',
+            user_id, session_id, threshold,
+        )
+        if row is None or row["last_at"] is None:
+            return None
+        return bool(row["has_recent"])
 
     async def copy_conversations_prefix(
         self,
@@ -399,9 +480,39 @@ class DatabaseManager:
             sessions.append({
                 "session_id": row["session_id"],
                 "title": title,
-                "created_at": row["created_at"].isoformat() if row["created_at"] else None,
-                "last_active": row["last_active"].isoformat() if row["last_active"] else None,
+                "created_at": self._serialize_dt(row["created_at"]),
+                "last_active": self._serialize_dt(row["last_active"]),
                 "message_count": row["message_count"],
+            })
+
+        return sessions
+
+    async def get_all_sessions(
+        self,
+        limit: int = 200,
+    ) -> list[dict]:
+        """获取所有用户的会话列表（root 管理视图，从 PG 查询）
+
+        Args:
+            limit: 返回会话数上限
+
+        Returns:
+            会话列表（按最后活跃时间倒序），每条含 user_id、display_name、channel
+        """
+        rows = await self.fetch_named("get_all_sessions", limit)
+
+        sessions = []
+        for row in rows:
+            title = row["custom_title"] or row["first_message"] or "新会话"
+            sessions.append({
+                "user_id": row["user_id"],
+                "session_id": row["session_id"],
+                "title": title,
+                "created_at": self._serialize_dt(row["created_at"]),
+                "last_active": self._serialize_dt(row["last_active"]),
+                "message_count": row["message_count"],
+                "display_name": row["display_name"],
+                "channel": row["channel"],
             })
 
         return sessions
@@ -471,12 +582,15 @@ class DatabaseManager:
         """
         import json
 
+        now = self.now()
         await self.execute_named(
             "upsert_session_title",
             session_id,
             user_id,
             title,
             json.dumps({"title": title}),
+            now,   # created_at（插入时）
+            now,   # updated_at（冲突时覆盖）
         )
 
     async def get_session_title(
@@ -511,6 +625,7 @@ class DatabaseManager:
         role: str,
         display_name: str | None = None,
         is_root: bool = False,
+        channel: str = "web",
     ) -> str:
         """懒注册/更新用户记录（users 表）
 
@@ -519,16 +634,21 @@ class DatabaseManager:
             role: 角色（'normal' / 'root'）
             display_name: 可选展示名
             is_root: 是否 root（与 role 一致）
+            channel: 用户来源渠道（web / wecom / feishu ...）
 
         Returns:
             user_id
         """
+        now = self.now()
         return await self.insert_returning_id(
             "upsert_user",
             user_id,
             role,
             display_name,
             is_root,
+            channel,
+            now,   # created_at（插入时）
+            now,   # last_active（冲突时刷新）
         )
 
     async def get_user_role(self, user_id: str) -> str | None:
@@ -538,7 +658,7 @@ class DatabaseManager:
     async def list_users(self) -> list[dict]:
         """列出所有已登记用户（root 管理视图用）"""
         rows = await self.fetch(
-            'SELECT "user_id", "role", "display_name", "is_root", '
+            'SELECT "user_id", "role", "display_name", "is_root", "channel", '
             '"created_at", "last_active" FROM users ORDER BY "created_at" ASC'
         )
         return [{k: row[k] for k in row.keys()} for row in rows]

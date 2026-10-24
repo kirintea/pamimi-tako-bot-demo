@@ -4,19 +4,20 @@
  * 复用现有渠道 API（api/channels）：列表 / 新增 / 启用停用(热切换) / 删除。
  * 启用即热启动，停用即热停止（后端 start/stop 端点）。
  *
- * 添加渠道：下拉选择 已知可接入的全部 17 种类型（无论后端是否实现），
+ * 添加渠道：下拉选择 已知可接入的全部 15 种类型（无论后端是否实现），
  * 每行最左红/绿指示灯标记该渠道依赖是否齐全（缺失则禁用启动并提示缺哪些包），
- * 真实品牌 logo 由 channelBrands 按 type 渲染，鼠标悬停可看依赖详情。
+ * 真实品牌 logo 由 ChannelBrandLogo（lib/channelBrands）按 type 渲染，鼠标悬停可看依赖详情。
  * 仅 backend_supported=true 的类型可创建（当前仅 wecom），其余展示「后端未接入」。
  */
 
 import { ChevronDown, ExternalLink, Loader2, Play, Plus, Square, Trash2, Webhook } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { toast } from 'sonner';
 
 import { channelApi } from '@/api/channels';
-import type { ChannelInfo, ChannelManifest, ChannelRuntime } from '@/api/types';
-import { CHANNEL_BRANDS } from './channelBrands';
+import type { ChannelInfo, ChannelManifest, ChannelRuntime, CreateChannelRequest } from '@/api/types';
+import { ChannelBrandLogo } from '@/components/ChannelBrandLogo';
 import { SettingsGroup, SettingsRow } from '@/components/settings';
 import { SettingsSectionTitle } from '@/components/settings/SettingsSectionTitle';
 import { Button } from '@/components/ui/button';
@@ -28,12 +29,15 @@ interface ChannelForm {
 	enabled: boolean;
 	/** 按 manifest.fields 的 key 存值（text/password 原样，list 存逗号/换行文本） */
 	fields: Record<string, string>;
+	/** 会话空闲自动新开阈值（小时）空串 = 用默认 24；数字串含 0/负值 = 禁用 */
+	idleHours: string;
 }
 
 const EMPTY_FORM: ChannelForm = {
 	name: '',
 	enabled: false,
 	fields: {},
+	idleHours: '',
 };
 
 function statusTone(status: string): string {
@@ -49,28 +53,6 @@ function statusTone(status: string): string {
 	}
 }
 
-/** 真实品牌 logo：单色图标用品牌色着色，多色图标保留自身颜色 */
-function ChannelLogo({ type, size = 22 }: { type: string; size?: number }) {
-	const b = CHANNEL_BRANDS[type];
-	if (!b) {
-		return (
-			<div
-				style={{ width: size, height: size }}
-				className="flex items-center justify-center rounded-md bg-muted text-[9px] font-semibold text-muted-foreground"
-			>
-				{(type || '?').slice(0, 2).toUpperCase()}
-			</div>
-		);
-	}
-	return (
-		<div
-			style={{ width: size, height: size, color: b.brand }}
-			className="flex shrink-0 items-center justify-center [&>svg]:h-full [&>svg]:w-full"
-			dangerouslySetInnerHTML={{ __html: b.svg }}
-		/>
-	);
-}
-
 export function ChannelsSettingsPage() {
 	const { t } = useTranslation();
 	const [channels, setChannels] = useState<ChannelInfo[]>([]);
@@ -82,6 +64,8 @@ export function ChannelsSettingsPage() {
 	const [selectedType, setSelectedType] = useState('wecom');
 	const [busy, setBusy] = useState<string | null>(null);
 	const [form, setForm] = useState<ChannelForm>(EMPTY_FORM);
+	/** 行内编辑草稿：ch.id → 输入中的小时数字符串（未提交前不污染 ch.session_idle_hours） */
+	const [idleDrafts, setIdleDrafts] = useState<Record<string, string>>({});
 
 	const manifestByType = useMemo(() => {
 		const map: Record<string, ChannelManifest> = {};
@@ -126,12 +110,24 @@ export function ChannelsSettingsPage() {
 					cfg[key] = v;
 				}
 			}
-			await channelApi.create({
+			const payload: CreateChannelRequest = {
 				name: form.name,
 				type: selectedType,
 				enabled: form.enabled,
 				config: cfg as never,
-			});
+			};
+			// 空串不发字段（= 用默认 24）；Number("") 是 0，必须先分支掉不能直接 Number
+			const idleRaw = form.idleHours.trim();
+			if (idleRaw !== '') {
+				const n = Number(idleRaw);
+				if (!Number.isFinite(n)) {
+					// text 输入可能残留 "-"、"1e" 等中间态，静默中止会让用户困惑
+					toast.error(t('settings.channels.idleHoursInvalid', { defaultValue: '会话空闲阈值须为数字' }));
+					return;
+				}
+				payload.session_idle_hours = n;
+			}
+			await channelApi.create(payload);
 			setShowAdd(false);
 			setForm(EMPTY_FORM);
 			await loadChannels();
@@ -167,6 +163,38 @@ export function ChannelsSettingsPage() {
 			await loadChannels();
 		} catch (e) {
 			console.error('Failed to delete channel:', e);
+		} finally {
+			setBusy(null);
+		}
+	};
+
+	/** 行内提交 N 阈值：空值=null（后端回退默认 24）；未改动/非法则丢弃草稿不发 PATCH */
+	const commitIdle = async (ch: ChannelInfo) => {
+		const raw = idleDrafts[ch.id];
+		if (raw === undefined) return;
+		const trimmed = raw.trim();
+		const current = ch.session_idle_hours == null ? '' : String(ch.session_idle_hours);
+		const clearDraft = () =>
+			setIdleDrafts((d) => {
+				const n = { ...d };
+				delete n[ch.id];
+				return n;
+			});
+		if (trimmed === current) return clearDraft(); // 未改动，不空转 PATCH
+		let value: number | null = null;
+		if (trimmed !== '') {
+			const n = Number(trimmed);
+			if (!Number.isFinite(n)) return clearDraft(); // 非法输入丢弃
+			value = n;
+		}
+		try {
+			setBusy(ch.id);
+			await channelApi.update(ch.id, { session_idle_hours: value });
+			await loadChannels();
+			clearDraft(); // 仅成功后清草稿；失败保留输入，用户可再次 blur 重试
+		} catch (e) {
+			console.error('Failed to update session_idle_hours:', e);
+			toast.error(t('settings.channels.idleHoursSaveFailed', { defaultValue: '保存会话空闲阈值失败' }));
 		} finally {
 			setBusy(null);
 		}
@@ -246,7 +274,7 @@ export function ChannelsSettingsPage() {
 								className="flex w-full items-center gap-2 rounded-2xl border border-input bg-background px-3 py-2 text-[13px]"
 								onClick={() => setShowTypeList((v) => !v)}
 							>
-								<ChannelLogo type={selectedType} size={22} />
+								<ChannelBrandLogo type={selectedType} size={22} />
 								<span className="flex-1 text-left font-medium">
 									{selectedManifest?.display_name ?? selectedType}
 								</span>
@@ -283,7 +311,7 @@ export function ChannelsSettingsPage() {
 														title={d.title}
 														className={`size-2.5 shrink-0 rounded-full ${d.dotClass}`}
 													/>
-													<ChannelLogo type={m.type} size={22} />
+													<ChannelBrandLogo type={m.type} size={22} />
 													<span className="flex-1 truncate">{m.display_name}</span>
 													{!m.backend_supported && (
 														<span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
@@ -354,6 +382,19 @@ export function ChannelsSettingsPage() {
 										/>
 									);
 								})}
+								{/* N：会话空闲自动新开阈值。type=text 避免 number 输入把 "-"、"1e" 等中间态抹掉（负数=禁用须能输）；<=0 后端按禁用处理 */}
+								<Input
+									type="text"
+									inputMode="decimal"
+									step="0.5"
+									placeholder={t('settings.channels.idleHoursPlaceholder', { defaultValue: '留空默认 24 小时；0 = 不自动新开' })}
+									value={form.idleHours}
+									onChange={(e) => setForm({ ...form, idleHours: e.target.value })}
+									className="h-9 rounded-full text-[13px]"
+									title={t('settings.channels.idleHoursHint', {
+										defaultValue: '会话空闲超过该小时数自动新开会话（等同 /new，有提示和会话ID）；留空=默认 24，0=不自动新开',
+									})}
+								/>
 								<label className="flex items-center gap-2 text-[13px] text-muted-foreground">
 									<input
 										type="checkbox"
@@ -442,9 +483,27 @@ export function ChannelsSettingsPage() {
 											title={dep.title}
 											className={`size-2.5 rounded-full ${dep.dotClass}`}
 										/>
-										<ChannelLogo type={ch.type} size={20} />
+										<ChannelBrandLogo type={ch.type} size={20} />
 										<span
 											className={`size-2 rounded-full ${state === 'running' ? 'bg-emerald-500' : state === 'failed' ? 'bg-destructive' : 'bg-muted-foreground/40'}`}
+										/>
+										{/* 行内 N 阈值：type=text 防 number 中间态误重置（输 "-" 被抹成空 → null）；blur/Enter 提交，空值 → null → 回退默认 24 */}
+										<Input
+											type="text"
+											inputMode="decimal"
+											step="0.5"
+											className="h-8 w-20 rounded-full text-[12px]"
+											placeholder={t('settings.channels.idleHoursShort', { defaultValue: '24h' })}
+											title={t('settings.channels.idleHoursHint', {
+												defaultValue: '会话空闲超过该小时数自动新开会话（等同 /new，有提示和会话ID）；留空=默认 24，0=不自动新开',
+											})}
+											value={idleDrafts[ch.id] ?? (ch.session_idle_hours == null ? '' : String(ch.session_idle_hours))}
+											onChange={(e) => setIdleDrafts((d) => ({ ...d, [ch.id]: e.target.value }))}
+											onBlur={() => commitIdle(ch)}
+											onKeyDown={(e) => {
+												if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+											}}
+											disabled={isBusy}
 										/>
 										<Button
 											variant="ghost"

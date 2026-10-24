@@ -1,4 +1,11 @@
 {
+	"stats": {
+		"channelNames": {
+			"web": "Web",
+			"wecom": "WeCom",
+			"unknown": "Unknown"
+		}
+	},
 	"common": {
 		"add": "Add",
 		"agent": "Agent",
@@ -160,7 +167,10 @@
 		"scrollToBottom": "Scroll to bottom",
 		"header": {
 			"toggleSidebar": "Toggle sidebar",
-			"toggleTheme": "Toggle theme"
+			"toggleTheme": "Toggle theme",
+			"sessionId": "Session ID",
+			"copySessionId": "Copy session ID",
+			"sessionIdCopied": "Copied"
 		},
 		"promptNavigator": {
 			"open": "Open prompt navigator",
@@ -989,30 +999,6 @@
 			"active": "Active",
 			"hint": "Add multiple model presets to switch between them during chat. Editing available after backend API is ready."
 		},
-		"mcp": {
-			"title": "MCP Servers",
-			"add": "Add",
-			"empty": "No MCP servers",
-			"enabled": "Enabled",
-			"disabled": "Disabled",
-			"confirmDelete": "Delete this MCP?",
-			"namePlaceholder": "Name",
-			"commandPlaceholder": "Command (e.g. npx)",
-			"argsPlaceholder": "Arguments (one per line)",
-			"urlPlaceholder": "URL"
-		},
-		"skills": {
-			"title": "Skills",
-			"add": "Add",
-			"empty": "No skills",
-			"enabled": "Enabled",
-			"disabled": "Disabled",
-			"confirmDelete": "Delete this Skill?",
-			"namePlaceholder": "Name",
-			"displayNamePlaceholder": "Display name",
-			"descPlaceholder": "Description",
-			"tagsPlaceholder": "Tags (comma separated)"
-		},
 		"security": {
 			"apiAuth": "API Authentication",
 			"authRequired": "Enable Authentication",
@@ -1039,6 +1025,11 @@
 			"secretPlaceholder": "Secret",
 			"allowFromPlaceholder": "Allowed senders (comma or newline separated; empty = allow all)",
 			"welcomePlaceholder": "Welcome message (optional)",
+			"idleHoursPlaceholder": "Default 24h if empty; 0 = never",
+			"idleHoursHint": "Auto-start a new session after this many idle hours (like /new, with notice + session ID); empty = default 24, 0 = never",
+			"idleHoursShort": "24h",
+			"idleHoursInvalid": "Session idle threshold must be a number",
+			"idleHoursSaveFailed": "Failed to save session idle threshold",
 			"enabledOnCreate": "Enable and start immediately after creation",
 			"start": "Start",
 			"stop": "Stop",

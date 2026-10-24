@@ -1,0 +1,67 @@
+# docker-compose.mysql-redis.yml
+# MySQL + Redis 数据存储栈
+# 启动: cd docker; docker-compose -f docker-compose.mysql-redis.yml up -d
+# 停止: cd docker; docker-compose -f docker-compose.mysql-redis.yml down
+
+version: "2.2"
+
+services:
+  # ============================================================
+  # 1. Redis - 会话状态持久化
+  # ============================================================
+  redis:
+    image: redis:7-alpine
+    container_name: redis-dev
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-shared-data:/data
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+    networks:
+      - data-network
+
+  # ============================================================
+  # 2. MySQL - 对话历史持久化
+  # ============================================================
+  mysql:
+    image: mysql:8.0.26
+    container_name: mysql-dev
+    environment:
+      - MYSQL_ROOT_PASSWORD=rootpassword
+      - MYSQL_USER=user
+      - MYSQL_PASSWORD=password
+      - MYSQL_DATABASE=dmx_agent_db
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-shared-data:/var/lib/mysql
+    command: >
+      --default-authentication-plugin=mysql_native_password
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-prootpassword"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+    networks:
+      - data-network
+
+volumes:
+  redis-shared-data:
+  mysql-shared-data:
+
+networks:
+  data-network:
+    driver: bridge

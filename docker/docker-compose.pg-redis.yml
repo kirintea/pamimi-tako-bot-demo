@@ -1,0 +1,62 @@
+# docker-compose.pg-redis.yaml
+# PostgreSQL + Redis 数据存储栈
+# 启动: cd docker; docker-compose -f docker-compose.pg-redis.yaml up -d
+# 停止: cd docker; docker-compose -f docker-compose.pg-redis.yaml down
+
+version: "2.2"
+
+services:
+  # ============================================================
+  # 1. Redis - 会话状态持久化
+  # ============================================================
+  redis:
+    image: redis:7-alpine
+    container_name: redis-dev
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-shared-data:/data
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+    networks:
+      - data-network
+
+  # ============================================================
+  # 2. PostgreSQL - 对话历史持久化
+  # ============================================================
+  postgres:
+    image: bitnami/postgresql:latest
+    container_name: postgres-dev
+    environment:
+      - POSTGRESQL_USERNAME=user
+      - POSTGRESQL_PASSWORD=password
+      - POSTGRESQL_DATABASE=dmx_agent_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-shared-data:/bitnami/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d dmx_agent_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+    networks:
+      - data-network
+
+volumes:
+  redis-shared-data:
+  postgres-shared-data:
+
+networks:
+  data-network:
+    driver: bridge

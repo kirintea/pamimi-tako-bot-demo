@@ -15,16 +15,21 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import uuid
 
 from agentscope.app.message_bus import MessageBusKeys
 from loguru import logger
 
 from core.channels.base import BaseChannel
-from core.channels.config_store import ChannelConfigStore, ChannelEntry
+from core.channels.config_store import (
+    DEFAULT_SESSION_IDLE_HOURS,
+    ChannelConfigStore,
+    ChannelEntry,
+)
 from core.channels.events import InboundMessage
 from core.channels.registry import get_channel_class
+from core.channels.session_map import derive_session_id
+from core.multimodal import ContentPart, build_message_with_media
 # [已删除] core.storage_models 的 ChannelRecord / ChannelStatus 随 channels 表一并移除，
 # 渠道记录改用 core.channels.config_store.ChannelEntry。
 
@@ -35,19 +40,29 @@ class ChannelManager:
     def __init__(
         self,
         *,
-        # storage,         # DB storage（已注释，改用 config_store）
-        # db,              # DB 连接（已注释）
         config_store: ChannelConfigStore,
         bus,
         chat_service,
         object_storage,
+        db=None,
+        session_mgr=None,
+        session_map=None,
+        status_tracker=None,
+        commands=None,
     ) -> None:
-        # self._storage = storage      # DB storage — 已注释
-        # self._db = db                # DB — 已注释
         self._config_store = config_store
         self._bus = bus
         self._chat_service = chat_service
         self._object_storage = object_storage
+        self._db_ref = db
+        self._session_mgr = session_mgr
+        self._session_map = session_map
+        self._status_tracker = status_tracker
+        # 指令分发（默认惰性构造，测试可注入）
+        if commands is None:
+            from core.command.service import CommandService
+            commands = CommandService()
+        self._commands = commands
 
         # channel_id → 适配器实例 / 后台任务
         self._instances: dict[str, BaseChannel] = {}
@@ -59,12 +74,8 @@ class ChannelManager:
 
     @staticmethod
     def derive_session_id(user_id: str, channel: str, chat_id: str) -> str:
-        """为 (user_id, channel, chat_id) 生成稳定且唯一的会话 id（≤ 64 字符）
-
-        使用 sha256 截断，避免 chat_id 过长或含特殊字符破坏 sessions.id 约束。
-        """
-        raw = f"{user_id}|{channel}|{chat_id}".encode("utf-8")
-        return "ch-" + hashlib.sha256(raw).hexdigest()[:24]
+        """委托 core.channels.session_map.derive_session_id（保留兼容入口）。"""
+        return derive_session_id(user_id, channel, chat_id)
 
     # ------------------------------------------------------------------
     # 启动 / 关闭
@@ -192,7 +203,93 @@ class ChannelManager:
             logger.warning("ChannelManager: 渠道实例未运行，丢弃入站 (id={})", msg.channel_id)
             return
 
-        session_id = self.derive_session_id(msg.user_id, msg.channel, msg.chat_id)
+        # 渠道会话指针：同一 chat 的消息进入「当前」会话；空闲超时自动轮换新会话
+        # （公共能力：所有渠道适配器共用；N 按渠道条目 id 配置；/new 手动轮换仍走 CommandService）
+        rotated_from: str | None = None
+        # N 单次读取：判定轮换与提示文案共用同一值，避免热加载后文案与实际阈值不一致
+        idle_h = self._idle_hours(msg.channel_id)
+        if self._session_map is not None:
+            session_id, rotated_from = await self._session_map.resolve_or_rotate(
+                msg.user_id, msg.channel, msg.chat_id,
+                default=self.derive_session_id(msg.user_id, msg.channel, msg.chat_id),
+                idle_hours=idle_h,
+                stale_probe=self._freshness_probe(msg.user_id, idle_h),
+            )
+            if rotated_from is not None and self._session_mgr is not None:
+                # 过期旧会话：丢 KV（state + meta）与内存，PG conversations 历史保留
+                try:
+                    await self._session_mgr.delete_session(msg.user_id, rotated_from)
+                except Exception:
+                    logger.exception(
+                        "ChannelManager: 过期会话 KV 清理失败 (session={})", rotated_from,
+                    )
+        else:
+            session_id = self.derive_session_id(msg.user_id, msg.channel, msg.chat_id)
+
+        # 指令拦截：命中即直接回执，不进 LLM、不发占位（D4/D5/D6）
+        if not msg.media:
+            cmd_result = await self._commands.try_handle(
+                text=msg.content,
+                user_id=msg.user_id,
+                session_id=session_id,
+                transport=msg.channel,
+                chat_id=msg.chat_id,
+                session_mgr=self._session_mgr,
+                session_map=self._session_map,
+                status_tracker=self._status_tracker,
+                metadata=dict(msg.metadata or {}),
+            )
+            if cmd_result is not None:
+                # 空闲自动轮换的确认语 + 会话ID 不能因指令提前 return 而丢失（表现对齐 /new）。
+                # 指令自身又轮换（/new 的 new_session_id）时以指令回执为准，避免两个新会话 ID 打架；
+                # 其 sid 随下一条普通消息的 §3.4 推送发出，与手动 /new 的表现一致。
+                text = cmd_result.text
+                if rotated_from is not None and not cmd_result.new_session_id:
+                    # idle_h 传入带自动轮换确认语（与 /new 表现对齐）
+                    text = f"{self._new_session_notice(session_id, idle_h)}\n{text}"
+                stream_id = uuid.uuid4().hex
+                try:
+                    await inst.send_delta(
+                        msg.chat_id, text,
+                        stream_id=stream_id, stream_end=True,
+                    )
+                except Exception:
+                    logger.exception(
+                        "ChannelManager: 指令回执发送失败 (chat_id={})", msg.chat_id,
+                    )
+                logger.info(
+                    "ChannelManager: 指令命中 transport={} text={!r} new_session={}",
+                    msg.channel, msg.content.strip(), cmd_result.new_session_id,
+                )
+                return
+
+        # 新会话推送 session_id（§3.4）：仅会话首次创建时推送一次（含 /new 轮换与
+        # 空闲自动轮换后的首条消息），先于占位与实际对话发出；失败不阻断正常对话。
+        # 空闲自动轮换的表现与 /new 对齐：确认语 + 会话 ID 一并发出。
+        # rotated_from 是自动轮换的权威信号：一旦轮换必须发提示（用户要求「有提示有会话ID」），
+        # 不得被 session_exists 的保守判定（PG 抖动时抛异常返回 True）吞掉，故短路跳过存在性检查。
+        if rotated_from is not None or await self._session_is_new(msg.user_id, session_id):
+            # idle_h 仅在自动轮换时带确认语；/new 手动轮换/首次创建走纯会话ID 文案
+            body = self._new_session_notice(
+                session_id, idle_h if rotated_from is not None else None,
+            )
+            try:
+                await inst.send_delta(
+                    msg.chat_id, body,
+                    stream_id=uuid.uuid4().hex, stream_end=True,
+                )
+                logger.info(
+                    "ChannelManager: 新会话推送 session_id transport={} session={} rotated_from={}",
+                    msg.channel, session_id, rotated_from,
+                )
+            except Exception:
+                logger.exception(
+                    "ChannelManager: 会话ID 推送失败 (session={})", session_id,
+                )
+
+        # 提取渠道用户名（企微 from.name），用于落库 users.display_name
+        sender_name = (msg.metadata or {}).get("sender_name") or None
+        logger.info("[DEBUG] manager.handle_inbound sender_name={!r}, metadata={!r}", sender_name, msg.metadata)
         events_key = MessageBusKeys.session_events(session_id)
         stream_id = uuid.uuid4().hex
 
@@ -209,6 +306,7 @@ class ChannelManager:
         run_task = asyncio.ensure_future(
             self._safe_run(
                 msg.user_id, session_id, msg.content, msg.media, stream_id, msg.chat_id, inst,
+                display_name=sender_name, channel=msg.channel,
             )
         )
 
@@ -249,6 +347,69 @@ class ChannelManager:
                 pass
             await run_task
 
+    @staticmethod
+    def _new_session_notice(session_id: str, idle_h: float | None = None) -> str:
+        """新会话提示文案：idle_h 非空时带自动轮换确认语（与 /new 表现对齐）。"""
+        body = f"本次对话会话ID: {session_id}\n可用于查询对话历史。"
+        if idle_h is not None:
+            body = (
+                f"✅ 已自动开启新会话（距上次对话超过 {idle_h:g} 小时），"
+                f"之前的历史不再携带。\n{body}"
+            )
+        return body
+
+    def _idle_hours(self, channel_id: str) -> float:
+        """会话空闲自动新开阈值（小时），按渠道条目（channels.json 内 id）解析。
+
+        条目缺失或未配置 session_idle_hours 时回退默认 24；条目值 <=0 禁用自动轮换。
+        """
+        if self._config_store is not None:
+            entry = self._config_store.get_by_id(channel_id)
+            raw = getattr(entry, "session_idle_hours", None) if entry is not None else None
+            if raw is not None:
+                return float(raw)
+        return DEFAULT_SESSION_IDLE_HOURS
+
+    def _freshness_probe(self, user_id: str, idle_h: float):
+        """构造 stale_probe：候选会话在 idle_h 窗口内是否仍有对话（DB 为准）。
+
+        供指针缺失/无时钟的回退路径判定过期 —— 否则指针一丢（重启/驱逐/首次
+        接入）就无条件复活 derive 旧会话，N 小时自动新开形同虚设，重启后
+        新对话还会吃进很早之前的历史。DB 不可用或 idle_h<=0 时返回 None
+        （无法判定/禁用 → 不轮换，维持现状）。
+        """
+
+        async def probe(session_id: str) -> bool | None:
+            if self._db_ref is None or idle_h <= 0:
+                return None
+            try:
+                return await self._db_ref.session_freshness(
+                    user_id, session_id, within_hours=idle_h,
+                )
+            except Exception:
+                logger.exception(
+                    "ChannelManager: 会话新鲜度查询失败 user={} session={}",
+                    user_id, session_id,
+                )
+                return None
+
+        return probe
+
+    async def _session_is_new(self, user_id: str, session_id: str) -> bool:
+        """会话是否尚未创建 — 新会话推送 session_id 的判定（§3.4）。
+
+        未注入 session_mgr 或检查异常时返回 False（不推送），避免重复打扰。
+        """
+        if self._session_mgr is None:
+            return False
+        try:
+            return not await self._session_mgr.session_exists(user_id, session_id)
+        except Exception:
+            logger.exception(
+                "ChannelManager: 会话存在性检查失败 (session={})", session_id,
+            )
+            return False
+
     async def _safe_run(
         self,
         user_id: str,
@@ -258,16 +419,27 @@ class ChannelManager:
         stream_id: str,
         chat_id: str,
         inst: BaseChannel,
+        display_name: str | None = None,
+        channel: str = "web",
     ) -> None:
         """调用内核 ChatService.run（fire-and-forget），异常兜底。"""
         try:
+            # 本地媒体（渠道适配器已下载）→ 上传对象存储 → list[ContentPart]，
+            # 内核 build_user_msg 据此生成图片 DataBlock；无图时保持纯字符串
+            message: str | list[ContentPart] = content
+            if media and self._object_storage is not None:
+                message = await build_message_with_media(
+                    content, media, self._object_storage, user_id,
+                )
             await self._chat_service.run(
                 user_id,
                 session_id,
-                content,
+                message,
                 db=self._db_ref,  # type: ignore[attr-defined]
                 device_id=f"channel:{inst.name}",
                 object_storage=self._object_storage,
+                display_name=display_name,
+                channel=channel,
             )
         except Exception:
             logger.exception("ChannelManager: ChatService.run 异常 (session={})", session_id)
@@ -297,7 +469,7 @@ class _FakeRecord:
 
     def __init__(self, entry: ChannelEntry) -> None:
         self.id = entry.id
-        self.user_id = "config-file"  # JSON 配置无 user_id 概念
+        self.user_id = "unkown_user_id"  # JSON 配置无 user_id 概念
         self.name = entry.name
         self.type = entry.type
         self.enabled = entry.enabled

@@ -88,6 +88,9 @@ database:
   pool_size: 20
   auto_create_tables: false
   verify_tables: true
+  # 时间列时区：created_at / last_active 等由应用侧按此时区生成后显式传参
+  # （DB 服务端可能跑 UTC，NOW()/DEFAULT 只作兜底，避免入库时间差 8 小时）
+  timezone: "Asia/Shanghai"
 
 redis:
   url: "${REDIS_URL:-redis://localhost:6379/0}"

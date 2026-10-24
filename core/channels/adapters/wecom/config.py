@@ -17,6 +17,9 @@ class WecomSettings(BaseModel):
     secret: str = ""
     allow_from: list[str] = Field(default_factory=list)
     welcome_message: str = ""
+    # 通讯录 API（可选）— 用于获取用户名；大部分场景未授权，失败时优雅降级
+    corp_id: str = ""
+    contact_secret: str = ""
 
     @classmethod
     def coerce(cls, config) -> "WecomSettings":
@@ -29,6 +32,8 @@ class WecomSettings(BaseModel):
                 secret=config.get("secret", "") or "",
                 allow_from=config.get("allow_from") or [],
                 welcome_message=config.get("welcome_message", "") or "",
+                corp_id=config.get("corp_id", "") or "",
+                contact_secret=config.get("contact_secret", "") or "",
             )
         # 兼容 ChannelEntry 等带属性的对象
         return cls(
@@ -36,4 +41,6 @@ class WecomSettings(BaseModel):
             secret=getattr(config, "secret", "") or "",
             allow_from=getattr(config, "allow_from", None) or [],
             welcome_message=getattr(config, "welcome_message", "") or "",
+            corp_id=getattr(config, "corp_id", "") or "",
+            contact_secret=getattr(config, "contact_secret", "") or "",
         )

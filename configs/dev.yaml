@@ -49,15 +49,16 @@ agent:
     module_path: "configs.prompt"
     name: "SYSTEM_PROMPT"
   max_iters: 50
-  # trigger_ratio: 压缩触发阈值，默认 0.6（~76K tokens 时触发）。
+  # trigger_ratio: 压缩触发阈值（占 context_size 比例），0.6 × 256K ≈ 153K tokens 时触发。
   # 生产环境可调至 0.5 进一步提前触发，减少单次请求 token 消耗。
   context_trigger_ratio: 0.6
-  # reserve_ratio: 压缩后保留近期上下文比例，0.15 保留 ~19K tokens
+  # reserve_ratio: 压缩后保留近期上下文比例，0.15 × 256K ≈ 38K tokens
   context_reserve_ratio: 0.15
-  # tool_result_limit: 单条工具结果 token 上限，50000→15000 防止单次工具调用占满上下文
-  tool_result_limit: 15000
-  # reply_token_budget: 单次回复加权 token 预算，超限自动收尾
-  reply_token_budget: 80000
+  # tool_result_limit: 单条工具结果 token 上限，防止单次工具调用占满上下文（MCP 大结果会被截断到此值）
+  tool_result_limit: 35000
+  # reply_token_budget: 遗留字段，当前代码未引用，不生效！
+  # 实际生效的回复预算在下方 middleware.budget_control.token_budget。
+  reply_token_budget: 500000
   # 运行时注入配置
   injection:
     timezone: "Asia/Shanghai"
@@ -119,6 +120,9 @@ database:
   pool_size: 10
   auto_create_tables: true
   verify_tables: true
+  # 时间列时区：created_at / last_active 等由应用侧按此时区生成后显式传参
+  # （DB 服务端可能跑 UTC，NOW()/DEFAULT 只作兜底，避免入库时间差 8 小时）
+  timezone: "Asia/Shanghai"
 
 redis:
   url: "${REDIS_URL:-redis://localhost:6379/0}"
@@ -142,14 +146,16 @@ context:
 
 # 中间件配置
 # budget_control: 回复预算控制 — 单次回复加权 token 超限时自动收尾
-#   input_weight / output_weight: 加权公式 = input*weight + output*weight
+#   加权成本 = Σ每次模型调用(input×input_weight + output×output_weight)，单次回复内累进。
+#   MCP 大结果 + skill 全文会使每轮 input 都很大，8~10 轮工具调用的回复累进可达 50 万+，
+#   预算过小会在任务中途触发"Token 预算即将耗尽"并强制收尾（禁止再调工具）。
 # rate_limit: 速率限制（默认 10 req/min per-user，未配置则使用 schema 默认值）
 middleware:
   budget_control:
     enabled: true
-    token_budget: 80000             # 单次回复加权 token 预算
+    token_budget: 500000            # 单次回复累进加权 token 预算（原 80000 过小，重工具场景 1~2 轮就耗尽）
     input_weight: 1
-    output_weight: 2                # 输出 token 成本更高
+    output_weight: 2                # 输出 token 成本更高；若仍频繁触顶可降为 1
   # rate_limit:
   #   enabled: true
   #   requests_per_minute: 10

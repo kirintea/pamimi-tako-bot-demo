@@ -37,10 +37,12 @@ export interface SessionInfo {
 	session_id: string;
 	user_id: string;
 	title: string;
-	created_at: number;
-	last_active: number;
+	created_at: number | string;
+	last_active: number | string;
 	message_count: number;
 	parent_session_id?: string;
+	display_name?: string | null;
+	channel?: string | null;
 }
 
 export interface SessionListResponse {
@@ -118,6 +120,8 @@ export interface ChatMessage {
 	images?: string[];
 	/** 创建时间（epoch ms）— PromptNavigator 时间戳用 */
 	createdAt?: number;
+	/** 创建时间（DB 原始 datetime 字符串）— 管理视图时间展示用，不做日期换算 */
+	created_at?: string;
 }
 
 export interface ToolCallInfo {
@@ -231,6 +235,8 @@ export interface ChannelInfo {
 	status: string;
 	/** 响应中 secret 已脱敏（非空即 "********"） */
 	config: ChannelConfig;
+	/** 会话空闲自动新开阈值（小时）；null/缺省 = 默认 24，<=0 = 禁用 */
+	session_idle_hours?: number | null;
 	created_at?: string;
 	updated_at?: string;
 }
@@ -240,12 +246,16 @@ export interface CreateChannelRequest {
 	type?: string;
 	enabled?: boolean;
 	config: ChannelConfig;
+	/** 会话空闲自动新开阈值（小时）；null/缺省 = 默认 24，<=0 = 禁用 */
+	session_idle_hours?: number | null;
 }
 
 export interface UpdateChannelRequest {
 	name?: string;
 	enabled?: boolean;
 	config?: Partial<ChannelConfig>;
+	/** 显式 null = 回退默认 24 */
+	session_idle_hours?: number | null;
 }
 
 export interface ChannelListResponse {
@@ -299,4 +309,40 @@ export interface HealthResponse {
 	version?: string;
 	components?: Record<string, string>;
 	active_sessions?: number;
+}
+
+// ========== 对话观测台 ==========
+
+export type ObserveNodeKind = 'user' | 'thinking' | 'tool' | 'text';
+
+export interface ObserveNode {
+	seq: number;
+	kind: ObserveNodeKind;
+	/** kind=user/thinking/text 时的文本 */
+	text?: string;
+	/** kind=tool 时 */
+	tool_name?: string;
+	tool_args?: unknown;
+	result?: string | null;
+	state?: string | null;
+}
+
+export interface ObserveToolSummary {
+	count: number;
+	path: string[];
+}
+
+export interface ObserveTurn {
+	turn_id: string;
+	user_message: string;
+	created_at: string;
+	nodes: ObserveNode[];
+	tool_summary: ObserveToolSummary;
+}
+
+export interface ObserveTurnsResponse {
+	user_id: string;
+	session_id: string;
+	channel: string;
+	turns: ObserveTurn[];
 }

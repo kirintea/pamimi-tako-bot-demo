@@ -163,7 +163,11 @@ export function useMessages(userId: string, sessionId: string | null, newChatNon
 
 			case 'reply_end': {
 				setPhase('idle');
-				const payload = msg.payload as { text?: string };
+				const payload = msg.payload as {
+					text?: string;
+					command?: boolean;
+					new_session_id?: string;
+				};
 				if (payload.text) {
 					// reply_end 携带完整文本时，替换最后一条 assistant 消息内容
 					setMessages(prev => {
@@ -173,6 +177,16 @@ export function useMessages(userId: string, sessionId: string | null, newChatNon
 							next[next.length - 1] = { ...last, content: payload.text! };
 						}
 						return next;
+					});
+				}
+				// 指令 /new：切换到服务端铸造的新会话（switchSession 内部重连 WS）
+				if (payload.command && payload.new_session_id) {
+					void switchSession(payload.new_session_id).then(() => {
+						setMessages([{
+							id: `msg-${Date.now()}`,
+							role: 'assistant',
+							content: payload.text || '✅ 已开启新会话。',
+						}]);
 					});
 				}
 				break;
