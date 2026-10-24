@@ -31,7 +31,9 @@ from api.chat import router as chat_router
 from api.channels import router as channels_router
 from api.images import router as images_router
 from api.mcp import router as mcp_router
+from api.observe import router as observe_router
 from api.skill import router as skill_router
+from api.stats import router as stats_router
 from api.ws_chat import router as ws_chat_router
 # from api.workspace import router as workspace_router
 # from api.webui import router as webui_router
@@ -474,7 +476,7 @@ def create_app(config) -> FastAPI:
     # 2. 创建 FastAPI 应用
     # ============================================================
     app = FastAPI(
-        title="Pamimi Tako Bot Demo",
+        title="Base Agent",
         description="基于 AgentScope 的对话智能体平台",
         version="0.2.1",
         lifespan=lifespan,
@@ -525,6 +527,8 @@ def create_app(config) -> FastAPI:
     app.include_router(images_router, tags=["images"])
     app.include_router(mcp_router)
     app.include_router(skill_router)
+    app.include_router(observe_router)
+    app.include_router(stats_router)
     app.include_router(ws_chat_router, tags=["websocket"])
 
     # app.include_router(workspace_router)
