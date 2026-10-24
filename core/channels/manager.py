@@ -29,6 +29,7 @@ from core.channels.config_store import (
 from core.channels.events import InboundMessage
 from core.channels.registry import get_channel_class
 from core.channels.session_map import derive_session_id
+from core.multimodal import ContentPart, build_message_with_media
 # [已删除] core.storage_models 的 ChannelRecord / ChannelStatus 随 channels 表一并移除，
 # 渠道记录改用 core.channels.config_store.ChannelEntry。
 
@@ -212,6 +213,7 @@ class ChannelManager:
                 msg.user_id, msg.channel, msg.chat_id,
                 default=self.derive_session_id(msg.user_id, msg.channel, msg.chat_id),
                 idle_hours=idle_h,
+                stale_probe=self._freshness_probe(msg.user_id, idle_h),
             )
             if rotated_from is not None and self._session_mgr is not None:
                 # 过期旧会话：丢 KV（state + meta）与内存，PG conversations 历史保留
@@ -368,6 +370,31 @@ class ChannelManager:
                 return float(raw)
         return DEFAULT_SESSION_IDLE_HOURS
 
+    def _freshness_probe(self, user_id: str, idle_h: float):
+        """构造 stale_probe：候选会话在 idle_h 窗口内是否仍有对话（DB 为准）。
+
+        供指针缺失/无时钟的回退路径判定过期 —— 否则指针一丢（重启/驱逐/首次
+        接入）就无条件复活 derive 旧会话，N 小时自动新开形同虚设，重启后
+        新对话还会吃进很早之前的历史。DB 不可用或 idle_h<=0 时返回 None
+        （无法判定/禁用 → 不轮换，维持现状）。
+        """
+
+        async def probe(session_id: str) -> bool | None:
+            if self._db_ref is None or idle_h <= 0:
+                return None
+            try:
+                return await self._db_ref.session_freshness(
+                    user_id, session_id, within_hours=idle_h,
+                )
+            except Exception:
+                logger.exception(
+                    "ChannelManager: 会话新鲜度查询失败 user={} session={}",
+                    user_id, session_id,
+                )
+                return None
+
+        return probe
+
     async def _session_is_new(self, user_id: str, session_id: str) -> bool:
         """会话是否尚未创建 — 新会话推送 session_id 的判定（§3.4）。
 
@@ -397,10 +424,17 @@ class ChannelManager:
     ) -> None:
         """调用内核 ChatService.run（fire-and-forget），异常兜底。"""
         try:
+            # 本地媒体（渠道适配器已下载）→ 上传对象存储 → list[ContentPart]，
+            # 内核 build_user_msg 据此生成图片 DataBlock；无图时保持纯字符串
+            message: str | list[ContentPart] = content
+            if media and self._object_storage is not None:
+                message = await build_message_with_media(
+                    content, media, self._object_storage, user_id,
+                )
             await self._chat_service.run(
                 user_id,
                 session_id,
-                content,
+                message,
                 db=self._db_ref,  # type: ignore[attr-defined]
                 device_id=f"channel:{inst.name}",
                 object_storage=self._object_storage,

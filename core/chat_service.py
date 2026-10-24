@@ -169,9 +169,11 @@ class ChatService:
         async with acquire_session_lock(self._bus, user_id, session_id):
             try:
                 # 标记会话为生成中（多端并发状态广播）
+                # 预览必须是 str：set_generating 内部 json.dumps，裸 list[ContentPart] 会炸
                 if self._status_tracker:
                     await self._status_tracker.set_generating(
-                        session_id, device_id, message,
+                        session_id, device_id,
+                        serialize_message_for_storage(message),
                     )
 
                 # 获取或创建 Agent

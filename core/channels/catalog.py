@@ -2,7 +2,7 @@
 
 """渠道全量目录（静态元数据，仅供前端渲染与运行时校验参考）
 
-包含已知可接入的全部 17 种渠道类型，无论后端是否实现适配器：
+包含已知可接入的全部 15 种渠道类型，无论后端是否实现适配器：
 - backend_supported: 后端是否已有可运行适配器（以 registry.REGISTRY 为准）
 - dependencies: 运行所需 pip 包；name=pip 包名（前端 tooltip 展示），
   import_name=importlib.util.find_spec 探测的模块名（探测依赖可用性用）
@@ -51,14 +51,6 @@ CHANNEL_DEPENDENCIES: dict[str, list[dict[str, str]]] = {
     ],
     "matrix": [
         {"name": "matrix-nio", "import_name": "nio"},
-    ],
-    "mochat": [
-        {"name": "requests", "import_name": "requests"},
-        {"name": "websockets", "import_name": "websockets"},
-    ],
-    "napcat": [
-        {"name": "websockets", "import_name": "websockets"},
-        {"name": "aiohttp", "import_name": "aiohttp"},
     ],
     "qq": [
         {"name": "aiocqhttp", "import_name": "aiocqhttp"},
@@ -131,16 +123,6 @@ CHANNEL_META: dict[str, dict[str, Any]] = {
         "description": "接入 Matrix 联邦网络（如 Element），去中心化聊天。",
         "doc_url": "",
     },
-    "mochat": {
-        "display_name": "墨匣 Mochat",
-        "description": "接入 Mochat 微信生态运营平台（基于微信个人号/企微）。",
-        "doc_url": "",
-    },
-    "napcat": {
-        "display_name": "NapCat（QQ）",
-        "description": "接入 NapCat 框架，连接 QQ 账号收发消息。",
-        "doc_url": "",
-    },
     "qq": {
         "display_name": "QQ",
         "description": "接入 QQ 频道/群，让智能体在 QQ 中对话。",
@@ -184,8 +166,6 @@ CHANNEL_ORDER: list[str] = [
     "msteams",
     "mattermost",
     "matrix",
-    "mochat",
-    "napcat",
     "qq",
     "signal",
     "email",
