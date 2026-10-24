@@ -310,3 +310,39 @@ export interface HealthResponse {
 	components?: Record<string, string>;
 	active_sessions?: number;
 }
+
+// ========== 对话观测台 ==========
+
+export type ObserveNodeKind = 'user' | 'thinking' | 'tool' | 'text';
+
+export interface ObserveNode {
+	seq: number;
+	kind: ObserveNodeKind;
+	/** kind=user/thinking/text 时的文本 */
+	text?: string;
+	/** kind=tool 时 */
+	tool_name?: string;
+	tool_args?: unknown;
+	result?: string | null;
+	state?: string | null;
+}
+
+export interface ObserveToolSummary {
+	count: number;
+	path: string[];
+}
+
+export interface ObserveTurn {
+	turn_id: string;
+	user_message: string;
+	created_at: string;
+	nodes: ObserveNode[];
+	tool_summary: ObserveToolSummary;
+}
+
+export interface ObserveTurnsResponse {
+	user_id: string;
+	session_id: string;
+	channel: string;
+	turns: ObserveTurn[];
+}

@@ -9,6 +9,8 @@ import { SettingsPage } from '@/pages/settings';
 import { SetupPage } from '@/pages/setup';
 import { SkillPage } from '@/pages/skill';
 import { AllSessions } from '@/pages/admin/AllSessions';
+import { ObservePage } from '@/pages/admin/Observe';
+import { StatsPage } from '@/pages/admin/Stats';
 
 function SetupPageRoute() {
 	const navigate = useNavigate();
@@ -33,6 +35,8 @@ const router = createBrowserRouter(
 				{ path: '/skill', element: <SkillPage /> },
 				{ path: '/settings/:section?', element: <SettingsPage /> },
 				{ path: '/admin/sessions', element: <AllSessions /> },
+				{ path: '/admin/observe', element: <ObservePage /> },
+				{ path: '/admin/stats', element: <StatsPage /> },
 			],
 		},
 		{ path: '/setup', element: <SetupPageRoute /> },

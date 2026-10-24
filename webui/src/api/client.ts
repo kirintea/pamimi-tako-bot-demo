@@ -24,6 +24,12 @@ function buildHeaders(hasBody: boolean): Record<string, string> {
 	return headers;
 }
 
+/** 仅当 setup 中配置了 api_key 时返回 X-API-Key 头（与 request() 同源） */
+function authHeaders(): Record<string, string> {
+	const apiKey = localStorage.getItem('api_key');
+	return apiKey && apiKey.trim() ? { 'X-API-Key': apiKey.trim() } : {};
+}
+
 async function extractErrorDetail(res: Response): Promise<string> {
 	const text = await res.text();
 	try {
@@ -38,14 +44,11 @@ async function extractErrorDetail(res: Response): Promise<string> {
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 	// 可选 API-Key 鉴权：仅当 setup 中配置了 api_key 时附带 X-API-Key 头（非破坏性）
-	const apiKey = localStorage.getItem('api_key');
-	if (apiKey && apiKey.trim()) {
+	const auth = authHeaders();
+	if (Object.keys(auth).length > 0) {
 		options = {
 			...options,
-			headers: {
-				...(options.headers || {}),
-				'X-API-Key': apiKey.trim(),
-			},
+			headers: { ...(options.headers || {}), ...auth },
 		};
 	}
 
@@ -85,4 +88,13 @@ export const client = {
 
 	delete: <T = void>(path: string) =>
 		request<T>(path, { method: 'DELETE' }),
+
+	/** 裸 fetch（带统一鉴权头），用于 CSV 下载等非 JSON 响应 */
+	raw: (path: string, params?: Record<string, string>) => {
+		const url = new URL(path, window.location.origin);
+		if (params) {
+			Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
+		}
+		return fetch(url.toString(), { headers: authHeaders() });
+	},
 };

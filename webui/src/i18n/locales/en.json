@@ -1,4 +1,11 @@
 {
+	"stats": {
+		"channelNames": {
+			"web": "Web",
+			"wecom": "WeCom",
+			"unknown": "Unknown"
+		}
+	},
 	"common": {
 		"add": "Add",
 		"agent": "Agent",
@@ -991,30 +998,6 @@
 			"addPreset": "Add Preset",
 			"active": "Active",
 			"hint": "Add multiple model presets to switch between them during chat. Editing available after backend API is ready."
-		},
-		"mcp": {
-			"title": "MCP Servers",
-			"add": "Add",
-			"empty": "No MCP servers",
-			"enabled": "Enabled",
-			"disabled": "Disabled",
-			"confirmDelete": "Delete this MCP?",
-			"namePlaceholder": "Name",
-			"commandPlaceholder": "Command (e.g. npx)",
-			"argsPlaceholder": "Arguments (one per line)",
-			"urlPlaceholder": "URL"
-		},
-		"skills": {
-			"title": "Skills",
-			"add": "Add",
-			"empty": "No skills",
-			"enabled": "Enabled",
-			"disabled": "Disabled",
-			"confirmDelete": "Delete this Skill?",
-			"namePlaceholder": "Name",
-			"displayNamePlaceholder": "Display name",
-			"descPlaceholder": "Description",
-			"tagsPlaceholder": "Tags (comma separated)"
 		},
 		"security": {
 			"apiAuth": "API Authentication",
