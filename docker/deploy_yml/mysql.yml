@@ -1,6 +1,6 @@
 # MySQL 关系型数据库
 # 端口：3306（MySQL 协议）
-# 默认账号：root / root123
+# 默认账号：user / password（root 为 root123，仅管理用）
 # 默认数据库：dmx_agent_db
 
 services:
@@ -12,8 +12,8 @@ services:
       # 启动时自动创建的数据库
       MYSQL_DATABASE: dmx_agent_db
       # 自动创建的普通用户（拥有 MYSQL_DATABASE 的全部权限）
-      MYSQL_USER: app_user
-      MYSQL_PASSWORD: app123
+      MYSQL_USER: user
+      MYSQL_PASSWORD: password
     ports:
       - "3306:3306"  # MySQL 协议端口，供应用程序连接
     volumes:
