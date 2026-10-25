@@ -198,6 +198,7 @@ health_check/              # 健康检查（HTTP/Redis/PG/MySQL/LLM）
 scripts/start.sh           # 启动脚本
 workspaces/                # 双域工作空间
 ```
+![1792916111643](image/README/1792916111643.png)
 
 ## API 端点
 
