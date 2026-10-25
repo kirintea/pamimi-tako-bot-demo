@@ -59,9 +59,8 @@ services:
   # ============================================
   # MySQL 关系数据库
   # 端口：3306
-  # 账号：root / root123
+  # 账号：user / password（root / root123，仅管理用）
   # 数据库：dmx_agent_db
-  # 普通用户：app_user / app123
   # ============================================
   mysql:
     image: mysql:8.0.26
@@ -69,8 +68,8 @@ services:
     environment:
       MYSQL_ROOT_PASSWORD: root123
       MYSQL_DATABASE: dmx_agent_db
-      MYSQL_USER: app_user
-      MYSQL_PASSWORD: app123
+      MYSQL_USER: user
+      MYSQL_PASSWORD: password
     ports:
       - "127.0.0.1:13306:3306"
     volumes:

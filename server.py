@@ -225,35 +225,41 @@ def create_app(config) -> FastAPI:
         # 创建消息总线（Redis 分布式实现，支持多实例无状态部署）
         # 注意：RedisMessageBus 构造函数当前仅接受 redis_url（见 core/redis_message_bus.py:36），
         # key_prefix / session_ttl 由 SessionManager 使用，此处无需传递。
-        # Redis 不可达时退避重试；仍失败则降级为 InMemoryMessageBus（单实例进程内总线），
-        # 应用继续启动：对话触发 / 锁 / 事件回放与订阅在无 Redis 时仍可用，
-        # 仅跨实例广播与多端状态跟踪不可用（Q4 降级单实例语义）。
-        message_bus = RedisMessageBus(config.redis.url)
+        # kv.backend=jsonl（单进程本地开发）时不依赖 Redis：直接用进程内总线，跳过连接重试。
+        message_bus: RedisMessageBus | None = None
         _bus_ok = False
-        for _attempt in range(3):
-            try:
-                await message_bus.initialize()
-                _bus_ok = True
-                break
-            except Exception as _bus_err:  # noqa: BLE001
-                if _attempt < 2:
-                    logger.warning(
-                        "Redis 消息总线初始化失败（第 {} 次），2s 后重试: {}",
-                        _attempt + 1, _bus_err,
-                    )
-                    await asyncio.sleep(2)
-                else:
-                    logger.warning(
-                        "Redis 消息总线不可用，应用降级运行"
-                        "（/health 仍可用，跨实例广播不可用）: {}",
-                        _bus_err,
-                    )
-        if _bus_ok:
-            app.state.message_bus = message_bus
-            logger.info("消息总线已就绪 (RedisMessageBus: {})", config.redis.url)
-        else:
+        if config.kv.backend == "jsonl":
             app.state.message_bus = InMemoryMessageBus()
-            logger.warning("消息总线降级为 InMemoryMessageBus（单实例，无跨实例广播）")
+            logger.info("消息总线：InMemoryMessageBus（kv.backend=jsonl，单进程，无需 Redis）")
+        else:
+            # Redis 不可达时退避重试；仍失败则降级为 InMemoryMessageBus（单实例进程内总线），
+            # 应用继续启动：对话触发 / 锁 / 事件回放与订阅在无 Redis 时仍可用，
+            # 仅跨实例广播与多端状态跟踪不可用（Q4 降级单实例语义）。
+            message_bus = RedisMessageBus(config.redis.url)
+            for _attempt in range(3):
+                try:
+                    await message_bus.initialize()
+                    _bus_ok = True
+                    break
+                except Exception as _bus_err:  # noqa: BLE001
+                    if _attempt < 2:
+                        logger.warning(
+                            "Redis 消息总线初始化失败（第 {} 次），2s 后重试: {}",
+                            _attempt + 1, _bus_err,
+                        )
+                        await asyncio.sleep(2)
+                    else:
+                        logger.warning(
+                            "Redis 消息总线不可用，应用降级运行"
+                            "（/health 仍可用，跨实例广播不可用）: {}",
+                            _bus_err,
+                        )
+            if _bus_ok:
+                app.state.message_bus = message_bus
+                logger.info("消息总线已就绪 (RedisMessageBus: {})", config.redis.url)
+            else:
+                app.state.message_bus = InMemoryMessageBus()
+                logger.warning("消息总线降级为 InMemoryMessageBus（单实例，无跨实例广播）")
 
         # 创建会话管理器（Agent 实例按需创建）
         session_mgr = SessionManager(
@@ -267,7 +273,10 @@ def create_app(config) -> FastAPI:
         # 初始化 Redis 连接（与消息总线一致：失败降级而非硬崩溃，app 仍服务 /health）
         try:
             await session_mgr.initialize()
-            logger.info("会话管理器已就绪 (Redis: {})", config.redis.url)
+            if config.kv.backend == "jsonl":
+                logger.info("会话管理器已就绪 (KV: jsonl)")
+            else:
+                logger.info("会话管理器已就绪 (Redis: {})", config.redis.url)
         except Exception as _sess_err:  # noqa: BLE001
             logger.warning(
                 "SessionManager Redis 初始化失败，降级运行（会话持久化不可用）: {}",
@@ -312,13 +321,13 @@ def create_app(config) -> FastAPI:
         # 创建 Chat 服务（Fire-and-Forget 模式）
         # 先初始化 SessionStatusTracker（多端并发状态广播）
         status_tracker = None
-        if _bus_ok and message_bus._redis:
+        if _bus_ok and message_bus is not None and message_bus._redis:
             status_tracker = SessionStatusTracker(message_bus._redis)
             app.state.session_status_tracker = status_tracker
             logger.info("会话状态跟踪器已就绪（多端并发模式）")
         else:
             app.state.session_status_tracker = None
-            logger.info("会话状态跟踪器未启用（Redis 不可用）")
+            logger.info("会话状态跟踪器未启用（多端并发状态同步不可用）")
 
         # 传入 app.state.message_bus（降级时为 InMemoryMessageBus），
         # 避免 ChatService.run 持有 _redis=None 的 RedisMessageBus 而崩溃
@@ -459,13 +468,14 @@ def create_app(config) -> FastAPI:
         logger.info("会话管理器已关闭")
 
         await app.state.message_bus.aclose()
-        if app.state.message_bus is not message_bus:
+        if message_bus is not None and app.state.message_bus is not message_bus:
             # 降级场景：关闭未使用的 Redis 实例（_redis=None 时 aclose 自行跳过）
             await message_bus.aclose()
         logger.info("消息总线已关闭")
 
-        await db_mgr.shutdown()
-        logger.info("数据库连接池已关闭")
+        if db_mgr.is_initialized:
+            await db_mgr.shutdown()
+            logger.info("数据库连接池已关闭")
 
         if config.otel.enabled:
             from core.tracing import TracingSetup

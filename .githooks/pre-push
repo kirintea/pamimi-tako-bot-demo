@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# 预推送钩子 —— 拦截含敏感信息的提交历史（pre-commit 的兜底）
+# 作用：防止 --no-verify 绕过、或安装钩子前已存在的敏感信息被推到远程
+# 绕过：git push --no-verify
+set -euo pipefail
+
+PATTERN='(192\.168\.|10\.[0-9]{1,3}\.|172\.(1[6-9]|2[0-9]|3[01])\.)[0-9]{1,3}\.[0-9]{1,3}|sk-[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{35}|ghp_[A-Za-z0-9]{36}|-----BEGIN [A-Z ]*PRIVATE KEY-----'
+
+found=0
+while read -r local_ref local_sha remote_ref remote_sha; do
+  # 删除分支（local_sha 全零）跳过
+  if [ "$local_sha" = "0000000000000000000000000000000000000000" ]; then
+    continue
+  fi
+  if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
+    range="$local_sha"
+  else
+    range="$remote_sha..$local_sha"
+  fi
+
+  # 扫描本次将要推送的新增内容（只看 + 行）
+  hits="$(git diff "$range" -- . 2>/dev/null | grep -E '^\+' | grep -vE '^\+\+\+' | grep -E "$PATTERN" || true)"
+  if [ -n "$hits" ]; then
+    echo "✋ 推送被拦截：本次推送含疑似敏感信息（内网 IP / 密钥 / 私钥）" >&2
+    echo "   分支 $local_ref -> $remote_ref" >&2
+    printf '%s\n' "$hits" | sed 's/^/    /' >&2
+    echo >&2
+    echo "    定位引入提交：git log --all --oneline -S '<敏感串>'" >&2
+    echo "    若是误报或确有需要，可执行：git push --no-verify" >&2
+    found=1
+  fi
+done
+
+exit "$found"

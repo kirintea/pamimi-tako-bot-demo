@@ -546,18 +546,19 @@ async def health(request: Request):
     checks = {}
     overall_ok = True
 
-    # Redis 检查（kv.backend=jsonl 时 Redis 为可选：会话走本地文件，消息总线自降级）
+    # Redis 检查（kv.backend=jsonl 时 Redis 为可选：会话走本地文件、消息总线走进程内，
+    # 直接跳过连接，避免每次 /health 都去连一次 Redis）
     kv_backend = getattr(getattr(config, "kv", None), "backend", "redis")
-    try:
-        import redis as redis_lib
-        redis_url = getattr(getattr(config, "redis", None), "url", "redis://localhost:6379/0")
-        r = redis_lib.from_url(redis_url, socket_timeout=3)
-        r.ping()
-        checks["redis"] = "ok"
-    except Exception as e:
-        if kv_backend == "jsonl":
-            checks["redis"] = f"unavailable (kv.backend=jsonl, 消息总线降级): {e}"
-        else:
+    if kv_backend == "jsonl":
+        checks["redis"] = "skipped (kv.backend=jsonl, 无需 Redis)"
+    else:
+        try:
+            import redis as redis_lib
+            redis_url = getattr(getattr(config, "redis", None), "url", "redis://localhost:6379/0")
+            r = redis_lib.from_url(redis_url, socket_timeout=3)
+            r.ping()
+            checks["redis"] = "ok"
+        except Exception as e:
             checks["redis"] = f"error: {e}"
             overall_ok = False
 

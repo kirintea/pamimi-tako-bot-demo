@@ -26,7 +26,7 @@ services:
       # 这些会覆盖 .env 中的值，因为 main.py 用 load_dotenv(override=False)
       - REDIS_URL=redis://host.docker.internal:6390/0
       - DATABASE_URL=postgresql://user:password@host.docker.internal:5432/dmx_agent_db
-      # - DATABASE_URL=mysql://user:password@host.docker.internal:3306/dmx_agent_db
+      # - DATABASE_URL=mysql://user:password@localhost:3306/dmx_agent_db
       - OTEL_ENDPOINT=http://host.docker.internal:4317
     extra_hosts:
       - "host.docker.internal:host-gateway"

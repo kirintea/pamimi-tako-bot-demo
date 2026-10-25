@@ -79,18 +79,37 @@ LLM_BASE_URL=https://api.siliconflow.cn/v1
 LLM_MODEL_NAME=Qwen/Qwen3.6-35B-A3B
 ```
 
-### 3. 启动依赖服务
+### 3. 启动依赖服务（本地测试可跳过）
+
+本地测试可以不启动任何依赖（免数据库 / 免 Redis 模式）：
+
+- `.env` 中设 `DATABASE_URL=`（**等号后留空**）→ 跳过数据库初始化。
+  注意「未设置」≠「空值」：不设该变量时 dev 会回退本地 PG 默认连接串，
+  连不上直接 fail-fast 启动失败
+- Redis 也不用启动 —— dev 默认 `kv.backend: jsonl`，会话状态走本地 JSONL 文件，
+  消息总线直接走进程内 `InMemoryMessageBus`，启动全程不连 Redis（也不会慢约 20 秒）
+
+此时对话（WebUI / `/chat` / `/ws/chat`）完全可用，以下功能降级：
+
+- **返回 503**：用户历史会话列表、消息历史、会话重命名、`/mcp`、`/skill`、`/admin/observe`、`/admin/stats`
+- **不可用**：跨实例事件广播、多设备状态跟踪（单实例无影响）
+- `/health` 仍返回 ok（`database: not_configured`，`redis: skipped (kv.backend=jsonl, 无需 Redis)`）
+
+完整功能需启动数据库 + Redis（二选一）：
 
 ```bash
-# 一键启动 Redis + PostgreSQL + 可观测性栈
-cd docker && docker compose up -d
-
-# 或按需启动单个服务（模块化 compose 在 docker/deploy_yml/）
-docker compose -f docker/deploy_yml/redis.yml up -d
-docker compose -f docker/deploy_yml/postgres.yml up -d
+cd docker
+# PostgreSQL + Redis
+docker compose -f docker-compose.pg-redis.yml up -d
+# 或 MySQL + Redis
+docker compose -f docker-compose.mysql-redis.yml up -d
 ```
 
-默认连接：Redis `redis://localhost:6379/0`，PostgreSQL `postgresql://user:password@localhost:5432/dmx_agent_db`
+默认连接：Redis `redis://localhost:6379/0`；
+PostgreSQL `postgresql://user:password@localhost:5432/dmx_agent_db`，
+MySQL `mysql://user:password@localhost:3306/dmx_agent_db`
+
+可观测性栈（OTel/Jaeger/Prometheus/Loki/Grafana，另含 PG + Redis）用 `docker compose up -d` 单独启动。
 
 ### 4. 启动服务
 
@@ -102,11 +121,11 @@ APP_ENV=dev python main.py
 
 ### 5. 访问
 
-| 入口 | 地址 | 说明 |
-|------|------|------|
-| WebUI | http://localhost:8090/webui | React 19 SPA（需先 `cd webui && npm run build`） |
-| 旧版界面 | http://localhost:8090/ | 静态 HTML |
-| API 文档 | http://localhost:8090/docs | Swagger |
+| 入口     | 地址                        | 说明                                               |
+| -------- | --------------------------- | -------------------------------------------------- |
+| WebUI    | http://localhost:8090/webui | React 19 SPA（需先 `cd webui && npm run build`） |
+| 旧版界面 | http://localhost:8090/      | 静态 HTML                                          |
+| API 文档 | http://localhost:8090/docs  | Swagger                                            |
 
 ## 架构
 
@@ -133,7 +152,7 @@ core/
 ├── session.py             # 会话管理器（KV 持久化 + fork + PG 回填）
 ├── kv/                    # KV 存储（RedisKVStore / JsonlKVStore）
 ├── redis_message_bus.py   # Redis 分布式消息总线
-├── message_bus.py         # 内存消息总线（Redis 不可用时降级）
+├── message_bus.py         # 内存消息总线（jsonl 模式直接使用 / Redis 不可用时降级）
 ├── session_status.py      # 多设备并发状态同步
 ├── workspace.py           # 双域工作空间（agent_space + user_spaces）
 ├── user_service.py        # 用户服务（root 身份 + 注册）
@@ -179,59 +198,60 @@ health_check/              # 健康检查（HTTP/Redis/PG/MySQL/LLM）
 scripts/start.sh           # 启动脚本
 workspaces/                # 双域工作空间
 ```
+![1792916111643](image/README/1792916111643.png)
 
 ## API 端点
 
 ### 对话
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | `/chat/stream` | 流式对话（SSE） |
-| POST | `/chat/` | Fire-and-Forget 触发 |
-| GET | `/sessions/{session_id}/stream` | SSE 事件流订阅 |
-| POST | `/sessions/{user_id}/{session_id}/interrupt` | 取消生成 |
-| GET | `/health` | 健康检查 |
+| 方法 | 路径                                           | 说明                 |
+| ---- | ---------------------------------------------- | -------------------- |
+| POST | `/chat/stream`                               | 流式对话（SSE）      |
+| POST | `/chat/`                                     | Fire-and-Forget 触发 |
+| GET  | `/sessions/{session_id}/stream`              | SSE 事件流订阅       |
+| POST | `/sessions/{user_id}/{session_id}/interrupt` | 取消生成             |
+| GET  | `/health`                                    | 健康检查             |
 
 ### 会话
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/sessions` | 列出活跃会话 |
-| GET | `/sessions/{user_id}` | 用户历史会话列表 |
-| GET | `/sessions/{user_id}/{session_id}/messages` | 消息历史 |
-| POST | `/sessions/{user_id}/{session_id}/fork` | 会话分支 |
-| DELETE | `/sessions/{user_id}/{session_id}` | 删除会话 |
+| 方法   | 路径                                          | 说明             |
+| ------ | --------------------------------------------- | ---------------- |
+| GET    | `/sessions`                                 | 列出活跃会话     |
+| GET    | `/sessions/{user_id}`                       | 用户历史会话列表 |
+| GET    | `/sessions/{user_id}/{session_id}/messages` | 消息历史         |
+| POST   | `/sessions/{user_id}/{session_id}/fork`     | 会话分支         |
+| DELETE | `/sessions/{user_id}/{session_id}`          | 删除会话         |
 
 ### WebSocket
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| WS | `/ws/chat?user_id=&session_id=` | 全双工对话通道 |
+| 方法 | 路径                              | 说明           |
+| ---- | --------------------------------- | -------------- |
+| WS   | `/ws/chat?user_id=&session_id=` | 全双工对话通道 |
 
 ### MCP / Skill / 渠道 / 图片
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| CRUD | `/mcp` | MCP 管理 |
-| CRUD | `/skill` | Skill 管理 |
-| CRUD | `/channels` | 渠道管理 |
-| POST | `/images/upload` | 图片上传 |
+| 方法 | 路径               | 说明       |
+| ---- | ------------------ | ---------- |
+| CRUD | `/mcp`           | MCP 管理   |
+| CRUD | `/skill`         | Skill 管理 |
+| CRUD | `/channels`      | 渠道管理   |
+| POST | `/images/upload` | 图片上传   |
 
 ## 配置
 
 配置文件在 `configs/`，通过 `APP_ENV` 选择环境。所有外部地址支持 `${VAR:-default}` 语法。
 
-| 变量 | 默认值 | 说明 |
-|------|--------|------|
-| `LLM_API_KEY` | — | LLM API 密钥（必填） |
-| `LLM_BASE_URL` | — | LLM 接口地址（必填） |
-| `LLM_MODEL_NAME` | `qwen-max` | 模型名 |
-| `DATABASE_URL` | `postgresql://user:password@localhost:5432/dmx_agent_db` | 数据库连接串 |
-| `REDIS_URL` | `redis://localhost:6379/0` | Redis 连接串 |
-| `OTEL_ENDPOINT` | `http://localhost:4317` | OTel gRPC 端点 |
-| `APP_ENV` | `dev` | 环境（dev / prod） |
-| `AUTH_REQUIRED` | `false` | 是否启用 API Key 认证 |
-| `API_KEY` | — | API Key |
+| 变量               | 默认值                                                         | 说明                                                                         |
+| ------------------ | -------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `LLM_API_KEY`    | —                                                             | LLM API 密钥（必填）                                                         |
+| `LLM_BASE_URL`   | —                                                             | LLM 接口地址（必填）                                                         |
+| `LLM_MODEL_NAME` | `qwen-max`                                                   | 模型名                                                                       |
+| `DATABASE_URL`   | dev: `postgresql://...localhost:5432/dmx_agent_db`；prod: 空 | 数据库连接串；**设空值跳过数据库初始化**（无库模式，依赖库的路由 503） |
+| `REDIS_URL`      | `redis://localhost:6379/0`                                   | Redis 连接串；仅 `kv.backend=redis` 时使用（jsonl 模式完全不连 Redis）        |
+| `OTEL_ENDPOINT`  | `http://localhost:4317`                                      | OTel gRPC 端点                                                               |
+| `APP_ENV`        | `dev`                                                        | 环境（dev / prod）                                                           |
+| `AUTH_REQUIRED`  | `false`                                                      | 是否启用 API Key 认证                                                        |
+| `API_KEY`        | —                                                             | API Key                                                                      |
 
 ### LLM 支持的 Provider
 
@@ -239,8 +259,8 @@ openai / dashscope / anthropic / deepseek / gemini / moonshot / ollama / silicon
 
 ### KV 后端
 
-- **redis**（默认）— 生产用，支持多实例
-- **jsonl** — 开发用，本地文件，单进程，无 Redis 依赖
+- **redis** — 生产用，支持多实例（prod.yaml 固定）；消息总线走 RedisMessageBus，会话状态存 Redis
+- **jsonl** — 开发用，本地文件，单进程，无 Redis 依赖（dev.yaml 当前默认）；消息总线走 InMemoryMessageBus，启动不连 Redis
 
 ### 沙箱模式
 
@@ -301,14 +321,14 @@ pamimi-tako-bot-demo/
 
 ## 相关文档
 
-| 文档 | 说明 |
-|------|------|
-| [docs/middleware-guards.md](docs/middleware-guards.md) | 中间件守卫体系 |
-| [docs/budget-control.md](docs/budget-control.md) | 预算控制 |
-| [docs/上下文管理.md](docs/上下文管理.md) | 上下文压缩与卸载 |
-| [docs/docker-deployment.md](docs/docker-deployment.md) | Docker 部署指南 |
-| [docs/sandbox-guide.md](docs/sandbox-guide.md) | 沙箱隔离指南 |
-| [docs/persistence-design.md](docs/persistence-design.md) | 持久化设计 |
+| 文档                                                    | 说明             |
+| ------------------------------------------------------- | ---------------- |
+| [docs/middleware-guards.md](docs/middleware-guards.md)   | 中间件守卫体系   |
+| [docs/budget-control.md](docs/budget-control.md)         | 预算控制         |
+| [docs/上下文管理.md](docs/上下文管理.md)                 | 上下文压缩与卸载 |
+| [docs/docker-deployment.md](docs/docker-deployment.md)   | Docker 部署指南  |
+| [docs/sandbox-guide.md](docs/sandbox-guide.md)           | 沙箱隔离指南     |
+| [docs/persistence-design.md](docs/persistence-design.md) | 持久化设计       |
 
 ## TODO
 
@@ -316,4 +336,3 @@ pamimi-tako-bot-demo/
 - 重新写前端界面，当前刚好凑合能用。
 - 守卫测试，测试样例不是很多，也不确定这是不是真有用。
 - 服务实例和沙箱和用户之间的分配问题，计划是一个用户分一个沙箱，但这边验证资源有限，先标记一下吧。
-- RAG 向量存储集成（当前是 placeholder）。
