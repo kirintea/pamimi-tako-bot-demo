@@ -32,6 +32,7 @@ from api.channels import router as channels_router
 from api.images import router as images_router
 from api.mcp import router as mcp_router
 from api.observe import router as observe_router
+from api.rag_proxy import router as rag_proxy_router
 from api.skill import router as skill_router
 from api.stats import router as stats_router
 from api.ws_chat import router as ws_chat_router
@@ -110,11 +111,16 @@ def _api_key_auth_middleware(app, *, auth_required: bool = False, api_key: str =
     放行路径：/webui、/webui/、/health、/docs、/openapi.json、/redoc
     以及所有以 /webui/ 开头的路径。其余路径需携带正确的 X-API-Key 请求头。
 
+    /rag 与 /webui-config 一并放行：/rag/ 是 LightRAG webui 的反代入口（浏览器直接
+    打开，带不了 X-API-Key 头），其页面内 API 由反代注入 LightRAG 自己的 token 认证；
+    /webui-config 仅下发功能开关（RAG 地址或 null），无敏感信息。
+
     优先级：环境变量 AUTH_REQUIRED/API_KEY > YAML 配置 auth.required/auth.api_key。
     """
     _PUBLIC_EXACT = {
         "/webui", "/webui/", "/health", "/docs",
         "/openapi.json", "/redoc",
+        "/webui-config", "/rag",
     }
 
     async def middleware(scope, receive, send):
@@ -136,7 +142,7 @@ def _api_key_auth_middleware(app, *, auth_required: bool = False, api_key: str =
             return
 
         path = scope.get("path", "")
-        if path in _PUBLIC_EXACT or path.startswith("/webui/"):
+        if path in _PUBLIC_EXACT or path.startswith("/webui/") or path.startswith("/rag/"):
             await app(scope, receive, send)
             return
 
@@ -404,6 +410,10 @@ def create_app(config) -> FastAPI:
         app.state.skill_config_store = skill_config_store
         logger.info("Skill 配置存储已就绪（配置文件: {}）", skill_config_store._path)
 
+        # RAG WebUI 反代（rag.api_url 非空时启用；/rag/ → 上游 LightRAG，自动登录注入）
+        from api.rag_proxy import startup as rag_proxy_startup
+        await rag_proxy_startup(config)
+
         # 自动打开浏览器 (仅开发环境)
         if config.otel.environment == "development":
             def _open_browser():
@@ -473,6 +483,10 @@ def create_app(config) -> FastAPI:
             await message_bus.aclose()
         logger.info("消息总线已关闭")
 
+        # 关闭 RAG WebUI 反代（释放上游 HTTP 客户端）
+        from api.rag_proxy import shutdown as rag_proxy_shutdown
+        await rag_proxy_shutdown()
+
         if db_mgr.is_initialized:
             await db_mgr.shutdown()
             logger.info("数据库连接池已关闭")
@@ -538,6 +552,7 @@ def create_app(config) -> FastAPI:
     app.include_router(mcp_router)
     app.include_router(skill_router)
     app.include_router(observe_router)
+    app.include_router(rag_proxy_router)  # /webui-config + /rag/*（LightRAG webui 反代）
     app.include_router(stats_router)
     app.include_router(ws_chat_router, tags=["websocket"])
 

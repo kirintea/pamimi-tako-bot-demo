@@ -121,17 +121,33 @@ class PermissionConfig(BaseModel):
 
 
 class RAGConfig(BaseModel):
-    """RAG 检索增强生成配置
+    """RAG 配置
 
-    当前为空壳预留，RAG 服务确定后填充具体参数。
-    第三方向量存储通过 ThirdPartyVectorStore(VectorStoreBase) 对接。
+    分两部分：
+    1. WebUI 反代（已实现）：api_url 非空即启用。前端侧边栏「知识库 RAG」入口
+       跳转到本站 /rag/，由后端反代上游 LightRAG webui 并自动注入登录 token
+       （凭据走 webui_username/webui_password）；api_url 为空时前端显示占位提示。
+    2. 检索集成（预留空壳）：Agent 检索对接，第三方向量存储通过
+       ThirdPartyVectorStore(VectorStoreBase) 填充具体参数。
     """
-    enabled: bool = Field(default=False, description="是否启用 RAG")
+    enabled: bool = Field(default=False, description="是否启用 RAG（检索集成功能预留，WebUI 反代不受此开关控制）")
     backend: str = Field(
         default="third_party",
         description="RAG 后端类型: third_party / qdrant / milvus / ...",
     )
-    api_url: str = Field(default="", description="RAG 服务 API 地址")
+    api_url: str = Field(
+        default="",
+        description="RAG 服务根地址（如 http://rag-host:9621，不带路径；真实地址经 LIGHTRAG_BASE_URL 注入）。非空即启用 /rag/ WebUI 反代",
+    )
+    webui_path: str = Field(
+        default="/webui/",
+        description="上游 RAG 服务的 webui 挂载路径（LightRAG 默认 /webui/）",
+    )
+    webui_username: str = Field(
+        default="",
+        description="WebUI 自动登录用户名（空则不注入认证，需在上游手动登录）",
+    )
+    webui_password: str = Field(default="", description="WebUI 自动登录密码")
     api_key: str = Field(default="", description="RAG 服务 API 密钥")
     collection: str = Field(default="default", description="默认 collection 名称")
     top_k: int = Field(default=5, description="检索返回最大结果数")
@@ -151,7 +167,7 @@ class AgentConfig(BaseModel):
     """Agent 行为配置"""
     model_config = ConfigDict(extra="forbid")
 
-    name: str = Field(default="pamimi_tako_bot_demo", description="Agent 名称")
+    name: str = Field(default="base_agent", description="Agent 名称")
     system_prompt: str = Field(default="你是一个有帮助的助手。", description="系统提示词")
     max_iters: int = Field(default=20, description="ReAct 最大迭代次数")
     context_trigger_ratio: float = Field(default=0.6, description="上下文压缩触发比例")
@@ -249,6 +265,21 @@ class DatabaseConfig(BaseModel):
             ZoneInfo(v)
         except Exception as e:  # noqa: BLE001 — ZoneInfoNotFoundError/ValueError 统一转 ValueError
             raise ValueError(f"无效时区 {v!r}: {e}") from e
+        return v
+
+
+class StatsConfig(BaseModel):
+    """运营统计看板配置"""
+    backend: str = Field(
+        default="facts",
+        description="看板数据源: facts（独立统计事实表 stats_daily）/ legacy（conversations 实时聚合，降级用）",
+    )
+
+    @field_validator("backend")
+    @classmethod
+    def _validate_backend(cls, v: str) -> str:
+        if v not in ("facts", "legacy"):
+            raise ValueError(f"stats.backend 必须是 facts/legacy 之一，收到: {v!r}")
         return v
 
 
@@ -450,4 +481,8 @@ class AppConfig(BaseModel):
     image: ImageConfig = Field(
         default_factory=ImageConfig,
         description="图片输入配置",
+    )
+    stats: StatsConfig = Field(
+        default_factory=StatsConfig,
+        description="运营统计看板配置",
     )
