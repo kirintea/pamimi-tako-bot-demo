@@ -14,17 +14,17 @@ import { useChannelLabel } from './channelLabel';
 export function DayChannelTable({ rows }: { rows: StatsBucketChannel[] }) {
 	const channelLabel = useChannelLabel();
 	return (
-		<div className="rounded-xl border border-[#e2e8f0] bg-white p-5">
-			<h2 className="mb-3 text-[16px] font-bold text-[#0f172a]">明细数据（按天·按渠道）</h2>
+		<div className="rounded-xl border border-stats-border bg-stats-panel p-5">
+			<h2 className="mb-3 text-[16px] font-bold text-stats-title">明细数据（按天·按渠道）</h2>
 			{rows.length === 0 ? (
-				<div className="py-8 text-center text-[13px] text-[#94a3b8]">该区间暂无数据</div>
+				<div className="py-8 text-center text-[13px] text-stats-muted">该区间暂无数据</div>
 			) : (
 				<table className="w-full text-[13px]">
 					<thead>
-						<tr className="bg-[#f8fafc] text-left text-[#475569]">
+						<tr className="bg-stats-zebra text-left text-stats-meta">
 							<th className="rounded-l-lg px-3 py-2.5 font-semibold">日期</th>
 							<th className="px-3 py-2.5 font-semibold">渠道</th>
-							<th className="px-3 py-2.5 font-semibold">使用人数</th>
+							<th className="px-3 py-2.5 font-semibold">使用人次</th>
 							<th className="px-3 py-2.5 font-semibold">活跃会话</th>
 							<th className="px-3 py-2.5 font-semibold">新增会话</th>
 							<th className="rounded-r-lg px-3 py-2.5 font-semibold">对话轮次</th>
@@ -34,7 +34,7 @@ export function DayChannelTable({ rows }: { rows: StatsBucketChannel[] }) {
 						{rows.map((row, i) => (
 							<tr
 								key={`${row.bucket}-${row.channel}`}
-								className={i % 2 === 1 ? 'bg-[#f8fafc] text-[#334155]' : 'text-[#334155]'}
+								className={i % 2 === 1 ? 'bg-stats-zebra text-stats-body' : 'text-stats-body'}
 							>
 								<td className="px-3 py-2.5">{row.bucket.slice(5)}</td>
 								<td className="px-3 py-2.5">

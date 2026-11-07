@@ -3,10 +3,10 @@
  *
  * surface：hero 720×124 白底 r22 border #E5E7EB；thread 49.5rem。
  * footer：左 Attach(24) + 「完全访问」badge(92×26 #FFFBEB/#B45309)
- *        右 GLM-5 标签 + Mic(24) + 发送(32 圆 #215BEF)。
+ * 右 GLM-5 标签 + Mic(24) + 发送(32 圆 #215BEF)。
  * hero 下方：「选择项目」13px 链接（规划中 → toast）。
  * 支持：Enter 发送、Shift+Enter 换行、自适应高度、停止按钮、
- *       图片粘贴/拖拽/点击上传、预览、删除、发送节流。
+ * 图片粘贴/拖拽/点击上传、预览、删除、发送节流。
  * ChatInputHandle.setText：外部（快捷提示词）填入文本并聚焦
  */
 
@@ -247,7 +247,7 @@ export function ChatInput({ phase, disabled, userId, onSend, onInterrupt, classN
 			<div
 				className={cn(
 					'relative mx-auto flex w-full flex-col border border-border bg-background transition-all duration-200',
-					'focus-within:border-[#D1D5DB]',
+					'focus-within:border-border-strong',
 					hero ? 'max-w-[720px] rounded-[22px]' : 'max-w-[49.5rem] rounded-[22px]',
 					hero && 'min-h-[124px]',
 				)}

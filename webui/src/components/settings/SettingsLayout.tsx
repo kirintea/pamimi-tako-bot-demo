@@ -84,10 +84,10 @@ export function SettingsLayout({ children, activeSection, onSectionChange, onBac
 			<div className="min-h-0 flex-1 overflow-y-auto">
 				<div className="px-6 pb-12 pt-[52px] sm:px-12">
 					{/* 页标题 */}
-					<h2 className="text-2xl font-semibold leading-[1.2] text-[#111928] dark:text-[#f5f5f9]">
+					<h2 className="text-2xl font-semibold leading-[1.2] text-foreground ">
 						{t('settings.title', { defaultValue: '设置' })}
 					</h2>
-					<p className="mt-2 text-[13px] text-[#6B7280] dark:text-[#9ca3af]">
+					<p className="mt-2 text-[13px] text-text-secondary ">
 						{t('settings.subtitle', { defaultValue: '平台运行参数与集成配置' })}
 					</p>
 
@@ -96,7 +96,7 @@ export function SettingsLayout({ children, activeSection, onSectionChange, onBac
 						<SettingsSidebar active={activeSection} onChange={onSectionChange} />
 						<div className="mt-4 min-w-0 w-full max-w-[792px] flex-1">
 							<div className="rounded-[16px] border border-border bg-background p-6">
-								<h3 className="text-lg font-semibold leading-[1.2] text-[#111928] dark:text-[#f5f5f9]">
+								<h3 className="text-lg font-semibold leading-[1.2] text-foreground ">
 									{t(cardTitle.key, { defaultValue: cardTitle.fallback })}
 								</h3>
 								<div className="mt-5">{children}</div>

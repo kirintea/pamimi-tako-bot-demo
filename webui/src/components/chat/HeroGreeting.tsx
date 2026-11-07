@@ -18,7 +18,7 @@ export function randomHeroGreetingKey(): (typeof HERO_GREETING_KEYS)[number] {
 
 export function HeroGreeting({ text }: { text: string }) {
 	return (
-		<h1 className="select-none text-center text-[30px] font-bold leading-[1.2] tracking-normal text-[#111928] dark:text-[#f5f5f9]">
+		<h1 className="select-none text-center text-[30px] font-bold leading-[1.2] tracking-normal text-foreground ">
 			{text}
 		</h1>
 	);

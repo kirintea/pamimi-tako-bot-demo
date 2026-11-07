@@ -43,7 +43,7 @@ function loadForm(): ModelForm {
 }
 
 const fieldClassName =
-	'h-8 w-full rounded-[8px] border border-border bg-[#F9FAFB] px-4 text-[13px] text-[#111928] placeholder:text-[#9CA3AF] focus:border-[#D1D5DB]';
+	'h-8 w-full rounded-[8px] border border-border bg-canvas px-4 text-[13px] text-foreground placeholder:text-text-tertiary focus:border-border-strong';
 
 function FieldRow({ label, children }: { label: string; children: React.ReactNode }) {
 	return (
@@ -79,7 +79,7 @@ export function ModelsPage() {
 
 	return (
 		<div>
-			<div className="divide-y divide-[#F3F4F6]">
+			<div className="divide-y divide-surface-muted">
 				<FieldRow label={t('settings.models.provider', { defaultValue: '模型提供商' })}>
 					<select
 						value={form.provider}
@@ -140,7 +140,7 @@ export function ModelsPage() {
 				<Button
 					variant="outline"
 					onClick={handleReset}
-					className="h-9 w-24 rounded-[10px] border-border bg-white text-[13px] font-semibold text-foreground hover:bg-[#F3F4F6] dark:bg-transparent"
+					className="h-9 w-24 rounded-[10px] border-border bg-white text-[13px] font-semibold text-foreground hover:bg-surface-muted dark:bg-transparent"
 				>
 					{t('settings.models.restoreDefaults', { defaultValue: '恢复默认' })}
 				</Button>
@@ -152,7 +152,7 @@ export function ModelsPage() {
 				</Button>
 			</div>
 
-			<p className="mt-4 text-[12px] text-[#6B7280]">
+			<p className="mt-4 text-[12px] text-text-secondary">
 				{t('settings.models.hint', { defaultValue: '当前为前端持久化（localStorage），服务端配置 API 就绪后对接。' })}
 			</p>
 		</div>

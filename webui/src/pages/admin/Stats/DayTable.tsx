@@ -9,16 +9,16 @@ import type { StatsBucket } from '@/api/stats';
 
 export function DayTable({ series, totalTurns }: { series: StatsBucket[]; totalTurns: number }) {
 	return (
-		<div className="rounded-xl border border-[#e2e8f0] bg-white p-5">
-			<h2 className="mb-3 text-[16px] font-bold text-[#0f172a]">明细数据（按天）</h2>
+		<div className="rounded-xl border border-stats-border bg-stats-panel p-5">
+			<h2 className="mb-3 text-[16px] font-bold text-stats-title">明细数据（按天）</h2>
 			{series.length === 0 ? (
-				<div className="py-8 text-center text-[13px] text-[#94a3b8]">该区间暂无数据</div>
+				<div className="py-8 text-center text-[13px] text-stats-muted">该区间暂无数据</div>
 			) : (
 				<table className="w-full text-[13px]">
 					<thead>
-						<tr className="bg-[#f8fafc] text-left text-[#475569]">
+						<tr className="bg-stats-zebra text-left text-stats-meta">
 							<th className="rounded-l-lg px-3 py-2.5 font-semibold">日期</th>
-							<th className="px-3 py-2.5 font-semibold">使用人数</th>
+							<th className="px-3 py-2.5 font-semibold">使用人次</th>
 							<th className="px-3 py-2.5 font-semibold">活跃会话</th>
 							<th className="px-3 py-2.5 font-semibold">新增会话</th>
 							<th className="px-3 py-2.5 font-semibold">对话轮次</th>
@@ -32,7 +32,7 @@ export function DayTable({ series, totalTurns }: { series: StatsBucket[]; totalT
 								<tr
 									key={row.bucket}
 									className={
-										i % 2 === 1 ? 'bg-[#f8fafc] text-[#334155]' : 'text-[#334155]'
+										i % 2 === 1 ? 'bg-stats-zebra text-stats-body' : 'text-stats-body'
 									}
 								>
 									<td className="px-3 py-2.5">{row.bucket.slice(5)}</td>
@@ -42,13 +42,13 @@ export function DayTable({ series, totalTurns }: { series: StatsBucket[]; totalT
 									<td className="px-3 py-2.5">{row.turns.toLocaleString()}</td>
 									<td className="px-3 py-2.5">
 										<div className="flex items-center gap-2">
-											<div className="h-1.5 w-16 overflow-hidden rounded-full bg-[#e2e8f0]">
+											<div className="h-1.5 w-16 overflow-hidden rounded-full bg-stats-track">
 												<div
-													className="h-full rounded-full bg-[#2563eb]"
+													className="h-full rounded-full bg-stats-bar"
 													style={{ width: `${Math.round(share * 100)}%` }}
 												/>
 											</div>
-											<span className="text-[12px] text-[#64748b]">
+											<span className="text-[12px] text-stats-faint">
 												{Math.round(share * 100)}%
 											</span>
 										</div>

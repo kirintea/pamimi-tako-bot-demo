@@ -134,11 +134,11 @@ export function SkillManager({ variant = 'page' }: SkillManagerProps) {
               {t('skill.title', { defaultValue: '技能 Skill' })}
             </SettingsSectionTitle>
           ) : (
-            <h1 className="text-2xl font-semibold text-[#111928] dark:text-[#f5f5f9]">
+            <h1 className="text-2xl font-semibold text-foreground ">
               {t('skill.title', { defaultValue: '技能 Skill' })}
             </h1>
           )}
-          <p className="mt-1 text-[13px] text-[#6B7280] dark:text-[#9ca3af]">
+          <p className="mt-1 text-[13px] text-text-secondary ">
             {t('skill.subtitle', {
               defaultValue: '装配给 Agent 的可复用能力包，支持版本管理与启停',
             })}
@@ -170,7 +170,7 @@ export function SkillManager({ variant = 'page' }: SkillManagerProps) {
               'h-7 rounded-full px-4 text-xs font-semibold transition-colors',
               filter === item.key
                 ? 'bg-primary text-white'
-                : 'bg-[#F3F4F6] dark:bg-[#383838] text-[#4B5563] hover:bg-[#E5E7EB]',
+                : 'bg-surface-muted text-nav-label hover:bg-border',
             )}
           >
             {item.label}
@@ -184,7 +184,7 @@ export function SkillManager({ variant = 'page' }: SkillManagerProps) {
           <Spinner className="size-5 text-muted-foreground" />
         </div>
       ) : filteredSkills.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-32 text-[#9CA3AF]">
+        <div className="flex flex-col items-center justify-center py-32 text-text-tertiary">
           <Wrench className="size-8 mb-3 opacity-40" />
           <span className="text-sm">
             {t('skill.empty', { defaultValue: '暂无技能配置' })}
@@ -235,7 +235,7 @@ function SkillCard({ skill, onToggle, onDelete }: SkillCardProps) {
   return (
     <div
       className={cn(
-        'group flex flex-col rounded-[16px] border border-border bg-white dark:bg-[#303030] transition-shadow',
+        'group flex flex-col rounded-[16px] border border-border bg-card transition-shadow',
         'hover:shadow-[0_1px_2px_rgba(24,25,28,0.05)]',
       )}
     >
@@ -245,12 +245,12 @@ function SkillCard({ skill, onToggle, onDelete }: SkillCardProps) {
           <div
             className={cn(
               'flex size-9 items-center justify-center rounded-[10px]',
-              enabled ? 'bg-[#E8F0FE] text-primary' : 'bg-[#F3F4F6] dark:bg-[#383838] text-[#9CA3AF]',
+              enabled ? 'bg-primary-light text-primary' : 'bg-surface-muted text-text-tertiary',
             )}
           >
             <Wrench className="size-4" />
           </div>
-          <span className="text-[15px] font-semibold text-[#111928] dark:text-[#f5f5f9]">
+          <span className="text-[15px] font-semibold text-foreground ">
             {skill.display_name || skill.name}
           </span>
         </div>
@@ -261,27 +261,27 @@ function SkillCard({ skill, onToggle, onDelete }: SkillCardProps) {
             type="button"
             onClick={() => onDelete(skill.id)}
             className={cn(
-              'flex size-7 items-center justify-center rounded-md text-[#9CA3AF]',
-              'opacity-0 transition-opacity hover:bg-[#F3F4F6] dark:bg-[#383838] group-hover:opacity-100',
+              'flex size-7 items-center justify-center rounded-md text-text-tertiary',
+              'opacity-0 transition-opacity hover:bg-surface-muted group-hover:opacity-100',
             )}
             title={t('skill.delete', { defaultValue: '删除' })}
           >
             <Trash2 className="size-3.5" />
           </button>
           {/* Version badge */}
-          <span className="flex h-[22px] min-w-[56px] items-center justify-center rounded-[8px] bg-[#F3F4F6] dark:bg-[#383838] px-2 text-[11px] font-semibold text-[#6B7280] dark:text-[#9ca3af]">
+          <span className="flex h-[22px] min-w-[56px] items-center justify-center rounded-[8px] bg-surface-muted px-2 text-[11px] font-semibold text-text-secondary ">
             {versionLabel}
           </span>
         </div>
       </div>
 
       {/* Divider */}
-      <div className="mx-6 border-t border-[#F3F4F6] dark:border-[#383838]" />
+      <div className="mx-6 border-t border-surface-muted " />
 
       {/* Description — truncated, full text on hover */}
       <div className="flex-1 px-6 py-4">
         <p
-          className="line-clamp-3 text-xs leading-5 text-[#9CA3AF]"
+          className="line-clamp-3 text-xs leading-5 text-text-tertiary"
           title={skill.description || undefined}
         >
           {skill.description || ' '}
@@ -289,7 +289,7 @@ function SkillCard({ skill, onToggle, onDelete }: SkillCardProps) {
       </div>
 
       {/* Divider */}
-      <div className="mx-6 border-t border-[#F3F4F6] dark:border-[#383838]" />
+      <div className="mx-6 border-t border-surface-muted " />
 
       {/* Bottom row: status + toggle */}
       <div className="flex items-center justify-between px-6 py-4">
@@ -297,13 +297,13 @@ function SkillCard({ skill, onToggle, onDelete }: SkillCardProps) {
           <span
             className={cn(
               'size-2 rounded-full',
-              enabled ? 'bg-[#10B981]' : 'bg-[#9CA3AF]',
+              enabled ? 'bg-success' : 'bg-text-tertiary',
             )}
           />
           <span
             className={cn(
               'text-xs font-semibold',
-              enabled ? 'text-[#047857]' : 'text-[#6B7280] dark:text-[#9ca3af]',
+              enabled ? 'text-success-text' : 'text-text-secondary ',
             )}
           >
             {enabled
@@ -408,7 +408,7 @@ function InstallDialog({ onClose, onInstalled }: InstallDialogProps) {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-[#111928]/50 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-scrim/50 p-4"
       onClick={onClose}
     >
       <div
@@ -419,14 +419,14 @@ function InstallDialog({ onClose, onInstalled }: InstallDialogProps) {
         <h2 className="text-lg font-semibold">
           {t('skill.dialogTitle', { defaultValue: '添加技能' })}
         </h2>
-        <p className="mt-1 text-[13px] text-[#6B7280] dark:text-[#9ca3af]">
+        <p className="mt-1 text-[13px] text-text-secondary ">
           {t('skill.dialogSubtitle', {
             defaultValue: '安装可复用技能包，装配后可在对话中调用',
           })}
         </p>
 
         {/* Tab row */}
-        <div className="mt-5 flex h-8 w-[330px] gap-1 rounded-[8px] bg-[#F3F4F6] dark:bg-[#383838] p-1">
+        <div className="mt-5 flex h-8 w-[330px] gap-1 rounded-[8px] bg-surface-muted p-1">
           {(
             [
               { key: 'form' as TabKey, label: t('skill.tabForm', { defaultValue: '表单' }) },
@@ -441,8 +441,8 @@ function InstallDialog({ onClose, onInstalled }: InstallDialogProps) {
               className={cn(
                 'flex-1 rounded-[6px] text-[13px] transition-colors',
                 tab === tb.key
-                  ? 'bg-white dark:bg-[#303030] font-semibold text-primary shadow-sm'
-                  : 'text-[#6B7280] dark:text-[#9ca3af]',
+                  ? 'bg-card font-semibold text-primary shadow-sm'
+                  : 'text-text-secondary ',
               )}
             >
               {tb.label}
@@ -492,7 +492,7 @@ function InstallDialog({ onClose, onInstalled }: InstallDialogProps) {
           <div className="mt-6 flex justify-end gap-3">
             <Button
               variant="outline"
-              className="h-9 w-[110px] rounded-[8px] border border-border text-[14px] font-semibold hover:bg-[#F3F4F6] dark:bg-[#383838]"
+              className="h-9 w-[110px] rounded-[8px] border border-border text-[14px] font-semibold hover:bg-surface-muted "
               onClick={onClose}
             >
               {t('common.cancel', { defaultValue: '取消' })}
@@ -557,7 +557,7 @@ function FormTab({
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="my-skill"
-          className="h-10 w-full rounded-[12px] border border-border bg-white dark:bg-[#303030] px-3 text-[13px] placeholder:text-[#9CA3AF] dark:placeholder:text-[#6b7280]"
+          className="h-10 w-full rounded-[12px] border border-border bg-card px-3 text-[13px] placeholder:text-text-tertiary "
         />
       </Field>
 
@@ -570,16 +570,16 @@ function FormTab({
           }}
           rows={2}
           placeholder={t('skill.fieldDescPlaceholder', { defaultValue: '简要说明技能用途' })}
-          className="h-16 w-full resize-none rounded-[12px] border border-border bg-white dark:bg-[#303030] px-3 py-2 text-[13px] placeholder:text-[#9CA3AF] dark:placeholder:text-[#6b7280] outline-none"
+          className="h-16 w-full resize-none rounded-[12px] border border-border bg-card px-3 py-2 text-[13px] placeholder:text-text-tertiary outline-none"
         />
-        <span className="mt-1 block text-xs text-[#9CA3AF]">
+        <span className="mt-1 block text-xs text-text-tertiary">
           ≤{MAX_DESC_LEN} {t('skill.chars', { defaultValue: '字符' })}
         </span>
       </Field>
 
       {/* 来源类型 */}
       <Field label={t('skill.fieldSource', { defaultValue: '来源类型' })}>
-        <div className="flex h-8 gap-1 rounded-[8px] bg-[#F3F4F6] dark:bg-[#383838] p-1">
+        <div className="flex h-8 gap-1 rounded-[8px] bg-surface-muted p-1">
           {sourceOptions.map((opt) => (
             <button
               key={opt.key}
@@ -588,15 +588,15 @@ function FormTab({
               className={cn(
                 'flex-1 rounded-[6px] text-[13px] transition-colors',
                 sourceType === opt.key
-                  ? 'bg-white dark:bg-[#303030] font-semibold text-primary shadow-sm'
-                  : 'text-[#6B7280] dark:text-[#9ca3af]',
+                  ? 'bg-card font-semibold text-primary shadow-sm'
+                  : 'text-text-secondary ',
               )}
             >
               {opt.label}
             </button>
           ))}
         </div>
-        <span className="mt-1 block text-xs text-[#9CA3AF]">
+        <span className="mt-1 block text-xs text-text-tertiary">
           {t('skill.sourceHint', {
             defaultValue: '市场/Git 来源规划中，当前以本地内容安装',
           })}
@@ -609,7 +609,7 @@ function FormTab({
           value={trigger}
           onChange={(e) => setTrigger(e.target.value)}
           placeholder="run-report"
-          className="h-10 w-full rounded-[12px] border border-border bg-white dark:bg-[#303030] px-3 text-[13px] placeholder:text-[#9CA3AF] dark:placeholder:text-[#6b7280]"
+          className="h-10 w-full rounded-[12px] border border-border bg-card px-3 text-[13px] placeholder:text-text-tertiary "
         />
       </Field>
 
@@ -619,15 +619,15 @@ function FormTab({
           value={iconName}
           onChange={(e) => setIconName(e.target.value)}
           placeholder="wrench"
-          className="h-10 w-full rounded-[12px] border border-border bg-white dark:bg-[#303030] px-3 text-[13px] placeholder:text-[#9CA3AF] dark:placeholder:text-[#6b7280]"
+          className="h-10 w-full rounded-[12px] border border-border bg-card px-3 text-[13px] placeholder:text-text-tertiary "
         />
-        <span className="mt-1 block text-xs text-[#9CA3AF]">
+        <span className="mt-1 block text-xs text-text-tertiary">
           {t('skill.iconHint', { defaultValue: 'lucide 图标名，规划中生效' })}
         </span>
       </Field>
 
       {/* Note strip */}
-      <div className="flex h-11 items-center rounded-[12px] bg-[#EFF6FF] px-4 text-xs text-[#3B82F6]">
+      <div className="flex h-11 items-center rounded-[12px] bg-info-light px-4 text-xs text-info">
         {t('skill.noteSkillMd', {
           defaultValue: '技能将以 SKILL.md 形式注入 Agent 上下文',
         })}
@@ -651,18 +651,18 @@ function PasteTab({ content, setContent }: PasteTabProps) {
   return (
     <div className="mt-6 space-y-4">
       <Field label={t('skill.fieldSkillMd', { defaultValue: 'SKILL.md 内容' })}>
-        <div className="h-[430px] rounded-[12px] bg-[#0D1117] p-4">
+        <div className="h-[430px] rounded-[12px] bg-code-bg p-4">
           <textarea
             value={content}
             onChange={(e) => setContent(e.target.value)}
-            className="h-full w-full resize-none bg-transparent font-mono text-[13px] leading-5 text-[#E6EDF3] outline-none"
+            className="h-full w-full resize-none bg-transparent font-mono text-[13px] leading-5 text-code-fg outline-none"
             spellCheck={false}
           />
         </div>
       </Field>
 
       {/* Blue note */}
-      <div className="rounded-[12px] bg-[#EFF6FF] px-4 py-3 text-xs text-[#3B82F6]">
+      <div className="rounded-[12px] bg-info-light px-4 py-3 text-xs text-info">
         {t('skill.pasteHint', {
           defaultValue:
             '粘贴 SKILL.md 完整内容（含 YAML frontmatter）。解析 name/description 自动填入元数据，规划中：自动解析',
@@ -685,7 +685,7 @@ interface FieldProps {
 function Field({ label, required, children }: FieldProps) {
   return (
     <div>
-      <label className="mb-1.5 block text-[13px] font-semibold text-[#374151] dark:text-gray-300">
+      <label className="mb-1.5 block text-[13px] font-semibold text-text-label ">
         {label}
         {required && <span className="ml-0.5 text-red-500">*</span>}
       </label>

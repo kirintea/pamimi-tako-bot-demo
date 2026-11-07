@@ -3,10 +3,10 @@
  *
  * 居中 Card 720×660 r22，顶部 Logo「智」+ 标题/副标，
  * 4 步指示器（28 圆 + 94×2 连接线），4 个步骤：
- *   0 环境检查（6 检查行，数据取自 GET /health components）
- *   1 连接配置（用户 ID / WebSocket 地址 / API Key）
- *   2 模型配置（模型名称 / API Base / API Key → localStorage）
- *   3 完成 → onComplete
+ * 0 环境检查（6 检查行，数据取自 GET /health components）
+ * 1 连接配置（用户 ID / WebSocket 地址 / API Key）
+ * 2 模型配置（模型名称 / API Base / API Key → localStorage）
+ * 3 完成 → onComplete
  * 底部右对齐：跳过/上一步 + 下一步/开始使用。
  */
 
@@ -74,14 +74,14 @@ function buildChecks(health: HealthResponse | null, checking: boolean): CheckIte
 }
 
 const STATE_TEXT: Record<CheckState, { text: string; color: string; dot: string }> = {
-	ready: { text: '就绪', color: 'text-[#047857]', dot: 'bg-[#10B981]' },
-	unconfigured: { text: '未配置', color: 'text-[#B45309]', dot: 'bg-[#F59E0B]' },
-	pending: { text: '待安装', color: 'text-[#6B7280]', dot: 'bg-[#9CA3AF]' },
-	checking: { text: '检测中', color: 'text-[#6B7280]', dot: 'bg-[#9CA3AF]' },
+	ready: { text: '就绪', color: 'text-success-text', dot: 'bg-success' },
+	unconfigured: { text: '未配置', color: 'text-warning-text', dot: 'bg-warning' },
+	pending: { text: '待安装', color: 'text-text-secondary', dot: 'bg-text-tertiary' },
+	checking: { text: '检测中', color: 'text-text-secondary', dot: 'bg-text-tertiary' },
 };
 
 const inputClassName =
-	'h-10 w-full rounded-[8px] border border-border bg-white dark:bg-[#303030] px-3.5 text-[13px] text-[#111928] dark:text-[#f5f5f9] placeholder:text-[#9CA3AF] dark:placeholder:text-[#6b7280] focus:border-[#D1D5DB]';
+	'h-10 w-full rounded-[8px] border border-border bg-card px-3.5 text-[13px] text-foreground placeholder:text-text-tertiary focus:border-border-strong';
 
 function FieldBlock({
 	label,
@@ -94,9 +94,9 @@ function FieldBlock({
 }) {
 	return (
 		<label className="block">
-			<span className="mb-1.5 block text-[13px] font-semibold text-[#374151] dark:text-gray-300">{label}</span>
+			<span className="mb-1.5 block text-[13px] font-semibold text-text-label ">{label}</span>
 			{children}
-			{hint && <span className="mt-1.5 block text-xs text-[#9CA3AF]">{hint}</span>}
+			{hint && <span className="mt-1.5 block text-xs text-text-tertiary">{hint}</span>}
 		</label>
 	);
 }
@@ -244,10 +244,10 @@ export const SetupPage = ({ onComplete, className }: Props) => {
 					<div className="flex size-12 items-center justify-center rounded-[12px] bg-primary">
 						<span className="text-[22px] font-bold leading-none text-primary-foreground">智</span>
 					</div>
-					<h1 className="mt-[22px] text-2xl font-semibold leading-[1.2] text-[#111928] dark:text-[#f5f5f9]">
+					<h1 className="mt-[22px] text-2xl font-semibold leading-[1.2] text-foreground ">
 						{t('setup.title', { defaultValue: '初始化平台' })}
 					</h1>
-					<p className="mt-3 text-[13px] text-[#6B7280]">
+					<p className="mt-3 text-[13px] text-text-secondary">
 						{t('setup.subtitle', { defaultValue: '完成以下环境检查以开始使用' })}
 					</p>
 				</div>
@@ -262,7 +262,7 @@ export const SetupPage = ({ onComplete, className }: Props) => {
 									'flex size-7 items-center justify-center rounded-full text-[14px]',
 									i < step && 'bg-primary font-bold text-white',
 									i === step && 'border border-primary bg-white font-bold text-primary',
-									i > step && 'border border-border bg-white font-semibold text-[#9CA3AF]',
+									i > step && 'border border-border bg-white font-semibold text-text-tertiary',
 								)}
 							>
 								{i < step ? <Check className="size-3.5" /> : i + 1}
@@ -280,17 +280,17 @@ export const SetupPage = ({ onComplete, className }: Props) => {
 								return (
 									<div
 										key={item.key}
-										className="flex h-[38px] items-center rounded-[10px] bg-[#F9FAFB] px-4"
+										className="flex h-[38px] items-center rounded-[10px] bg-canvas px-4"
 									>
 										{item.state === 'checking' ? (
-											<Loader2 className="size-4 shrink-0 animate-spin text-[#9CA3AF]" />
+											<Loader2 className="size-4 shrink-0 animate-spin text-text-tertiary" />
 										) : (
 											<span
 												aria-hidden
 												className={cn('size-1.5 shrink-0 rounded-full', st.dot)}
 											/>
 										)}
-										<span className="ml-3 text-[13px] text-[#111928] dark:text-[#f5f5f9]">{item.label}</span>
+										<span className="ml-3 text-[13px] text-foreground ">{item.label}</span>
 										<span className={cn('ml-auto text-xs font-semibold', st.color)}>
 											{st.text}
 										</span>
@@ -298,7 +298,7 @@ export const SetupPage = ({ onComplete, className }: Props) => {
 								);
 							})}
 							{!healthChecking && health === null && (
-								<p className="mt-2 text-center text-xs text-[#B45309]">
+								<p className="mt-2 text-center text-xs text-warning-text">
 									{t('setup.healthUnreachable', { defaultValue: '后端不可达，请确认服务已启动（可跳过稍后重试）' })}
 								</p>
 							)}
@@ -371,23 +371,23 @@ export const SetupPage = ({ onComplete, className }: Props) => {
 
 					{step === 3 && (
 						<div className="mx-auto flex w-full max-w-[440px] flex-col items-center text-center">
-							<div className="flex size-12 items-center justify-center rounded-full bg-[#ECFDF5]">
-								<Check className="size-6 text-[#10B981]" />
+							<div className="flex size-12 items-center justify-center rounded-full bg-success-light">
+								<Check className="size-6 text-success" />
 							</div>
-							<p className="mt-4 text-[15px] font-semibold text-[#111928] dark:text-[#f5f5f9]">
+							<p className="mt-4 text-[15px] font-semibold text-foreground ">
 								{t('setup.doneTitle', { defaultValue: '配置完成' })}
 							</p>
-							<p className="mt-2 text-[13px] text-[#6B7280]">
+							<p className="mt-2 text-[13px] text-text-secondary">
 								{t('setup.doneDesc', { defaultValue: '点击「开始使用」进入对话界面，可随时在设置中修改' })}
 							</p>
-							<p className="mt-4 text-xs text-[#9CA3AF]">
+							<p className="mt-4 text-xs text-text-tertiary">
 								{t('setup.doneUser', { defaultValue: '当前用户' })}: {userId || '—'}
 							</p>
 						</div>
 					)}
 
 					{errorMsg && (
-						<div className="mx-auto mt-4 w-full max-w-[440px] rounded-[8px] bg-[#FEF2F2] px-4 py-2.5 text-[13px] text-[#EF4444]">
+						<div className="mx-auto mt-4 w-full max-w-[440px] rounded-[8px] bg-error-light px-4 py-2.5 text-[13px] text-error">
 							{errorMsg}
 						</div>
 					)}
@@ -399,7 +399,7 @@ export const SetupPage = ({ onComplete, className }: Props) => {
 						<Button
 							variant="outline"
 							onClick={goBack}
-							className="h-10 w-24 rounded-[10px] border-border bg-white text-[13px] font-semibold text-foreground hover:bg-[#F3F4F6] dark:bg-transparent"
+							className="h-10 w-24 rounded-[10px] border-border bg-white text-[13px] font-semibold text-foreground hover:bg-surface-muted dark:bg-transparent"
 						>
 							{t('setup.back', { defaultValue: '上一步' })}
 						</Button>
@@ -408,7 +408,7 @@ export const SetupPage = ({ onComplete, className }: Props) => {
 						<Button
 							variant="outline"
 							onClick={skip}
-							className="h-10 w-24 rounded-[10px] border-border bg-white text-[13px] font-semibold text-foreground hover:bg-[#F3F4F6] dark:bg-transparent"
+							className="h-10 w-24 rounded-[10px] border-border bg-white text-[13px] font-semibold text-foreground hover:bg-surface-muted dark:bg-transparent"
 						>
 							{t('setup.skip', { defaultValue: '跳过' })}
 						</Button>

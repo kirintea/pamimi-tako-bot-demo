@@ -112,22 +112,86 @@ svg.lucide {
 	--settings-sidebar-bg: transparent;
 	--settings-sidebar-fg: #4b5563;
 	--settings-sidebar-selected: #e8f0fe;
+
+	/* ── 语义色底层变量 ──
+	   @theme inline 里对应项【必须】写 var(--xxx)：写字面量十六进制会被
+	   Tailwind 内联进工具类，.dark 的覆盖就成了死代码（见下方 --node-* 注释）。
+	   这里只放浅色值，浅色渲染不受影响；暗色值统一在 .dark 里给。 */
+	--text-secondary: #6b7280;
+	--text-tertiary: #9ca3af;
+	--text-data: #8e939a;
+	--text-label: #374151;
+	--surface-muted: #f3f4f6;
+	--row-hover: rgba(17, 25, 40, 0.03);
+	--scrim: #111928;
+	--border-strong: #d1d5db;
+
+	--primary-hover: #1e4fd2;
+	--primary-light: #e8f0fe;
+
+	--success: #10b981;
+	--success-text: #047857;
+	--success-light: #ecfdf5;
+	--warning: #f59e0b;
+	--warning-text: #b45309;
+	--warning-light: #fffbeb;
+	--info: #3b82f6;
+	--info-light: #eff6ff;
+	--error: #ef4444;
+	--error-light: #fef2f2;
+
+	--nav-label: #4b5563;
+	--code-block-bg: #0d1117;
+	--code-block-fg: #e6edf3;
+
+	/* ── PromptRail 轨道圆点四档明度（由深到浅） ── */
+	--rail-dot-1: #222222;
+	--rail-dot-2: #d0d0d0;
+	--rail-dot-3: #6f6f6f;
+	--rail-dot-4: #d8d8d8;
+
+	/* ── 运营看板图表色 ──
+	   Recharts 的 fill/stroke/stopColor 落在 SVG 表现属性上，直接传
+	   var(--chart-*) 字符串即可，.dark 切换后浏览器自动重绘。 */
+	--chart-uv: #2563eb;
+	--chart-sessions: #16a34a;
+	--chart-turns: #ea580c;
+	--chart-grid: #f1f5f9;
+	--chart-axis: #cbd5e1;
+	--chart-tick: #94a3b8;
+	--chart-cursor: #94a3b8;
+	--chart-ring: #ffffff;
+	--chart-tooltip-bg: #ffffff;
+	--chart-tooltip-fg: #0f172a;
+	--chart-tooltip-meta: #475569;
+	--chart-tooltip-border: #e2e8f0;
+
+	/* ── 运营看板 slate 色板（与全站 token 是两套，浅色值 = 看板实值） ── */
+	--stats-app: #f1f5f9;
+	--stats-panel: #ffffff;
+	--stats-border: #e2e8f0;
+	--stats-title: #0f172a;
+	--stats-body: #334155;
+	--stats-meta: #475569;
+	--stats-faint: #64748b;
+	--stats-muted: #94a3b8;
+	--stats-zebra: #f8fafc;
+	--stats-chip-on: #2563eb;
+	--stats-chip-on-hover: #1d4ed8;
+	--stats-chip-off: #f1f5f9;
+	--stats-chip-off-hover: #e2e8f0;
+	--stats-track: #e2e8f0;
+	--stats-bar: #2563eb;
+	--stats-up-bg: #dcfce7;
+	--stats-up-fg: #15803d;
+	--stats-down-bg: #fee2e2;
+	--stats-down-fg: #b91c1c;
+	--stats-neutral-bg: #f1f5f9;
+	--stats-neutral-fg: #64748b;
 }
 
 @media (prefers-color-scheme: dark) {
-	:root {
-		--text: #9ca3af;
-		--text-h: #f3f4f6;
-		--bg: #16171d;
-		--border: #2e303a;
-		--code-bg: #1f2028;
-		--accent: #c084fc;
-		--accent-bg: rgba(192, 132, 252, 0.15);
-		--accent-border: rgba(192, 132, 252, 0.5);
-		--social-bg: rgba(47, 48, 58, 0.5);
-		--shadow: rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
-	}
-
+	/* 变量统一由 .dark 类提供（跟随手动切换），这里只保留与主题无关的滤镜 */
 	#social .button-icon {
 		filter: invert(1) brightness(2);
 	}
@@ -141,11 +205,14 @@ svg.lucide {
 	/* Menu-item inset, tied to the corner radius: a rounder item eats more
 	   horizontal room at the text's edge, so the padding has to grow with it. */
 	--spacing-menu-item: calc(var(--radius) * 0.625);
-	--color-text-secondary: #6b7280; /* → text-text-secondary */
-	--color-text-tertiary: #9ca3af; /* → text-text-tertiary */
-	--color-text-data: #8e939a; /* → text-text-data */
-	--color-surface-muted: #f3f4f6; /* → bg-surface-muted (inline badges) */
-	--color-row-hover: rgba(17, 25, 40, 0.03); /* → hover:bg-row-hover */
+	--color-text-secondary: var(--text-secondary); /* → text-text-secondary */
+	--color-text-tertiary: var(--text-tertiary); /* → text-text-tertiary */
+	--color-text-data: var(--text-data); /* → text-text-data */
+	--color-text-label: var(--text-label); /* → text-text-label（表单标签） */
+	--color-surface-muted: var(--surface-muted); /* → bg-surface-muted (inline badges) */
+	--color-row-hover: var(--row-hover); /* → hover:bg-row-hover */
+	--color-scrim: var(--scrim); /* → bg-scrim/50（弹窗遮罩） */
+	--color-border-strong: var(--border-strong); /* → focus:border-border-strong */
 	--color-sidebar-ring: var(--sidebar-ring);
 	--color-sidebar-border: var(--sidebar-border);
 	--color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -198,22 +265,23 @@ svg.lucide {
 	--color-settings-sidebar-fg: var(--settings-sidebar-fg);
 	--color-settings-sidebar-selected: var(--settings-sidebar-selected);
 
-	/* ── v2 semantic palette（设计板语义色，生成 bg-primary-light、text-success-text 等工具类） ── */
-	--color-primary-hover: #1e4fd2;
-	--color-primary-light: #e8f0fe;
-	--color-success: #10b981;
-	--color-success-text: #047857;
-	--color-success-light: #ecfdf5;
-	--color-warning: #f59e0b;
-	--color-warning-light: #fffbeb;
-	--color-warning-text: #b45309;
-	--color-info: #3b82f6;
-	--color-info-light: #eff6ff;
-	--color-error: #ef4444;
-	--color-error-light: #fef2f2;
-	--color-nav-label: #4b5563;
-	--color-code-bg: #0d1117;
-	--color-code-fg: #e6edf3;
+	/* ── v2 semantic palette（设计板语义色，生成 bg-primary-light、text-success-text 等工具类） ──
+	   全部走 var() 间接层，.dark 里改底层变量才能生效 */
+	--color-primary-hover: var(--primary-hover);
+	--color-primary-light: var(--primary-light);
+	--color-success: var(--success);
+	--color-success-text: var(--success-text);
+	--color-success-light: var(--success-light);
+	--color-warning: var(--warning);
+	--color-warning-text: var(--warning-text);
+	--color-warning-light: var(--warning-light);
+	--color-info: var(--info);
+	--color-info-light: var(--info-light);
+	--color-error: var(--error);
+	--color-error-light: var(--error-light);
+	--color-nav-label: var(--nav-label);
+	--color-code-bg: var(--code-block-bg);
+	--color-code-fg: var(--code-block-fg);
 
 	/* 节点类型色：走 var() 间接层，暗色才能靠 .dark 覆盖 --node-* 生效
 	   （@theme inline 里写字面量十六进制会被内联死，.dark 改不到） */
@@ -221,6 +289,35 @@ svg.lucide {
 	--color-node-thinking: var(--node-thinking);
 	--color-node-tool: var(--node-tool);
 	--color-node-text: var(--node-text);
+
+	/* PromptRail 轨道圆点四档明度 */
+	--color-rail-dot-1: var(--rail-dot-1);
+	--color-rail-dot-2: var(--rail-dot-2);
+	--color-rail-dot-3: var(--rail-dot-3);
+	--color-rail-dot-4: var(--rail-dot-4);
+
+	/* 运营看板 slate 色板 */
+	--color-stats-app: var(--stats-app);
+	--color-stats-panel: var(--stats-panel);
+	--color-stats-border: var(--stats-border);
+	--color-stats-title: var(--stats-title);
+	--color-stats-body: var(--stats-body);
+	--color-stats-meta: var(--stats-meta);
+	--color-stats-faint: var(--stats-faint);
+	--color-stats-muted: var(--stats-muted);
+	--color-stats-zebra: var(--stats-zebra);
+	--color-stats-chip-on: var(--stats-chip-on);
+	--color-stats-chip-on-hover: var(--stats-chip-on-hover);
+	--color-stats-chip-off: var(--stats-chip-off);
+	--color-stats-chip-off-hover: var(--stats-chip-off-hover);
+	--color-stats-track: var(--stats-track);
+	--color-stats-bar: var(--stats-bar);
+	--color-stats-up-bg: var(--stats-up-bg);
+	--color-stats-up-fg: var(--stats-up-fg);
+	--color-stats-down-bg: var(--stats-down-bg);
+	--color-stats-down-fg: var(--stats-down-fg);
+	--color-stats-neutral-bg: var(--stats-neutral-bg);
+	--color-stats-neutral-fg: var(--stats-neutral-fg);
 
 	/* 新的 shape scale（= v2 设计圆角体系 4/8/12/18/22/22/28/pill） */
 	--radius-mark: 0.25rem;
@@ -239,68 +336,87 @@ svg.lucide {
 }
 
 .dark {
+	/* ══ 暗色 token —— 全部取自 Penpot PAGE 09 adminStats-dark ══
+	   bg-app #0F1F38 / bg-panel #172C48 / bg-sidebar #1C3656 / bg-hover #234466
+	   bg-input #1C3654 / bg-selected #20549A
+	   text-primary #F1F5F9 / text-secondary #CBD5E1 / text-muted·faint #94A3B8
+	   border #2E4868 / border-subtle #36506E
+	   Primary #2563EB / Primary Hover #3B82F6 / Accent #1D4ED8
+	   状态色 base==fg，状态底 = 同色 15% 不透明度（不要写成不透明色块）。 */
+
 	/* ── legacy accent vars（跟随 .dark 类切换） ── */
-	--text: #9ca3af;
-	--text-h: #f3f4f6;
-	--bg: #16171d;
-	--border: #2e303a;
-	--code-bg: #1f2028;
-	--accent: #c084fc;
-	--accent-bg: rgba(192, 132, 252, 0.15);
-	--accent-border: rgba(192, 132, 252, 0.5);
-	--social-bg: rgba(47, 48, 58, 0.5);
-	--shadow: rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
+	--text: #94a3b8;
+	--text-h: #f1f5f9;
+	--bg: #0f1f38;
+	--border: #2e4868;
+	--code-bg: #0b1830;
+	--accent: #234466;
+	--accent-bg: rgba(59, 130, 246, 0.15);
+	--accent-border: rgba(59, 130, 246, 0.5);
+	--social-bg: rgba(15, 31, 56, 0.5);
+	--shadow: rgba(0, 0, 0, 0.35) 0 18px 40px -30px;
 
-	/* ── v2 design tokens (dark) ──
-	   primary 固定保持品牌蓝（v2 语义色 bg-primary-light/text-primary 成对依赖） */
-	--background: #303030;
-	--foreground: #f5f5f9;
-	--card: #383838;
-	--card-foreground: #f5f5f9;
+	/* ── v2 design tokens (dark) ── */
+	--background: #172c48;
+	--foreground: #f1f5f9;
+	--card: #172c48;
+	--card-foreground: #f1f5f9;
 	--popover: var(--card);
-	--popover-foreground: #f5f5f9;
-	--primary: #215bef;
+	--popover-foreground: #f1f5f9;
+	--primary: #2563eb;
 	--primary-foreground: #ffffff;
-	--secondary: var(--card);
-	--secondary-foreground: #f9f9f9;
-	--muted: var(--card);
-	--muted-foreground: #a6a6a6;
-	--accent: #404040;
-	--accent-foreground: #f9f9f9;
-	--destructive: #7f1d1d;
-	--border: #474747;
-	--input: var(--border);
-	--ring: #d4d4d4;
-	--chart-1: oklch(0.87 0 0);
-	--chart-2: oklch(0.556 0 0);
-	--chart-3: oklch(0.439 0 0);
-	--chart-4: oklch(0.371 0 0);
-	--chart-5: oklch(0.269 0 0);
-	--sidebar: #383838;
-	--sidebar-foreground: #f9f9f9;
-	--sidebar-primary: #215bef;
-	--sidebar-primary-foreground: #ffffff;
-	--sidebar-accent: #e8f0fe;
-	--sidebar-accent-foreground: #215bef;
-	--sidebar-border: #474747;
-	--sidebar-ring: #215bef;
+	--secondary: #234466;
+	--secondary-foreground: #f1f5f9;
+	--muted: #234466;
+	--muted-foreground: #94a3b8;
+	--accent-foreground: #f1f5f9;
+	--destructive: #f43f5e;
+	--input: #2e4868;
+	--ring: #2563eb;
+	--chart-1: #3b82f6;
+	--chart-2: #14b8a6;
+	--chart-3: #f59e0b;
+	--chart-4: #60a5fa;
+	--chart-5: #94a3b8;
+	--radius: 0.4375rem;
 
-	/* ── Semantic palette (dark) ── */
-	--color-primary-hover: #3b7aff;
-	--color-primary-light: rgba(33, 91, 239, 0.15);
-	--color-success: #10b981;
-	--color-success-text: #34d399;
-	--color-success-light: rgba(16, 185, 129, 0.12);
-	--color-warning: #f59e0b;
-	--color-warning-light: rgba(245, 158, 11, 0.12);
-	--color-warning-text: #fbbf24;
-	--color-info: #3b82f6;
-	--color-info-light: rgba(59, 130, 246, 0.12);
-	--color-error: #ef4444;
-	--color-error-light: rgba(239, 68, 68, 0.12);
-	--color-nav-label: #d1d5db;
-	--color-code-bg: #0d1117;
-	--color-code-fg: #e6edf3;
+	--sidebar: #1c3656;
+	--sidebar-foreground: #cbd5e1;
+	--sidebar-primary: #2563eb;
+	--sidebar-primary-foreground: #ffffff;
+	--sidebar-accent: #20549a;
+	--sidebar-accent-foreground: #f1f5f9;
+	--sidebar-border: #2e4868;
+	--sidebar-ring: #2563eb;
+
+	/* ── 语义色底层变量 (dark) —— 与 :root 同名，@theme inline 经 var() 读取 ── */
+	--text-secondary: #cbd5e1;
+	--text-tertiary: #94a3b8;
+	--text-data: #94a3b8;
+	--text-label: #cbd5e1;
+	--surface-muted: #234466;
+	--row-hover: rgba(255, 255, 255, 0.04);
+	--scrim: #0b1830;
+	--border-strong: #36506e;
+
+	--primary-hover: #3b82f6;
+	--primary-light: rgba(37, 99, 235, 0.15);
+
+	/* 状态色：base == fg（暗色下前景与基色同值），底色 = 同色 15% */
+	--success: #14b8a6;
+	--success-text: #14b8a6;
+	--success-light: rgba(20, 184, 166, 0.15);
+	--warning: #f59e0b;
+	--warning-text: #f59e0b;
+	--warning-light: rgba(245, 158, 11, 0.15);
+	--info: #60a5fa;
+	--info-light: rgba(96, 165, 250, 0.15);
+	--error: #f43f5e;
+	--error-light: rgba(244, 63, 94, 0.15);
+
+	--nav-label: #cbd5e1;
+	--code-block-bg: #0b1830;
+	--code-block-fg: #e6edf3;
 
 	/* 节点类型色（暗色）—— 同亮色的色相，抬亮保证深底对比度 */
 	--node-user: #fdba74;
@@ -308,22 +424,59 @@ svg.lucide {
 	--node-tool: #5eead4;
 	--node-text: #93c5fd;
 
-	--color-text-secondary: #9ca3af;
-	--color-text-tertiary: #6b7280;
-	--color-text-data: #9ca3af;
-	--color-surface-muted: #383838;
-	--color-row-hover: rgba(255, 255, 255, 0.04);
+	/* ── PromptRail 轨道圆点（暗色改用白色不同透明度） ── */
+	--rail-dot-1: #ffffff;
+	--rail-dot-2: rgba(255, 255, 255, 0.35);
+	--rail-dot-3: rgba(255, 255, 255, 0.55);
+	--rail-dot-4: rgba(255, 255, 255, 0.25);
+
+	/* ── 运营看板图表色 (dark) ── */
+	--chart-uv: #3b82f6;
+	--chart-sessions: #14b8a6;
+	--chart-turns: #f59e0b;
+	--chart-grid: #26405e;
+	--chart-axis: #36506e;
+	--chart-tick: #94a3b8;
+	--chart-cursor: #94a3b8;
+	--chart-ring: #ffffff;
+	--chart-tooltip-bg: #172c48;
+	--chart-tooltip-fg: #f1f5f9;
+	--chart-tooltip-meta: #94a3b8;
+	--chart-tooltip-border: #2e4868;
+
+	/* ── 运营看板 slate 色板 (dark) ── */
+	--stats-app: #0f1f38;
+	--stats-panel: #172c48;
+	--stats-border: #2e4868;
+	--stats-title: #f1f5f9;
+	--stats-body: #cbd5e1;
+	--stats-meta: #94a3b8;
+	--stats-faint: #94a3b8;
+	--stats-muted: #94a3b8;
+	--stats-zebra: #1c3656;
+	--stats-chip-on: #2563eb;
+	--stats-chip-on-hover: #3b82f6;
+	--stats-chip-off: #1c3656;
+	--stats-chip-off-hover: #234466;
+	--stats-track: #2e4868;
+	--stats-bar: #3b82f6;
+	--stats-up-bg: rgba(20, 184, 166, 0.15);
+	--stats-up-fg: #14b8a6;
+	--stats-down-bg: rgba(244, 63, 94, 0.15);
+	--stats-down-fg: #f43f5e;
+	--stats-neutral-bg: #1c3656;
+	--stats-neutral-fg: #94a3b8;
 
 	/* ── Settings design tokens (dark) ── */
-	--settings-canvas: #1a1a1f;
-	--settings-surface: #222228;
-	--settings-surface-hover: #2a2a30;
-	--settings-border: oklch(1 0 0 / 10%);
-	--settings-foreground: oklch(0.985 0 0);
-	--settings-muted-fg: oklch(0.708 0 0);
-	--settings-sidebar-bg: #222228;
-	--settings-sidebar-fg: oklch(0.985 0 0);
-	--settings-sidebar-selected: oklch(1 0 0 / 8%);
+	--settings-canvas: #0f1f38;
+	--settings-surface: #172c48;
+	--settings-surface-hover: #234466;
+	--settings-border: #2e4868;
+	--settings-foreground: #f1f5f9;
+	--settings-muted-fg: #94a3b8;
+	--settings-sidebar-bg: #1c3656;
+	--settings-sidebar-fg: #cbd5e1;
+	--settings-sidebar-selected: #20549a;
 }
 
 @layer base {

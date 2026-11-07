@@ -41,8 +41,8 @@ function Chip({
 			onClick={onClick}
 			className={
 				active
-					? 'rounded-full bg-[#2563eb] px-3.5 py-1.5 text-[13px] text-white'
-					: 'rounded-full bg-[#f1f5f9] px-3.5 py-1.5 text-[13px] text-[#334155] hover:bg-[#e2e8f0]'
+					? 'rounded-full bg-stats-chip-on px-3.5 py-1.5 text-[13px] text-white'
+					: 'rounded-full bg-stats-chip-off px-3.5 py-1.5 text-[13px] text-stats-body hover:bg-stats-chip-off-hover'
 			}
 		>
 			{children}
@@ -51,11 +51,11 @@ function Chip({
 }
 
 function GroupLabel({ children }: { children: ReactNode }) {
-	return <span className="text-[13px] font-semibold text-[#475569]">{children}</span>;
+	return <span className="text-[13px] font-semibold text-stats-meta">{children}</span>;
 }
 
 const INPUT_CLS =
-	'rounded-lg border border-[#e2e8f0] bg-white px-3 py-1.5 text-[13px] text-[#334155]';
+	'rounded-lg border border-stats-border bg-stats-panel px-3 py-1.5 text-[13px] text-stats-body';
 
 export function FilterBar({ query, onChange, channelOptions, onExport }: FilterBarProps) {
 	const channelLabel = useChannelLabel();
@@ -88,7 +88,7 @@ export function FilterBar({ query, onChange, channelOptions, onExport }: FilterB
 						onChange({ ...query, range: null, start: e.target.value || undefined })
 					}
 				/>
-				<span className="text-[13px] text-[#94a3b8]">~</span>
+				<span className="text-[13px] text-stats-muted">~</span>
 				<input
 					type="date"
 					className={INPUT_CLS}
@@ -118,7 +118,7 @@ export function FilterBar({ query, onChange, channelOptions, onExport }: FilterB
 			<button
 				type="button"
 				onClick={onExport}
-				className="ml-auto flex items-center gap-1.5 rounded-lg bg-[#2563eb] px-4 py-2 text-[13px] font-semibold text-white hover:bg-[#1d4ed8]"
+				className="ml-auto flex items-center gap-1.5 rounded-lg bg-stats-chip-on px-4 py-2 text-[13px] font-semibold text-white hover:bg-stats-chip-on-hover"
 			>
 				<Download className="size-3.5" />
 				导出报表
