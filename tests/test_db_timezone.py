@@ -26,7 +26,7 @@ from core.config.schemas import DatabaseConfig
 from core.database import DatabaseManager
 from core.db.statements import STATEMENTS
 from core.storage import PostgresStorage
-from tests.db_fakes import FakeBackend
+from tests.db_fakes import FakeBackend, find_executed
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 ROOT = Path(__file__).resolve().parent.parent
@@ -118,7 +118,7 @@ class TestWriteStatementsExplicitTimestamps:
         db, fake = _db("mysql")
         fake.insert_id = 7
         await db.insert_conversation("u1", "s1", "user", "你好")
-        _, args = fake.executed[-1]
+        _, args = find_executed(fake, "INSERT INTO conversations")
         assert len(args) == 9
         assert isinstance(args[8], datetime)
         assert args[8].tzinfo is None  # MySQL naive 墙钟
@@ -130,7 +130,7 @@ class TestWriteStatementsExplicitTimestamps:
     async def test_insert_conversation_pg_passes_aware(self):
         db, fake = _db("postgres")
         await db.insert_conversation("u1", "s1", "user", "你好")
-        _, args = fake.executed[-1]
+        _, args = find_executed(fake, "INSERT INTO conversations")
         assert isinstance(args[8], datetime)
         assert args[8].tzinfo is not None
         assert args[8].utcoffset() == timedelta(hours=8)
@@ -148,7 +148,7 @@ class TestWriteStatementsExplicitTimestamps:
     async def test_upsert_session_title_passes_timestamps(self):
         db, fake = _db("mysql")
         await db.upsert_session_title("u1", "s1", "标题")
-        _, args = fake.executed[-1]
+        _, args = find_executed(fake, "INSERT INTO sessions")
         assert len(args) == 6
         assert isinstance(args[4], datetime) and isinstance(args[5], datetime)
         assert args[4].tzinfo is None  # MySQL naive
@@ -173,7 +173,7 @@ class TestWriteStatementsExplicitTimestamps:
         await storage.upsert_session(
             "u1", "a1", SessionConfig(name="t"), state_json="", session_id="s1",
         )
-        _, args = fake.executed[-1]
+        _, args = find_executed(fake, "INSERT INTO sessions")
         created_at, updated_at = args[8], args[9]
         assert isinstance(created_at, datetime) and isinstance(updated_at, datetime)
         assert created_at.tzinfo is None

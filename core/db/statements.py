@@ -707,4 +707,68 @@ STATEMENTS: dict[str, Statement] = {
             ORDER BY 1
         """,
     ),
+
+    # ============================================================
+    # 统计事实表查询（facts 后端；core/stats.py::_compute_stats_facts 消费）
+    # 占位符：$1=start_date $2=end_date(排他) $3=channel(NULL=全部)
+    # stat_day 已是本地 DATE，无需时区转换；周/月桶由 Python 侧归并。
+    # ============================================================
+
+    # 天粒度系列（series / totals / prev_totals）：uv/session_active 按天跨渠道去重
+    "stats_daily_series": Statement(
+        pg="""
+            SELECT "stat_day" AS "stat_day",
+                   COUNT(DISTINCT "entity_id") FILTER (WHERE "metric" = 'uv') AS "uv",
+                   COUNT(DISTINCT "entity_id") FILTER (WHERE "metric" = 'session_active') AS "sessions_active",
+                   COUNT(*) FILTER (WHERE "metric" IN ('turn', 'turn_legacy')) AS "turns",
+                   COUNT(*) FILTER (WHERE "metric" = 'session_new') AS "sessions_new"
+            FROM "stats_daily"
+            WHERE "stat_day" >= $1 AND "stat_day" < $2
+              AND ($3::text IS NULL OR "channel" = $3)
+            GROUP BY 1
+            ORDER BY 1
+        """,
+        mysql="""
+            SELECT "stat_day" AS "stat_day",
+                   COUNT(DISTINCT CASE WHEN "metric" = 'uv' THEN "entity_id" END) AS "uv",
+                   COUNT(DISTINCT CASE WHEN "metric" = 'session_active' THEN "entity_id" END) AS "sessions_active",
+                   SUM(CASE WHEN "metric" IN ('turn', 'turn_legacy') THEN 1 ELSE 0 END) AS "turns",
+                   SUM(CASE WHEN "metric" = 'session_new' THEN 1 ELSE 0 END) AS "sessions_new"
+            FROM "stats_daily"
+            WHERE "stat_day" >= $1 AND "stat_day" < $2
+              AND ($3 IS NULL OR "channel" = $3)
+            GROUP BY 1
+            ORDER BY 1
+        """,
+    ),
+
+    # 天粒度 × 渠道（series_by_channel / channels / channel_options）
+    "stats_daily_by_channel": Statement(
+        pg="""
+            SELECT "stat_day" AS "stat_day",
+                   "channel" AS "channel",
+                   COUNT(*) FILTER (WHERE "metric" = 'uv') AS "uv",
+                   COUNT(*) FILTER (WHERE "metric" = 'session_active') AS "sessions_active",
+                   COUNT(*) FILTER (WHERE "metric" IN ('turn', 'turn_legacy')) AS "turns",
+                   COUNT(*) FILTER (WHERE "metric" = 'session_new') AS "sessions_new"
+            FROM "stats_daily"
+            WHERE "stat_day" >= $1 AND "stat_day" < $2
+              AND ($3::text IS NULL OR "channel" = $3)
+            GROUP BY 1, 2
+            ORDER BY 1, 2
+        """,
+        mysql="""
+            SELECT "stat_day" AS "stat_day",
+                   "channel" AS "channel",
+                   SUM(CASE WHEN "metric" = 'uv' THEN 1 ELSE 0 END) AS "uv",
+                   SUM(CASE WHEN "metric" = 'session_active' THEN 1 ELSE 0 END) AS "sessions_active",
+                   SUM(CASE WHEN "metric" IN ('turn', 'turn_legacy') THEN 1 ELSE 0 END) AS "turns",
+                   SUM(CASE WHEN "metric" = 'session_new' THEN 1 ELSE 0 END) AS "sessions_new"
+            FROM "stats_daily"
+            WHERE "stat_day" >= $1 AND "stat_day" < $2
+              AND ($3 IS NULL OR "channel" = $3)
+            GROUP BY 1, 2
+            ORDER BY 1, 2
+        """,
+    ),
 }

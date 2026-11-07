@@ -21,6 +21,7 @@ from core.storage_models import (
     SessionSource,
     _generate_id,
 )
+from core.stats import session_created_fact
 
 from loguru import logger
 
@@ -50,6 +51,7 @@ class PostgresStorage:
         source: SessionSource = SessionSource.USER,
         parent_session_id: str | None = None,
         depth: int | None = None,
+        channel: str = "web",
     ) -> SessionRecord:
         """创建或更新 Session 记录
 
@@ -62,6 +64,7 @@ class PostgresStorage:
             source: 会话来源
             parent_session_id: 父会话 ID（Fork 时传入），更新已有会话时为 None 表示保留原值
             depth: Fork 深度（None 则默认 0）
+            channel: 会话渠道（用于 session_new 事实；fork 继承父会话）
 
         Returns:
             SessionRecord
@@ -70,6 +73,18 @@ class PostgresStorage:
         now = self._db.now()
         sid = session_id or _generate_id()
         final_depth = 0 if depth is None else depth
+
+        # 判定新建（best-effort）：session_id 未指定 → 生成新 id 必然新建；
+        # 显式 id 时查是否存在。仅新建落 session_new 事实。
+        is_new = session_id is None
+        if not is_new:
+            try:
+                row = await self._db.fetchrow(
+                    'SELECT 1 FROM "sessions" WHERE "id" = $1', sid,
+                )
+                is_new = row is None
+            except Exception:  # noqa: BLE001
+                is_new = False
 
         # 客户端主键 (id)：无需取回 id，直接构造记录返回
         await self._db.execute_named(
@@ -85,6 +100,11 @@ class PostgresStorage:
             now,
             now,
         )
+
+        if is_new:
+            await self._db.record_stats_facts(
+                [session_created_fact(now.date(), channel, sid)]
+            )
 
         return SessionRecord(
             id=sid,
@@ -149,6 +169,19 @@ class PostgresStorage:
 
         src_depth = int(row["depth"] or 0)
 
+        # 派生父会话渠道（fork 子会话继承）；失败回落 'web'
+        channel = "web"
+        try:
+            ch = await self._db.fetchval(
+                'SELECT MIN("channel") FROM "conversations" '
+                'WHERE "session_id" = $1 AND "status" = \'active\'',
+                src_session_id,
+            )
+            if ch:
+                channel = ch
+        except Exception:  # noqa: BLE001
+            pass
+
         return await self.upsert_session(
             user_id=user_id,
             agent_id=row["agent_id"],
@@ -158,6 +191,7 @@ class PostgresStorage:
             source=SessionSource.FORK,
             parent_session_id=row["id"],
             depth=src_depth + 1,
+            channel=channel,
         )
 
     async def list_sessions(

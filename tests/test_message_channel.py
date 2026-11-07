@@ -22,7 +22,7 @@ from core.config.schemas import DatabaseConfig, OTelConfig
 from core.database import DatabaseManager
 from core.db.ddl import DDL_MYSQL, DDL_POSTGRES
 from core.db.statements import STATEMENTS
-from tests.db_fakes import FakeBackend
+from tests.db_fakes import FakeBackend, find_executed
 
 CHANNEL_TABLES = ("conversations", "sessions")
 
@@ -96,7 +96,7 @@ class TestWritePathChannel:
         db, fake = _db("mysql")
         fake.insert_id = 7
         result = await db.insert_conversation("u1", "s1", "user", "你好", {"a": 1})
-        sql, args = _last(fake)
+        sql, args = find_executed(fake, "INSERT INTO conversations")
         assert sql == STATEMENTS["insert_conversation"].pick("mysql")
         assert result == 7
         assert args[:4] == ("u1", "s1", "user", "你好")
@@ -107,7 +107,7 @@ class TestWritePathChannel:
     async def test_insert_conversation_explicit_feishu(self):
         db, fake = _db("mysql")
         await db.insert_conversation("u1", "s1", "user", "hi", channel="feishu")
-        _, args = _last(fake)
+        _, args = find_executed(fake, "INSERT INTO conversations")
         assert args[4] is None  # metadata 未传 → None
         assert args[5] == "feishu"
 

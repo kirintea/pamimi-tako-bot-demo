@@ -36,7 +36,7 @@ class TestParity:
 
     def test_pg_ddl_statement_count(self):
         """DDL_POSTGRES 条数 tripwire（禁表/迁移后需同步更新）"""
-        assert len(DDL_POSTGRES) == 26
+        assert len(DDL_POSTGRES) == 29
 
 
 class TestMysqlDdlHasNoPgSyntax:

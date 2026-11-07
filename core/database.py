@@ -31,6 +31,7 @@ from core.db.base import (
 from core.db.ddl import REQUIRED_TABLES, get_ddl
 from core.db.factory import create_backend
 from core.db.statements import STATEMENTS
+from core.stats import conversation_facts, session_created_fact
 
 
 class DatabaseManager:
@@ -244,7 +245,8 @@ class DatabaseManager:
 
         # 自增主键：PG 取 RETURNING id，MySQL 取 lastrowid
         # created_at 应用侧生成（database.timezone），不依赖 DB DEFAULT（服务端可能是 UTC）
-        return await self.insert_returning_id(
+        now = self.now()
+        rid = await self.insert_returning_id(
             "insert_conversation",
             user_id,
             session_id,
@@ -254,8 +256,44 @@ class DatabaseManager:
             channel,
             turn_id,
             turn_seq,
-            self.now(),
+            now,
         )
+        # 写统计事实（best-effort，失败仅告警，可回填补偿）
+        await self.record_stats_facts(
+            conversation_facts(now.date(), channel, user_id, session_id, role, turn_id, rid)
+        )
+        return rid
+
+    async def record_stats_facts(self, facts: list[tuple]) -> None:
+        """批量幂等写统计事实行（best-effort，失败仅告警，可回填补偿）
+
+        facts: list[(stat_day: date, channel: str, metric: str, entity_id: str)]
+        变长多行 VALUES，故不注册进 statements.py（固定 $N 无法表达变长）。
+        """
+        if not facts:
+            return
+        try:
+            now = self.now()
+            mysql = self.dialect == "mysql"
+            if mysql:
+                sql = ('INSERT IGNORE INTO "stats_daily" '
+                       '("stat_day", "channel", "metric", "entity_id", "created_at") VALUES ')
+            else:
+                sql = ('INSERT INTO "stats_daily" '
+                       '("stat_day", "channel", "metric", "entity_id", "created_at") VALUES ')
+            rows: list[str] = []
+            args: list = []
+            for day, channel, metric, entity_id in facts:
+                rows.append(
+                    f"(${len(args) + 1}, ${len(args) + 2}, ${len(args) + 3}, ${len(args) + 4}, ${len(args) + 5})"
+                )
+                args.extend([day, channel, metric, entity_id, now])
+            sql += ", ".join(rows)
+            if not mysql:
+                sql += ' ON CONFLICT ("stat_day", "channel", "metric", "entity_id") DO NOTHING'
+            await self.execute(sql, *args)
+        except Exception as e:  # noqa: BLE001 — 统计 best-effort，不阻塞消息写入
+            logger.warning("统计事实写入失败（忽略，可回填补偿）: {} {}", facts, e)
 
     async def get_conversation_history(
         self,
@@ -572,6 +610,7 @@ class DatabaseManager:
         user_id: str,
         session_id: str,
         title: str,
+        channel: str = "web",
     ) -> None:
         """更新或插入会话标题（同时写入 title 列 + config.title）
 
@@ -579,10 +618,21 @@ class DatabaseManager:
             user_id: 用户 ID
             session_id: 会话 ID
             title: 会话标题
+            channel: 会话渠道（用于 session_new 事实；正常首轮来自调用点）
         """
         import json
 
         now = self.now()
+        # 判定新建：session 行不存在 → 首轮建会话 → 记 session_new
+        try:
+            exists = await self.fetchrow(
+                'SELECT 1 FROM "sessions" WHERE "id" = $1',
+                session_id,
+            )
+        except Exception:  # noqa: BLE001 — 判定失败保守不记，不影响主流程
+            exists = None
+        is_new = exists is None
+
         await self.execute_named(
             "upsert_session_title",
             session_id,
@@ -592,6 +642,10 @@ class DatabaseManager:
             now,   # created_at（插入时）
             now,   # updated_at（冲突时覆盖）
         )
+        if is_new:
+            await self.record_stats_facts(
+                [session_created_fact(now.date(), channel, session_id)]
+            )
 
     async def get_session_title(
         self,

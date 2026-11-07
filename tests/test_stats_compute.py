@@ -40,7 +40,7 @@ async def test_totals_use_turn_id_distinct_plus_legacy_fallback():
     })
     start, end = _window()
     out = await compute_stats(db, start=start, end=end, tz=TZ, granularity="day",
-                              channel=None, range_key="7d")
+                              channel=None, range_key="7d", backend="legacy")
     assert out["totals"] == {
         "uv": 2, "sessions_active": 1, "sessions_new": 2, "turns": 7,
     }
@@ -56,7 +56,7 @@ async def test_null_aggregates_become_zero():
     })
     start, end = _window()
     out = await compute_stats(db, start=start, end=end, tz=TZ, granularity="day",
-                              channel=None, range_key="7d")
+                              channel=None, range_key="7d", backend="legacy")
     assert out["totals"] == {"uv": 0, "sessions_active": 0, "sessions_new": 0, "turns": 0}
 
 
@@ -75,7 +75,7 @@ async def test_series_zero_fills_missing_buckets():
     })
     start, end = _window()
     out = await compute_stats(db, start=start, end=end, tz=TZ, granularity="day",
-                              channel=None, range_key="7d")
+                              channel=None, range_key="7d", backend="legacy")
     series = out["series"]
     assert [s["bucket"] for s in series] == [
         "2026-10-16", "2026-10-17", "2026-10-18", "2026-10-19",
@@ -108,7 +108,7 @@ async def test_cross_bucket_sessions_counted_in_each_active_day():
     })
     start, end = range_window(TZ, "30d", today=date(2026, 10, 25))
     out = await compute_stats(db, start=start, end=end, tz=TZ, granularity="day",
-                              channel=None, range_key="30d")
+                              channel=None, range_key="30d", backend="legacy")
     by_day = {s["bucket"]: s for s in out["series"]}
     assert by_day["2026-10-20"]["sessions_active"] == 1
     assert by_day["2026-10-20"]["sessions_new"] == 1
@@ -128,7 +128,7 @@ async def test_channel_filter_passed_as_none_for_all():
     })
     start, end = _window()
     await compute_stats(db, start=start, end=end, tz=TZ, granularity="day",
-                        channel=None, range_key="7d")
+                        channel=None, range_key="7d", backend="legacy")
     _, args = db.calls[0]
     assert args[-1] is None
 
@@ -161,7 +161,7 @@ async def test_channel_table_share_is_uv_based():
     })
     start, end = _window()
     out = await compute_stats(db, start=start, end=end, tz=TZ, granularity="day",
-                              channel=None, range_key="7d")
+                              channel=None, range_key="7d", backend="legacy")
     chans = out["channels"]
     assert chans[0]["channel"] == "web"
     assert round(chans[0]["uv_share"], 2) == 0.56
@@ -185,7 +185,7 @@ async def test_unknown_channel_bucket_labeled_empty_string():
     })
     start, end = _window()
     out = await compute_stats(db, start=start, end=end, tz=TZ, granularity="day",
-                              channel=None, range_key="7d")
+                              channel=None, range_key="7d", backend="legacy")
     assert out["channels"][0]["channel"] == ""
     assert out["channels"][0]["label"] == "未知"
 
@@ -200,7 +200,7 @@ async def test_prev_totals_queried_with_shifted_equal_length_window():
     })
     start, end = _window()  # 2026-10-16 ~ 2026-10-23
     out = await compute_stats(db, start=start, end=end, tz=TZ, granularity="day",
-                              channel=None, range_key="7d")
+                              channel=None, range_key="7d", backend="legacy")
     total_calls = [c for c in db.calls if c[0].endswith("_total")]
     # 6 次 total 调用：3 条本窗 + 3 条前窗
     assert len(total_calls) == 6
@@ -236,7 +236,7 @@ async def test_prev_totals_zero_when_prior_window_empty():
     })
     start, end = _window()
     out = await compute_stats(db, start=start, end=end, tz=TZ, granularity="day",
-                              channel=None, range_key="7d")
+                              channel=None, range_key="7d", backend="legacy")
     assert out["totals"] == {"uv": 2, "sessions_active": 1, "sessions_new": 2, "turns": 7}
     assert out["prev_totals"] == {
         "uv": 0, "sessions_active": 0, "sessions_new": 0, "turns": 0,
@@ -263,7 +263,7 @@ async def test_series_by_channel_merges_three_rowsets():
     })
     start, end = _window()
     out = await compute_stats(db, start=start, end=end, tz=TZ, granularity="day",
-                              channel=None, range_key="7d")
+                              channel=None, range_key="7d", backend="legacy")
     sbc = out["series_by_channel"]
     assert [(r["bucket"], r["channel"]) for r in sbc] == [
         ("2026-10-16", "web"), ("2026-10-17", "wecom"),
@@ -291,5 +291,5 @@ async def test_wecom_label_is_enterprise_wechat():
     })
     start, end = _window()
     out = await compute_stats(db, start=start, end=end, tz=TZ, granularity="day",
-                              channel=None, range_key="7d")
+                              channel=None, range_key="7d", backend="legacy")
     assert out["channels"][0]["label"] == "企业微信"

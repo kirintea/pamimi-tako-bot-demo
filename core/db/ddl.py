@@ -200,6 +200,24 @@ DDL_POSTGRES = [
     ON conversations("turn_id", "turn_seq")
     WHERE "turn_id" IS NOT NULL
     """,
+
+    # ============================================================
+    # 运营统计事实表 stats_daily（grain = 天×渠道×指标×去重键）
+    # ============================================================
+    """
+    CREATE TABLE IF NOT EXISTS stats_daily (
+        "id"          BIGSERIAL PRIMARY KEY,
+        "stat_day"    DATE NOT NULL,
+        "channel"     VARCHAR(16) NOT NULL,
+        "metric"      VARCHAR(24) NOT NULL,
+        "entity_id"   VARCHAR(64) NOT NULL,
+        "created_at"  TIMESTAMPTZ DEFAULT NOW(),
+        CONSTRAINT "uq_stats_daily" UNIQUE ("stat_day", "channel", "metric", "entity_id")
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_stats_daily_day ON stats_daily("stat_day")
+    """,
 ]
 
 # ============================================================
@@ -283,6 +301,20 @@ DDL_MYSQL = [
     'ALTER TABLE conversations ADD COLUMN "turn_id" VARCHAR(36) DEFAULT NULL',
     'ALTER TABLE conversations ADD COLUMN "turn_seq" INT DEFAULT NULL',
     'CREATE INDEX idx_conv_turn ON conversations("turn_id", "turn_seq")',
+
+    # 运营统计事实表 stats_daily
+    """
+    CREATE TABLE IF NOT EXISTS stats_daily (
+        "id"          BIGINT AUTO_INCREMENT PRIMARY KEY,
+        "stat_day"    DATE NOT NULL,
+        "channel"     VARCHAR(16) NOT NULL,
+        "metric"      VARCHAR(24) NOT NULL,
+        "entity_id"   VARCHAR(64) NOT NULL,
+        "created_at"  DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
+        CONSTRAINT "uq_stats_daily" UNIQUE ("stat_day", "channel", "metric", "entity_id")
+    )
+    """,
+    'CREATE INDEX idx_stats_daily_day ON stats_daily("stat_day")',
 ]
 
 # MySQL 幂等性错误码（可安全忽略）：
@@ -313,4 +345,5 @@ REQUIRED_TABLES = [
     "conversations",
     "sessions",
     "users",
+    "stats_daily",
 ]

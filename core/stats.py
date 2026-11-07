@@ -104,6 +104,17 @@ def bucket_keys(start: datetime, end: datetime, granularity: str) -> list[str]:
     return [k.isoformat() for k in keys]
 
 
+def day_to_bucket(d: date, granularity: str) -> date:
+    """自然日 → 桶首日（day 自映射 / week 周一 / month 月首日）"""
+    if granularity == GRAN_DAY:
+        return d
+    if granularity == GRAN_WEEK:
+        return d - timedelta(days=d.weekday())
+    if granularity == GRAN_MONTH:
+        return d.replace(day=1)
+    raise ValueError(f"未知粒度: {granularity!r}")
+
+
 def bounds_for_dialect(dialect: str, start: datetime, end: datetime) -> tuple[datetime, datetime]:
     """按方言调整时间列传参形状
 
@@ -126,6 +137,13 @@ def bucket_key(value: Any) -> str:
 
 CHANNEL_LABELS: dict[str, str] = {"web": "Web", "wecom": "企业微信", "": "未知"}
 
+# stats_daily 事实表 metric 取值
+METRIC_UV = "uv"
+METRIC_SESSION_ACTIVE = "session_active"
+METRIC_SESSION_NEW = "session_new"
+METRIC_TURN = "turn"
+METRIC_TURN_LEGACY = "turn_legacy"
+
 
 def _norm_int(value: Any) -> int:
     """SQL 聚合值 → int（None / 空集 SUM 落 0）"""
@@ -144,6 +162,78 @@ def _row_map(rows: list[dict], key: str = "bucket") -> dict[str, dict]:
 
 
 async def compute_stats(
+    db,
+    *,
+    start: datetime,
+    end: datetime,
+    tz: str,
+    granularity: str,
+    channel: str | None,
+    range_key: str,
+    backend: str = "facts",
+) -> dict[str, Any]:
+    """看板响应分发器：facts（读 stats_daily）/ legacy（conversations 实时聚合）"""
+    if backend == "facts":
+        return await _compute_stats_facts(
+            db, start=start, end=end, tz=tz,
+            granularity=granularity, channel=channel, range_key=range_key,
+        )
+    if backend == "legacy":
+        return await _compute_stats_legacy(
+            db, start=start, end=end, tz=tz,
+            granularity=granularity, channel=channel, range_key=range_key,
+        )
+    raise ValueError(f"未知 stats.backend: {backend!r}")
+
+
+async def _compute_stats_facts(
+    db,
+    *,
+    start: datetime,
+    end: datetime,
+    tz: str,
+    granularity: str,
+    channel: str | None,
+    range_key: str,
+) -> dict[str, Any]:
+    start_d = start.date()
+    end_d = end.date()  # 排他（下一日 00:00）
+    ch = _channel_arg(channel)
+
+    day_rows = await db.fetch_named("stats_daily_series", start_d, end_d, ch)
+    bc_rows = await db.fetch_named("stats_daily_by_channel", start_d, end_d, ch)
+    bc_all = await db.fetch_named("stats_daily_by_channel", start_d, end_d, None)
+
+    series = _bucketize_day_rows(day_rows, start, end, granularity)
+    totals = _totals_from_day_rows(day_rows)
+
+    p_start, p_end = prev_window(start, end)
+    p_day_rows = await db.fetch_named("stats_daily_series", p_start.date(), p_end.date(), ch)
+    prev_totals = _totals_from_day_rows(p_day_rows)
+
+    channels = _channels_from_bc_rows(bc_all)
+    series_by_channel = _bucketize_bc_rows(bc_rows, granularity)
+    channel_options = _channel_options_from_bc_rows(bc_all)
+
+    return {
+        "range": {
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+            "granularity": granularity,
+            "range_key": range_key,
+            "channel": channel or CHANNEL_ALL,
+            "timezone": tz,
+        },
+        "totals": totals,
+        "prev_totals": prev_totals,
+        "series": series,
+        "series_by_channel": series_by_channel,
+        "channels": channels,
+        "channel_options": channel_options,
+    }
+
+
+async def _compute_stats_legacy(
     db,
     *,
     start: datetime,
@@ -303,3 +393,115 @@ async def compute_stats(
         "channels": channels,
         "channel_options": channel_options,
     }
+
+
+# ------------------------------------------------------------
+# 事实表组装辅助（_compute_stats_facts 消费）
+# ------------------------------------------------------------
+
+def _bucketize_day_rows(day_rows, start, end, granularity):
+    """天粒度行 → 桶序列（周/月归并；bucket_keys 补零）"""
+    by_bucket: dict[date, dict] = {}
+    for r in day_rows:
+        b = day_to_bucket(r["stat_day"], granularity)
+        e = by_bucket.setdefault(b, {"uv": 0, "sessions_active": 0, "sessions_new": 0, "turns": 0})
+        e["uv"] += _norm_int(r.get("uv"))
+        e["sessions_active"] += _norm_int(r.get("sessions_active"))
+        e["sessions_new"] += _norm_int(r.get("sessions_new"))
+        e["turns"] += _norm_int(r.get("turns"))
+    series = []
+    for key in bucket_keys(start, end, granularity):
+        b = by_bucket.get(date.fromisoformat(key), {})
+        series.append({
+            "bucket": key,
+            "uv": _norm_int(b.get("uv")),
+            "sessions_active": _norm_int(b.get("sessions_active")),
+            "sessions_new": _norm_int(b.get("sessions_new")),
+            "turns": _norm_int(b.get("turns")),
+        })
+    return series
+
+
+def _totals_from_day_rows(day_rows):
+    """整窗人次 = 各天之和（跨天不 dedup）"""
+    return {
+        "uv": sum(_norm_int(r.get("uv")) for r in day_rows),
+        "sessions_active": sum(_norm_int(r.get("sessions_active")) for r in day_rows),
+        "sessions_new": sum(_norm_int(r.get("sessions_new")) for r in day_rows),
+        "turns": sum(_norm_int(r.get("turns")) for r in day_rows),
+    }
+
+
+def _channels_from_bc_rows(bc_rows):
+    """天×渠道行 → 渠道汇总（跨天相加），uv_share 按 UV 占比"""
+    merged: dict[str, dict] = {}
+    for r in bc_rows:
+        key = r.get("channel") or ""
+        e = merged.setdefault(key, {"channel": key, "uv": 0, "sessions_active": 0, "sessions_new": 0, "turns": 0})
+        e["uv"] += _norm_int(r.get("uv"))
+        e["sessions_active"] += _norm_int(r.get("sessions_active"))
+        e["sessions_new"] += _norm_int(r.get("sessions_new"))
+        e["turns"] += _norm_int(r.get("turns"))
+    total_uv = sum(m["uv"] for m in merged.values())
+    channels = []
+    for m in merged.values():
+        m["label"] = CHANNEL_LABELS.get(m["channel"], m["channel"])
+        m["uv_share"] = round(m["uv"] / total_uv, 4) if total_uv else 0.0
+        channels.append(m)
+    channels.sort(key=lambda m: (-m["turns"], m["channel"]))
+    return channels
+
+
+def _bucketize_bc_rows(bc_rows, granularity):
+    """天×渠道行 → 按 (桶, 渠道) 归并"""
+    out: dict[tuple[date, str], dict] = {}
+    for r in bc_rows:
+        b = day_to_bucket(r["stat_day"], granularity)
+        key = (b, r.get("channel") or "")
+        e = out.setdefault(key, {"bucket": key[0].isoformat(), "channel": key[1],
+                                 "uv": 0, "sessions_active": 0, "sessions_new": 0, "turns": 0})
+        e["uv"] += _norm_int(r.get("uv"))
+        e["sessions_active"] += _norm_int(r.get("sessions_active"))
+        e["sessions_new"] += _norm_int(r.get("sessions_new"))
+        e["turns"] += _norm_int(r.get("turns"))
+    return sorted(out.values(), key=lambda e: (e["bucket"], e["channel"]))
+
+
+def _channel_options_from_bc_rows(bc_rows):
+    """窗口内出现过的渠道（去重、升序）"""
+    seen: dict[str, dict] = {}
+    for r in bc_rows:
+        ch = r.get("channel")
+        if ch:
+            seen[ch] = {"value": ch, "label": CHANNEL_LABELS.get(ch, ch)}
+    return sorted(seen.values(), key=lambda x: x["value"])
+
+
+# ------------------------------------------------------------
+# 事实构造纯函数（写路径 + 回填脚本共用）
+# ------------------------------------------------------------
+
+def conversation_facts(
+    day: date,
+    channel: str,
+    user_id: str,
+    session_id: str,
+    role: str,
+    turn_id: str | None,
+    conversation_id: int,
+) -> list[tuple[date, str, str, str]]:
+    """insert_conversation 派生的事实行 (stat_day, channel, metric, entity_id)"""
+    facts = [
+        (day, channel, METRIC_UV, user_id),
+        (day, channel, METRIC_SESSION_ACTIVE, session_id),
+    ]
+    if turn_id:
+        facts.append((day, channel, METRIC_TURN, turn_id))
+    elif role == "user":
+        facts.append((day, channel, METRIC_TURN_LEGACY, str(conversation_id)))
+    return facts
+
+
+def session_created_fact(day: date, channel: str, session_id: str) -> tuple[date, str, str, str]:
+    """新建会话派生的事实行"""
+    return (day, channel, METRIC_SESSION_NEW, session_id)

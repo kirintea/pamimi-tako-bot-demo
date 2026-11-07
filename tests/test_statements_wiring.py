@@ -18,7 +18,7 @@ from core.database import DatabaseManager
 from core.db.statements import STATEMENTS
 from core.storage import PostgresStorage
 from core.storage_models import SessionConfig
-from tests.db_fakes import FakeBackend
+from tests.db_fakes import FakeBackend, find_executed
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
 
@@ -50,7 +50,7 @@ async def test_upsert_session_mysql_sql_returns_record():
         "u1", "a1", SessionConfig(name="测试会话"),
         state_json="", session_id="s1",
     )
-    sql, args = _last(fake)
+    sql, args = find_executed(fake, "INSERT INTO sessions")
     assert sql == STATEMENTS["upsert_session"].pick("mysql")
     assert "ON DUPLICATE KEY UPDATE" in sql
     assert "RETURNING" not in sql
@@ -67,7 +67,7 @@ async def test_insert_conversation_returns_id():
     db, fake = _db("mysql")
     fake.insert_id = 101
     result = await db.insert_conversation("u1", "s1", "user", "你好", {"a": 1})
-    sql, args = _last(fake)
+    sql, args = find_executed(fake, "INSERT INTO conversations")
     assert sql == STATEMENTS["insert_conversation"].pick("mysql")
     assert result == 101
     assert args[:4] == ("u1", "s1", "user", "你好")
@@ -80,7 +80,7 @@ async def test_insert_conversation_returns_id():
 async def test_upsert_session_title_mysql_json_merge_patch():
     db, fake = _db("mysql")
     await db.upsert_session_title("u1", "s1", "新标题")
-    sql, args = _last(fake)
+    sql, args = find_executed(fake, "INSERT INTO sessions")
     assert sql == STATEMENTS["upsert_session_title"].pick("mysql")
     assert "JSON_MERGE_PATCH" in sql
     # 参数顺序: (session_id, user_id, title, config_json)
