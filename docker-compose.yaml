@@ -11,8 +11,8 @@
 
 services:
   app:
-    image: pamimi-tako-bot-demo:0.2.1
-    container_name: pamimi-tako-bot-demo
+    image: base-agent:0.2.1
+    container_name: base-agent
     ports:
       - "8090:8090"
     volumes:
@@ -32,8 +32,8 @@ services:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
     networks:
-      - pamimi-tako-bot-demo-net
+      - base-agent-net
 
 networks:
-  pamimi-tako-bot-demo-net:
+  base-agent-net:
     driver: bridge
