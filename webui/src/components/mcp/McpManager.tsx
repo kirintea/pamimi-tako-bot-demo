@@ -28,7 +28,7 @@ import { Spinner } from '@/components/ui/spinner';
 import { cn } from '@/lib/utils';
 
 /* ------------------------------------------------------------------ */
-/*  Helpers                                                           */
+/* Helpers */
 /* ------------------------------------------------------------------ */
 
 /** Normalize transport string for display */
@@ -58,7 +58,7 @@ function endpointText(mcp: McpInfo): string {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Transport segmented control options                               */
+/* Transport segmented control options */
 /* ------------------------------------------------------------------ */
 
 type TransportOption = { label: string; value: string };
@@ -69,7 +69,7 @@ const TRANSPORT_OPTIONS: TransportOption[] = [
 ];
 
 /* ------------------------------------------------------------------ */
-/*  Default JSON template for the JSON tab                            */
+/* Default JSON template for the JSON tab */
 /* ------------------------------------------------------------------ */
 
 const DEFAULT_JSON = JSON.stringify(
@@ -87,7 +87,7 @@ const DEFAULT_JSON = JSON.stringify(
 );
 
 /* ------------------------------------------------------------------ */
-/*  Form state shape                                                  */
+/* Form state shape */
 /* ------------------------------------------------------------------ */
 
 interface McpFormState {
@@ -117,7 +117,7 @@ const EMPTY_FORM: McpFormState = {
 };
 
 /* ================================================================== */
-/*  McpManager                                                        */
+/* McpManager */
 /* ================================================================== */
 
 interface McpManagerProps {
@@ -400,7 +400,7 @@ export function McpManager({ variant = 'page' }: McpManagerProps) {
 	};
 
 	/* ================================================================ */
-	/*  Render                                                          */
+	/* Render */
 	/* ================================================================ */
 
 	return (
@@ -413,12 +413,12 @@ export function McpManager({ variant = 'page' }: McpManagerProps) {
 							{t('mcp.title', { defaultValue: 'MCP 服务' })}
 						</SettingsSectionTitle>
 					) : (
-						<h2 className="text-2xl font-semibold text-[#111928] dark:text-[#f5f5f9]">
+						<h2 className="text-2xl font-semibold text-foreground ">
 							{t('mcp.title', { defaultValue: 'MCP 服务' })}
 						</h2>
 					)}
 					<p className={cn(
-						'text-[13px] text-[#6B7280] dark:text-[#9ca3af]',
+						'text-[13px] text-text-secondary ',
 						variant === 'settings' ? 'mt-1' : 'mt-[14px]',
 					)}>
 						{t('mcp.subtitle', {
@@ -455,7 +455,7 @@ export function McpManager({ variant = 'page' }: McpManagerProps) {
 					{/* ---- 已连接 ---- */}
 					{enabledMcps.length > 0 && (
 						<>
-							<div className="mt-10 text-xs font-semibold text-[#6B7280] dark:text-[#9ca3af]">
+							<div className="mt-10 text-xs font-semibold text-text-secondary ">
 								{t('mcp.connected', { defaultValue: '已连接' })}
 							</div>
 							<div className="mt-3 flex flex-col gap-4">
@@ -476,7 +476,7 @@ export function McpManager({ variant = 'page' }: McpManagerProps) {
 					{disabledMcps.length > 0 && (
 						<>
 							<div className={cn(enabledMcps.length > 0 ? 'mt-10' : 'mt-10')}>
-								<span className="text-xs font-semibold text-[#6B7280] dark:text-[#9ca3af]">
+								<span className="text-xs font-semibold text-text-secondary ">
 									{t('mcp.disabled', { defaultValue: '已停用' })}
 								</span>
 							</div>
@@ -497,24 +497,24 @@ export function McpManager({ variant = 'page' }: McpManagerProps) {
 			)}
 
 			{/* ============================================================ */}
-			{/*  Add / Edit Dialog                                           */}
+			{/* Add / Edit Dialog */}
 			{/* ============================================================ */}
 			{dialogOpen && (
 				<div
-					className="fixed inset-0 bg-[#111928]/50 z-50 flex items-center justify-center p-4"
+					className="fixed inset-0 bg-scrim/50 z-50 flex items-center justify-center p-4"
 					onClick={() => setDialogOpen(false)}
 				>
 					<div
-						className="w-[680px] max-h-[90vh] overflow-y-auto rounded-[22px] bg-white dark:bg-[#303030] p-8 shadow-panel"
+						className="w-[680px] max-h-[90vh] overflow-y-auto rounded-[22px] bg-card p-8 shadow-panel"
 						onClick={(e) => e.stopPropagation()}
 					>
 						{/* ---- Title ---- */}
-						<h3 className="text-xl font-semibold text-[#111928] dark:text-[#f5f5f9]">
+						<h3 className="text-xl font-semibold text-foreground ">
 							{dialogMode === 'edit'
 								? t('mcp.editTitle', { defaultValue: '编辑 MCP 服务' })
 								: t('mcp.addTitle', { defaultValue: '添加 MCP 服务' })}
 						</h3>
-						<p className="mt-1 text-[13px] text-[#6B7280] dark:text-[#9ca3af]">
+						<p className="mt-1 text-[13px] text-text-secondary ">
 							{t('mcp.dialogSubtitle', {
 								defaultValue: '配置传输方式与连接参数，保存后 Agent 可调用其工具',
 							})}
@@ -523,13 +523,13 @@ export function McpManager({ variant = 'page' }: McpManagerProps) {
 
 						{/* ---- Tabs (add mode only has JSON tab) ---- */}
 						{dialogMode === 'add' && (
-							<div className="mt-5 h-9 rounded-[10px] bg-[#F3F4F6] dark:bg-[#383838] p-1 flex gap-1">
+							<div className="mt-5 h-9 rounded-[10px] bg-surface-muted p-1 flex gap-1">
 								<button
 									className={cn(
 										'flex-1 rounded-[8px] text-[13px] transition-colors',
 										activeTab === 'form'
-											? 'bg-white dark:bg-[#303030] text-primary font-semibold shadow-sm'
-											: 'text-[#6B7280] dark:text-[#9ca3af] hover:text-foreground',
+											? 'bg-card text-primary font-semibold shadow-sm'
+											: 'text-text-secondary hover:text-foreground',
 									)}
 									onClick={() => setActiveTab('form')}
 								>
@@ -539,8 +539,8 @@ export function McpManager({ variant = 'page' }: McpManagerProps) {
 									className={cn(
 										'flex-1 rounded-[8px] text-[13px] transition-colors',
 										activeTab === 'json'
-											? 'bg-white dark:bg-[#303030] text-primary font-semibold shadow-sm'
-											: 'text-[#6B7280] dark:text-[#9ca3af] hover:text-foreground',
+											? 'bg-card text-primary font-semibold shadow-sm'
+											: 'text-text-secondary hover:text-foreground',
 									)}
 									onClick={() => setActiveTab('json')}
 								>
@@ -554,7 +554,7 @@ export function McpManager({ variant = 'page' }: McpManagerProps) {
 							<div className="mt-5 space-y-4">
 								{/* Edit hint about transport fields */}
 								{dialogMode === 'edit' && (
-									<p className="text-xs text-[#9CA3AF]">
+									<p className="text-xs text-text-tertiary">
 										{t('mcp.editTransportHint', {
 											defaultValue:
 												'传输参数需删除重建（后端 PATCH 暂不支持修改传输方式与连接参数）',
@@ -565,18 +565,18 @@ export function McpManager({ variant = 'page' }: McpManagerProps) {
 								{/* Transport segmented control (add mode only) */}
 								{dialogMode === 'add' && (
 									<div>
-										<label className="text-[13px] font-semibold text-[#374151] dark:text-gray-300 mb-1.5 block">
+										<label className="text-[13px] font-semibold text-text-label mb-1.5 block">
 											{t('mcp.transport', { defaultValue: '传输方式' })}
 										</label>
-										<div className="h-10 rounded-[10px] bg-[#F3F4F6] dark:bg-[#383838] p-1 flex">
+										<div className="h-10 rounded-[10px] bg-surface-muted p-1 flex">
 											{TRANSPORT_OPTIONS.map((opt) => (
 												<button
 													key={opt.value}
 													className={cn(
 														'flex-1 rounded-[8px] text-[13px] transition-colors',
 														form.transport === opt.value
-															? 'bg-white dark:bg-[#303030] font-semibold text-primary shadow-sm'
-															: 'text-[#6B7280] dark:text-[#9ca3af]',
+															? 'bg-card font-semibold text-primary shadow-sm'
+															: 'text-text-secondary ',
 													)}
 													onClick={() => updateForm({ transport: opt.value })}
 												>
@@ -590,10 +590,10 @@ export function McpManager({ variant = 'page' }: McpManagerProps) {
 								{/* Edit: show transport as read-only badge */}
 								{dialogMode === 'edit' && (
 									<div>
-										<label className="text-[13px] font-semibold text-[#374151] dark:text-gray-300 mb-1.5 block">
+										<label className="text-[13px] font-semibold text-text-label mb-1.5 block">
 											{t('mcp.transport', { defaultValue: '传输方式' })}
 										</label>
-										<span className="inline-block rounded-[8px] bg-[#F3F4F6] dark:bg-[#383838] h-6 px-3 text-xs font-semibold text-[#4B5563] dark:text-[#9ca3af]">
+										<span className="inline-block rounded-[8px] bg-surface-muted h-6 px-3 text-xs font-semibold text-nav-label ">
 											{transportLabel(form.transport)}
 										</span>
 									</div>
@@ -601,7 +601,7 @@ export function McpManager({ variant = 'page' }: McpManagerProps) {
 
 								{/* 服务名称 */}
 								<div>
-									<label className="text-[13px] font-semibold text-[#374151] dark:text-gray-300 mb-1.5 block">
+									<label className="text-[13px] font-semibold text-text-label mb-1.5 block">
 										{t('mcp.name', { defaultValue: '服务名称' })}
 										<span className="text-destructive ml-0.5">*</span>
 									</label>
@@ -609,13 +609,13 @@ export function McpManager({ variant = 'page' }: McpManagerProps) {
 										value={form.name}
 										onChange={(e) => updateForm({ name: e.target.value })}
 										placeholder="my-mcp-server"
-										className="h-10 rounded-[8px] border border-border bg-white dark:bg-[#303030] px-3 text-[13px] placeholder:text-[#9CA3AF]"
+										className="h-10 rounded-[8px] border border-border bg-card px-3 text-[13px] placeholder:text-text-tertiary"
 									/>
 								</div>
 
 								{/* 描述 */}
 								<div>
-									<label className="text-[13px] font-semibold text-[#374151] dark:text-gray-300 mb-1.5 block">
+									<label className="text-[13px] font-semibold text-text-label mb-1.5 block">
 										{t('mcp.descriptionLabel', { defaultValue: '描述' })}
 									</label>
 									<Input
@@ -624,21 +624,21 @@ export function McpManager({ variant = 'page' }: McpManagerProps) {
 										placeholder={t('mcp.descriptionPlaceholder', {
 											defaultValue: '服务的简要描述',
 										})}
-										className="h-10 rounded-[8px] border border-border bg-white dark:bg-[#303030] px-3 text-[13px] placeholder:text-[#9CA3AF]"
+										className="h-10 rounded-[8px] border border-border bg-card px-3 text-[13px] placeholder:text-text-tertiary"
 									/>
 								</div>
 
 								{/* Edit: enabled toggle */}
 								{dialogMode === 'edit' && editingId && (
 									<div className="flex items-center gap-3">
-										<label className="text-[13px] font-semibold text-[#374151] dark:text-gray-300">
+										<label className="text-[13px] font-semibold text-text-label ">
 											{t('mcp.enabledLabel', { defaultValue: '启用状态' })}
 										</label>
 										<Switch
 											checked={form.enabled}
 											onCheckedChange={(checked) => updateForm({ enabled: checked })}
 										/>
-										<span className="text-xs text-[#6B7280] dark:text-[#9ca3af]">
+										<span className="text-xs text-text-secondary ">
 											{form.enabled
 												? t('mcp.connected', { defaultValue: '已连接' })
 												: t('mcp.disabledLabel', { defaultValue: '已停用' })}
@@ -651,7 +651,7 @@ export function McpManager({ variant = 'page' }: McpManagerProps) {
 								(dialogMode === 'edit' && form.transport === 'stdio') ? (
 									<>
 										<div>
-											<label className="text-[13px] font-semibold text-[#374151] dark:text-gray-300 mb-1.5 block">
+											<label className="text-[13px] font-semibold text-text-label mb-1.5 block">
 												{t('mcp.command', { defaultValue: '启动命令' })}
 											</label>
 											<Input
@@ -660,13 +660,13 @@ export function McpManager({ variant = 'page' }: McpManagerProps) {
 												placeholder="npx"
 												disabled={dialogMode === 'edit'}
 												className={cn(
-													'h-10 rounded-[8px] border border-border bg-white dark:bg-[#303030] px-3 text-[13px] placeholder:text-[#9CA3AF]',
-													dialogMode === 'edit' && 'bg-[#F9FAFB] opacity-70',
+													'h-10 rounded-[8px] border border-border bg-card px-3 text-[13px] placeholder:text-text-tertiary',
+													dialogMode === 'edit' && 'bg-canvas opacity-70',
 												)}
 											/>
 										</div>
 										<div>
-											<label className="text-[13px] font-semibold text-[#374151] dark:text-gray-300 mb-1.5 block">
+											<label className="text-[13px] font-semibold text-text-label mb-1.5 block">
 												{t('mcp.args', { defaultValue: '启动参数' })}
 											</label>
 											<Textarea
@@ -675,13 +675,13 @@ export function McpManager({ variant = 'page' }: McpManagerProps) {
 												placeholder="-y @playwright/mcp@latest"
 												disabled={dialogMode === 'edit'}
 												className={cn(
-													'h-14 rounded-[8px] border border-border bg-white dark:bg-[#303030] px-3 py-2 text-[13px] placeholder:text-[#9CA3AF] resize-none',
-													dialogMode === 'edit' && 'bg-[#F9FAFB] opacity-70',
+													'h-14 rounded-[8px] border border-border bg-card px-3 py-2 text-[13px] placeholder:text-text-tertiary resize-none',
+													dialogMode === 'edit' && 'bg-canvas opacity-70',
 												)}
 											/>
 										</div>
 										<div>
-											<label className="text-[13px] font-semibold text-[#374151] dark:text-gray-300 mb-1.5 block">
+											<label className="text-[13px] font-semibold text-text-label mb-1.5 block">
 												{t('mcp.env', { defaultValue: '环境变量' })}
 											</label>
 											<Textarea
@@ -690,11 +690,11 @@ export function McpManager({ variant = 'page' }: McpManagerProps) {
 												placeholder="API_KEY=xxx"
 												disabled={dialogMode === 'edit'}
 												className={cn(
-													'h-14 rounded-[8px] border border-border bg-white dark:bg-[#303030] px-3 py-2 text-[13px] placeholder:text-[#9CA3AF] resize-none',
-													dialogMode === 'edit' && 'bg-[#F9FAFB] opacity-70',
+													'h-14 rounded-[8px] border border-border bg-card px-3 py-2 text-[13px] placeholder:text-text-tertiary resize-none',
+													dialogMode === 'edit' && 'bg-canvas opacity-70',
 												)}
 											/>
-											<p className="mt-1 text-xs text-[#9CA3AF]">
+											<p className="mt-1 text-xs text-text-tertiary">
 												{t('mcp.envHint', {
 													defaultValue:
 														'环境变量：后端暂存于 headers 字段（规划中独立 env）',
@@ -711,7 +711,7 @@ export function McpManager({ variant = 'page' }: McpManagerProps) {
 									(form.transport === 'sse' || form.transport === 'streamable_http' || form.transport === 'http')) ? (
 									<>
 										<div>
-											<label className="text-[13px] font-semibold text-[#374151] dark:text-gray-300 mb-1.5 block">
+											<label className="text-[13px] font-semibold text-text-label mb-1.5 block">
 												URL
 											</label>
 											<Input
@@ -720,13 +720,13 @@ export function McpManager({ variant = 'page' }: McpManagerProps) {
 												placeholder="https://example.com/mcp"
 												disabled={dialogMode === 'edit'}
 												className={cn(
-													'h-10 rounded-[8px] border border-border bg-white dark:bg-[#303030] px-3 text-[13px] placeholder:text-[#9CA3AF]',
-													dialogMode === 'edit' && 'bg-[#F9FAFB] opacity-70',
+													'h-10 rounded-[8px] border border-border bg-card px-3 text-[13px] placeholder:text-text-tertiary',
+													dialogMode === 'edit' && 'bg-canvas opacity-70',
 												)}
 											/>
 										</div>
 										<div>
-											<label className="text-[13px] font-semibold text-[#374151] dark:text-gray-300 mb-1.5 block">
+											<label className="text-[13px] font-semibold text-text-label mb-1.5 block">
 												{t('mcp.headers', { defaultValue: '请求头' })}
 											</label>
 											<Textarea
@@ -735,8 +735,8 @@ export function McpManager({ variant = 'page' }: McpManagerProps) {
 												placeholder="Authorization=Bearer xxx"
 												disabled={dialogMode === 'edit'}
 												className={cn(
-													'h-14 rounded-[8px] border border-border bg-white dark:bg-[#303030] px-3 py-2 text-[13px] placeholder:text-[#9CA3AF] resize-none',
-													dialogMode === 'edit' && 'bg-[#F9FAFB] opacity-70',
+													'h-14 rounded-[8px] border border-border bg-card px-3 py-2 text-[13px] placeholder:text-text-tertiary resize-none',
+													dialogMode === 'edit' && 'bg-canvas opacity-70',
 												)}
 											/>
 										</div>
@@ -745,7 +745,7 @@ export function McpManager({ variant = 'page' }: McpManagerProps) {
 
 								{/* Hint */}
 								{dialogMode === 'add' && (
-									<p className="text-xs text-[#9CA3AF]">
+									<p className="text-xs text-text-tertiary">
 										{form.transport === 'stdio'
 											? t('mcp.stdioHint', {
 													defaultValue: 'stdio 服务在服务端本机启动',
@@ -761,15 +761,15 @@ export function McpManager({ variant = 'page' }: McpManagerProps) {
 						{/* ---- JSON Tab ---- */}
 						{dialogMode === 'add' && activeTab === 'json' && (
 							<div className="mt-5">
-								<label className="text-[13px] font-semibold text-[#374151] dark:text-gray-300 mb-1.5 block">
+								<label className="text-[13px] font-semibold text-text-label mb-1.5 block">
 									{t('mcp.jsonConfig', { defaultValue: '配置 (JSON)' })}
 								</label>
-								<div className="h-[330px] rounded-[12px] bg-[#0D1117] p-4 overflow-auto">
+								<div className="h-[330px] rounded-[12px] bg-code-bg p-4 overflow-auto">
 									<textarea
 										value={jsonText}
 										onChange={(e) => setJsonText(e.target.value)}
 										spellCheck={false}
-										className="w-full h-full bg-transparent text-[#E6EDF3] font-mono text-xs leading-5 resize-none outline-none"
+										className="w-full h-full bg-transparent text-code-fg font-mono text-xs leading-5 resize-none outline-none"
 									/>
 								</div>
 							</div>
@@ -780,7 +780,7 @@ export function McpManager({ variant = 'page' }: McpManagerProps) {
 							<Button
 								variant="outline"
 								onClick={() => setDialogOpen(false)}
-								className="h-10 w-[100px] rounded-[8px] border border-border bg-white dark:bg-[#303030] text-[14px] font-semibold hover:bg-[#F3F4F6] dark:bg-[#383838]"
+								className="h-10 w-[100px] rounded-[8px] border border-border bg-card text-[14px] font-semibold hover:bg-surface-muted "
 							>
 								{t('common.cancel', { defaultValue: '取消' })}
 							</Button>
@@ -805,7 +805,7 @@ export function McpManager({ variant = 'page' }: McpManagerProps) {
 }
 
 /* ================================================================== */
-/*  McpRow — single MCP row component                                 */
+/* McpRow — single MCP row component */
 /* ================================================================== */
 
 interface McpRowProps {
@@ -819,27 +819,27 @@ function McpRow({ mcp, t, onEdit, onDelete }: McpRowProps) {
 	const isEnabled = mcp.enabled !== false;
 
 	return (
-		<div className="h-16 rounded-[12px] border border-border bg-white dark:bg-[#303030] flex items-center">
+		<div className="h-16 rounded-[12px] border border-border bg-card flex items-center">
 			{/* Left block */}
 			<div className="flex-1 min-w-0 pl-6">
-				<div className="text-[15px] font-semibold text-[#111928] dark:text-[#f5f5f9] truncate">
+				<div className="text-[15px] font-semibold text-foreground truncate">
 					{mcp.display_name || mcp.name}
 				</div>
-				<div className="text-xs text-[#9CA3AF] truncate mt-0.5">
+				<div className="text-xs text-text-tertiary truncate mt-0.5">
 					{mcp.description || endpointText(mcp)}
 				</div>
 			</div>
 
 			{/* Type badge */}
 			<div className="shrink-0 w-[120px] px-3">
-				<span className="inline-block rounded-[8px] bg-[#F3F4F6] dark:bg-[#383838] h-6 px-3 text-xs font-semibold text-[#4B5563] dark:text-[#9ca3af] whitespace-nowrap">
+				<span className="inline-block rounded-[8px] bg-surface-muted h-6 px-3 text-xs font-semibold text-nav-label whitespace-nowrap">
 					{transportLabel(mcp.transport)}
 				</span>
 			</div>
 
 			{/* Endpoint */}
 			<div className="shrink-0 w-[200px] px-3">
-				<span className="text-xs text-[#6B7280] dark:text-[#9ca3af] truncate block">
+				<span className="text-xs text-text-secondary truncate block">
 					{endpointText(mcp)}
 				</span>
 			</div>
@@ -850,14 +850,14 @@ function McpRow({ mcp, t, onEdit, onDelete }: McpRowProps) {
 				<div
 					className={cn(
 						'size-2 rounded-full',
-						isEnabled ? 'bg-[#10B981]' : 'bg-[#9CA3AF]',
+						isEnabled ? 'bg-success' : 'bg-text-tertiary',
 					)}
 				/>
 				{/* State label */}
 				<span
 					className={cn(
 						'text-xs font-semibold',
-						isEnabled ? 'text-[#047857]' : 'text-[#6B7280] dark:text-[#9ca3af]',
+						isEnabled ? 'text-success-text' : 'text-text-secondary ',
 					)}
 				>
 					{isEnabled
@@ -867,7 +867,7 @@ function McpRow({ mcp, t, onEdit, onDelete }: McpRowProps) {
 				{/* Edit button */}
 				<button
 					onClick={() => onEdit(mcp)}
-					className="size-5 flex items-center justify-center text-[#9CA3AF] hover:text-foreground transition-colors"
+					className="size-5 flex items-center justify-center text-text-tertiary hover:text-foreground transition-colors"
 					aria-label={t('mcp.edit', { defaultValue: '编辑' })}
 				>
 					<Pencil className="size-4" />
@@ -875,7 +875,7 @@ function McpRow({ mcp, t, onEdit, onDelete }: McpRowProps) {
 				{/* Delete button */}
 				<button
 					onClick={() => onDelete(mcp.id)}
-					className="size-5 flex items-center justify-center text-[#9CA3AF] hover:text-destructive transition-colors"
+					className="size-5 flex items-center justify-center text-text-tertiary hover:text-destructive transition-colors"
 					aria-label={t('mcp.delete', { defaultValue: '删除' })}
 				>
 					<Trash2 className="size-4" />

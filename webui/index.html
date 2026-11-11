@@ -5,6 +5,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
     <title>Pamimi Tako Bot Demo</title>
+    <script>
+      // 首帧前回放主题：没有这段，刷新会把 <html class="dark"> 甩掉、整站退回浅色。
+      // 与 src/lib/theme.ts 的 readTheme() 同一口径，改一处必须改另一处。
+      (function () {
+        try {
+          var t = localStorage.getItem('theme');
+          var dark = t === 'dark' || (t !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+          document.documentElement.classList.toggle('dark', dark);
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

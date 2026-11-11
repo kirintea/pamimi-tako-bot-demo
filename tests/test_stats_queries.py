@@ -10,7 +10,7 @@ import pytest
 
 from core.db.statements import STATEMENTS
 
-STATS_NAMES = [
+LEGACY_STATS_NAMES = [
     "stats_conv_series",
     "stats_conv_total",
     "stats_active_series",
@@ -25,6 +25,8 @@ STATS_NAMES = [
     "stats_bucket_channel_active",
     "stats_bucket_channel_new",
 ]
+FACTS_STATS_NAMES = ["stats_daily_series", "stats_daily_by_channel"]
+STATS_NAMES = LEGACY_STATS_NAMES + FACTS_STATS_NAMES
 
 
 def test_all_stats_names_registered():
@@ -55,7 +57,7 @@ def test_pg_variant_uses_quoted_identifiers(name):
 
 @pytest.mark.parametrize(
     "name",
-    [n for n in STATS_NAMES if n.endswith("_series") or n.startswith("stats_bucket_channel_")],
+    [n for n in STATS_NAMES if (n.endswith("_series") or n.startswith("stats_bucket_channel_")) and n not in FACTS_STATS_NAMES],
 )
 def test_series_variants_take_granularity_and_tz(name):
     """分桶系列：pg 用 $1=粒度 $2=时区；mysql 不用 $2（naive 墙钟无需转换）
@@ -96,3 +98,13 @@ def test_mysql_translated_sql_is_pyformat_safe(name):
             i += 2
         else:
             i += 1
+
+
+@pytest.mark.parametrize("name", FACTS_STATS_NAMES)
+def test_facts_variants_take_date_range_and_channel(name):
+    """facts 语句占位符：$1=start_date $2=end_date $3=channel（无 granularity/tz）"""
+    stmt = STATEMENTS[name]
+    pg_ph = {int(m) for m in re.findall(r"\$(\d+)", stmt.pg)}
+    mysql_ph = {int(m) for m in re.findall(r"\$(\d+)", stmt.mysql)}
+    assert pg_ph == {1, 2, 3}
+    assert mysql_ph == {1, 2, 3}

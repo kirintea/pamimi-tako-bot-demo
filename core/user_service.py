@@ -88,7 +88,9 @@ class UserService:
             channel: 用户来源渠道（web / wecom / feishu ...）
 
         Returns:
-            ``{"user_id": ..., "role": ..., "is_root": bool}``
+            ``{"user_id", "role", "is_root", "display_name", "channel"}``
+            —— display_name/channel 为规范化后的实际写入值
+            （D1：extra 不入库、不透传，端点侧仅日志）
         """
         uid = coerce_id(user_id)
         role = "root" if self.is_configured_root(uid) else "normal"
@@ -112,7 +114,13 @@ class UserService:
             except Exception as e:  # noqa: BLE001
                 logger.warning("UserService.upsert_user 失败（已忽略）: {}", e)
 
-        return {"user_id": uid, "role": role, "is_root": is_root}
+        return {
+            "user_id": uid,
+            "role": role,
+            "is_root": is_root,
+            "display_name": display_name,
+            "channel": channel,
+        }
 
     async def list_all_users(self) -> list[dict]:
         """列出所有已登记用户（root 管理视图用）

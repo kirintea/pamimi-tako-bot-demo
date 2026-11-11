@@ -1,7 +1,7 @@
 /**
  * 趋势分析 —— 三系列合并折线（Recharts，单 Y 轴）
  *
- * 蓝=使用人数 / 绿=会话数量 / 橙=对话轮次（固定映射，dataviz 校验器已过；
+ * 蓝=使用人次 / 绿=会话数量 / 橙=对话轮次（固定映射，dataviz 校验器已过；
  * 绿↔橙 CVD ΔE 6.9 落地板带，由图例 + 末端直标 + 明细表次级编码兜底）。
  * 每系列：2px 线 + ≥8px 白环数据点 + 12%→0 垂直渐变淡填充。
  * 悬停：统一竖直 cursor + tooltip 同列展示三指标。仅末端点直标数值。
@@ -22,11 +22,12 @@ import {
 } from 'recharts';
 
 import type { StatsBucket } from '@/api/stats';
+import { chart } from '@/lib/themeColors';
 
 const SERIES = [
-	{ key: 'uv', name: '使用人数', color: '#2563eb', gradId: 'grad-uv' },
-	{ key: 'sessions_active', name: '会话数量', color: '#16a34a', gradId: 'grad-sessions' },
-	{ key: 'turns', name: '对话轮次', color: '#ea580c', gradId: 'grad-turns' },
+	{ key: 'uv', name: '使用人次', color: chart.uv, gradId: 'grad-uv' },
+	{ key: 'sessions_active', name: '会话数量', color: chart.sessions, gradId: 'grad-sessions' },
+	{ key: 'turns', name: '对话轮次', color: chart.turns, gradId: 'grad-turns' },
 ] as const;
 
 type SeriesKey = (typeof SERIES)[number]['key'];
@@ -50,7 +51,7 @@ function EndLabel(props: {
 	// Number(undefined)=NaN 会让 == null 守卫失效，故用 isFinite 判坐标缺失
 	if (index !== (total ?? 0) - 1 || !Number.isFinite(x) || !Number.isFinite(y)) return null;
 	return (
-		<text x={(x as number) + 8} y={(y as number) + 4} fontSize={11} fill="#475569">
+		<text x={(x as number) + 8} y={(y as number) + 4} fontSize={11} fill={chart.tooltipMeta}>
 			{value?.toLocaleString()}
 		</text>
 	);
@@ -67,8 +68,8 @@ function ChartTooltip({
 }) {
 	if (!active || !payload?.length) return null;
 	return (
-		<div className="rounded-lg border border-[#e2e8f0] bg-white px-3.5 py-2.5 shadow-[0_4px_16px_rgba(15,23,42,0.08)]">
-			<div className="text-[12px] font-semibold text-[#0f172a]">{label}</div>
+		<div className="rounded-lg border border-stats-border bg-stats-panel px-3.5 py-2.5 shadow-[0_4px_16px_rgba(15,23,42,0.08)]">
+			<div className="text-[12px] font-semibold text-stats-title">{label}</div>
 			{SERIES.map((s) => {
 				const hit = payload.find((p) => p.dataKey === s.key);
 				return (
@@ -77,8 +78,8 @@ function ChartTooltip({
 							className="inline-block size-2.5 shrink-0 rounded-[2px]"
 							style={{ backgroundColor: s.color }}
 						/>
-						<span className="text-[#475569]">{s.name}</span>
-						<span className="ml-auto font-semibold text-[#0f172a]">
+						<span className="text-stats-meta">{s.name}</span>
+						<span className="ml-auto font-semibold text-stats-title">
 							{Number(hit?.value ?? 0).toLocaleString()}
 						</span>
 					</div>
@@ -91,9 +92,9 @@ function ChartTooltip({
 export function TrendChart({ series }: { series: StatsBucket[] }) {
 	if (series.length === 0) {
 		return (
-			<div className="rounded-xl border border-[#e2e8f0] bg-white p-5">
-				<h2 className="text-[16px] font-bold text-[#0f172a]">趋势分析</h2>
-				<div className="py-10 text-center text-[13px] text-[#94a3b8]">该区间暂无数据</div>
+			<div className="rounded-xl border border-stats-border bg-stats-panel p-5">
+				<h2 className="text-[16px] font-bold text-stats-title">趋势分析</h2>
+				<div className="py-10 text-center text-[13px] text-stats-muted">该区间暂无数据</div>
 			</div>
 		);
 	}
@@ -107,8 +108,8 @@ export function TrendChart({ series }: { series: StatsBucket[] }) {
 	const total = rows.length;
 
 	return (
-		<div className="rounded-xl border border-[#e2e8f0] bg-white p-5">
-			<h2 className="mb-3 text-[16px] font-bold text-[#0f172a]">趋势分析</h2>
+		<div className="rounded-xl border border-stats-border bg-stats-panel p-5">
+			<h2 className="mb-3 text-[16px] font-bold text-stats-title">趋势分析</h2>
 			<div className="h-[320px] w-full">
 				<ResponsiveContainer width="100%" height="100%">
 					<ComposedChart data={rows} margin={{ top: 16, right: 56, bottom: 4, left: 0 }}>
@@ -120,24 +121,24 @@ export function TrendChart({ series }: { series: StatsBucket[] }) {
 								</linearGradient>
 							))}
 						</defs>
-						<CartesianGrid stroke="#f1f5f9" vertical={false} />
+						<CartesianGrid stroke={chart.grid} vertical={false} />
 						<XAxis
 							dataKey="bucket"
 							tickFormatter={(v: string) => v.slice(5)}
-							tick={{ fill: '#94a3b8', fontSize: 11 }}
-							axisLine={{ stroke: '#cbd5e1' }}
+							tick={{ fill: chart.tick, fontSize: 11 }}
+							axisLine={{ stroke: chart.axis }}
 							tickLine={false}
 							minTickGap={28}
 						/>
 						<YAxis
-							tick={{ fill: '#94a3b8', fontSize: 11 }}
-							axisLine={{ stroke: '#cbd5e1' }}
+							tick={{ fill: chart.tick, fontSize: 11 }}
+							axisLine={{ stroke: chart.axis }}
 							tickLine={false}
 							width={44}
 						/>
 						<Tooltip
 							content={<ChartTooltip />}
-							cursor={{ stroke: '#94a3b8', strokeWidth: 1, strokeDasharray: '4 4' }}
+							cursor={{ stroke: chart.cursor, strokeWidth: 1, strokeDasharray: '4 4' }}
 						/>
 						<Legend
 							verticalAlign="top"
@@ -145,7 +146,7 @@ export function TrendChart({ series }: { series: StatsBucket[] }) {
 							iconType="circle"
 							iconSize={8}
 							formatter={(value: string) => (
-								<span className="text-[12px] text-[#475569]">{value}</span>
+								<span className="text-[12px] text-stats-meta">{value}</span>
 							)}
 						/>
 						{SERIES.map((s) => (
@@ -172,8 +173,8 @@ export function TrendChart({ series }: { series: StatsBucket[] }) {
 								stroke={s.color}
 								strokeWidth={2}
 								fill="none"
-								dot={{ r: 4, fill: s.color, stroke: '#ffffff', strokeWidth: 2 }}
-								activeDot={{ r: 5, fill: s.color, stroke: '#ffffff', strokeWidth: 2 }}
+								dot={{ r: 4, fill: s.color, stroke: chart.ring, strokeWidth: 2 }}
+								activeDot={{ r: 5, fill: s.color, stroke: chart.ring, strokeWidth: 2 }}
 								isAnimationActive={false}
 							>
 								{/* content 回调：recharts 注入的 x/y 可能是 string，统一转 number 后交给 EndLabel */}

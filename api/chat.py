@@ -25,7 +25,7 @@ from typing import AsyncGenerator
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from agentscope.event import EventType
 from agentscope.message import Msg, UserMsg
@@ -41,10 +41,14 @@ from core.multimodal import (
 from loguru import logger
 
 from core.chat_service import acquire_session_lock, session_lock_key
+from core.credentials import resolve_channel
 from core.session_status import SessionBusyError, SessionStatusTracker
 from core.token_counter import count_tokens
 from core.command import get_command_service
-from core.validators import coerce_id, coerce_id_strict, is_auth_enabled, require_user_id
+from core.validators import (
+    coerce_id, coerce_id_strict, is_auth_enabled, require_user_id,
+    validate_channel,
+)
 
 
 async def _stream_with_timeout(agen, timeout: int):
@@ -118,6 +122,48 @@ async def _authorize_session_view(
             detail="仅 root 角色可查看他人会话",
         )
 
+
+async def _authorize_session_access(
+    request: Request,
+    user_id: str,
+    session_id: str,
+) -> None:
+    """session 级端点归属校验（缺口 7，D5 方案 A：配对优先 + PG 归属 + 未知放行）。
+
+    适用：GET /sessions/{sid}/stream、POST /sessions/{sid}/interrupt、
+    GET /sessions/{sid}/status（事件总线按 session_id 单键读取/订阅，
+    关闭「知道 sid 即可订阅/打断/探测」的缺口）。
+
+    校验链：
+      ① session_exists(uid, sid) 配对命中 → 放行（本人）
+      ② 查 PG get_session_owner(sid)：owner==uid 放行；owner 为他人 →
+         viewer 为 root 放行否则 403；owner 无痕迹（None）→ 放行
+         （覆盖路线 C 首 turn 竞态：POST /chat/ 立即返回 sid、meta 尚未写入）
+      ③ PG 未配置/未初始化 → 跳过 ② 放行（dev 无库场景）
+
+    Raises:
+        HTTPException(403): 他人会话且非 root。
+        HTTPException(503): PG 归属查询异常（服务降级可区分，非拒绝）。
+    """
+    mgr = request.app.state.session_manager
+    if await mgr.session_exists(user_id, session_id):
+        return  # 本人（配对命中）
+    db = getattr(request.app.state, "database_manager", None)
+    if db is None or not getattr(db, "is_initialized", False):
+        return  # D5-A：无 PG（未配置/未初始化）跳过归属查询
+    try:
+        row = await db.fetch_named("get_session_owner", session_id)
+    except Exception:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail="会话归属校验暂不可用")
+    if row is None:
+        return  # D5-A：无任何痕迹（首 turn 竞态）放行
+    owner = row["user_id"]
+    if owner == user_id:
+        return
+    if await _resolve_viewer_role(request, user_id) == "root":
+        return  # root 越权查看放行
+    raise HTTPException(status_code=403, detail="无权访问该会话")
+
 # 追踪后台持久化任务，避免被 GC 回收（见 shutdown_persist_tasks）。
 _PERSIST_TASKS: set[asyncio.Task] = set()
 
@@ -144,6 +190,7 @@ async def _persist_conversation(
     tool_calls: list[dict] | None = None,
     turn_id: str | None = None,
     turn_rows: list[dict] | None = None,
+    channel: str = "web",
 ) -> None:
     """后台异步持久化对话历史（仅 PG 双写；Redis AgentState 已在锁内同步落库）。
 
@@ -154,7 +201,7 @@ async def _persist_conversation(
             # 写 user 消息（带 turn_id）
             await db.insert_conversation(
                 user_id, session_id, "user", user_message,
-                channel="web", turn_id=turn_id, turn_seq=0,
+                channel=channel, turn_id=turn_id, turn_seq=0,
             )
 
             if turn_rows:
@@ -164,7 +211,7 @@ async def _persist_conversation(
                         user_id, session_id,
                         row["role"], row["content"],
                         metadata=row.get("metadata"),
-                        channel="web",
+                        channel=channel,
                         turn_id=turn_id,
                         turn_seq=row["turn_seq"],
                     )
@@ -177,7 +224,7 @@ async def _persist_conversation(
                     metadata["tool_calls"] = tool_calls
                 await db.insert_conversation(
                     user_id, session_id, "assistant", assistant_reply,
-                    metadata=metadata or None, channel="web",
+                    metadata=metadata or None, channel=channel,
                 )
 
             # 自动创建/更新 sessions 记录（标题取首条用户消息前30字）
@@ -185,7 +232,9 @@ async def _persist_conversation(
             if title:
                 existing = await db.get_session_title(user_id, session_id)
                 if not existing:
-                    await db.upsert_session_title(user_id, session_id, title)
+                    await db.upsert_session_title(
+                        user_id, session_id, title, channel=channel,
+                    )
     except Exception:
         logger.exception("后台持久化失败")
 
@@ -209,6 +258,18 @@ class ChatRequest(BaseModel):
         default="unknown",
         description="设备标识（用于多端并发状态广播）",
     )
+    channel: str = Field(
+        default="web",
+        description=(
+            "渠道标识（可选，默认 web；1-16 位 [A-Za-z0-9_-]。"
+            "归因用：落 conversations.channel / users.channel / OTel span 属性）"
+        ),
+    )
+
+    @field_validator("channel")
+    @classmethod
+    def _check_channel(cls, v: str) -> str:
+        return validate_channel(v)
 
 
 # ============================================================
@@ -219,6 +280,19 @@ def _sse_event(event_type: str, data: dict | str) -> str:
     """格式化为 SSE 事件"""
     payload = json.dumps(data, ensure_ascii=False) if isinstance(data, dict) else data
     return f"event: {event_type}\ndata: {payload}\n\n"
+
+
+def _sse_from_bus_event(event: dict) -> str:
+    """总线事件 → 与 POST /chat/stream 同构的 SSE 块。
+
+    复用 _sse_event 输出 ``event: {type}\\ndata: {payload}\\n\\n``：
+    - ``type`` 移入 event: 行（data 载荷形状对齐路线 B，决策 D1）
+    - 剥离内部字段 ``_entry_id``
+    - 缺 type 时回退 ``message``
+    """
+    etype = str(event.get("type") or "message")
+    payload = {k: v for k, v in event.items() if k not in ("type", "_entry_id")}
+    return _sse_event(etype, payload)
 
 
 # ============================================================
@@ -247,6 +321,8 @@ async def chat_stream(request: Request, body: ChatRequest):
     session_id = body.session_id or str(uuid.uuid4())
     session_id = coerce_id(session_id, default=str(uuid.uuid4()))
     device_id = body.device_id or "unknown"
+    # 校验已在 ChatRequest field_validator 完成（D5→422）；凭证存在时强制覆盖（D2）
+    channel = resolve_channel(request, body.channel, logger)
 
     # 指令拦截（/new /stop /compact /help）：命中即回执，不进 LLM。
     # 放在 busy 检查之前，保证生成中也能发 /stop（D6）。
@@ -348,11 +424,14 @@ async def chat_stream(request: Request, body: ChatRequest):
                             serialize_message_for_storage(body.message),
                         )
 
-                    agent = await session_mgr.get_or_create(user_id, session_id)
+                    agent = await session_mgr.get_or_create(
+                        user_id, session_id, channel=channel,
+                    )
                     # 注入 OTel 追踪上下文（供 TracingContextMiddleware 使用）
                     agent.__tracing_context__ = {
                         "agentscope.user.id": user_id,
                         "agentscope.device.id": device_id,
+                        "agentscope.channel": channel,
                     }
                     await session_mgr.refresh_state(user_id, session_id)
                     user_msg = await build_user_msg(
@@ -523,6 +602,7 @@ async def chat_stream(request: Request, body: ChatRequest):
                 tool_calls=list(tool_call_records.values()) or None,
                 turn_id=turn_id,
                 turn_rows=turn_rows or None,
+                channel=channel,
             ))
             _PERSIST_TASKS.add(task)
             task.add_done_callback(_PERSIST_TASKS.discard)
@@ -851,6 +931,18 @@ class ChatTriggerRequest(BaseModel):
     user_id: str = Field(default="anonymous", description="用户标识")
     session_id: str | None = Field(default=None, description="会话 ID")
     device_id: str = Field(default="unknown", description="设备标识")
+    channel: str = Field(
+        default="web",
+        description=(
+            "渠道标识（可选，默认 web；1-16 位 [A-Za-z0-9_-]。"
+            "归因用：落 conversations.channel / users.channel / OTel span 属性）"
+        ),
+    )
+
+    @field_validator("channel")
+    @classmethod
+    def _check_channel(cls, v: str) -> str:
+        return validate_channel(v)
 
 
 class ChatTriggerResponse(BaseModel):
@@ -1025,6 +1117,8 @@ async def chat_trigger(request: Request, body: ChatTriggerRequest):
     session_id = body.session_id or str(uuid.uuid4())
     session_id = coerce_id(session_id, default=str(uuid.uuid4()))
     device_id = body.device_id or "unknown"
+    # 校验已在 ChatTriggerRequest field_validator 完成；凭证存在时强制覆盖（D2）
+    channel = resolve_channel(request, body.channel, logger)
 
     # 指令拦截：命中即向事件总线发布回执并返回（订阅端 SSE/WS 可见）
     if isinstance(body.message, str):
@@ -1083,6 +1177,7 @@ async def chat_trigger(request: Request, body: ChatTriggerRequest):
             user_id, session_id, body.message, db,
             device_id=device_id,
             object_storage=request.app.state.object_storage,
+            channel=channel,
         )
     )
     _PERSIST_TASKS.add(task)
@@ -1092,11 +1187,17 @@ async def chat_trigger(request: Request, body: ChatTriggerRequest):
 
 
 @router.get("/sessions/{session_id}/stream")
-async def session_event_stream(request: Request, session_id: str):
+async def session_event_stream(request: Request, session_id: str, user_id: str):
     """SSE 事件流订阅 — 实时接收 session 事件
 
-    先回放已有事件，然后订阅实时事件。
+    输出格式与 POST /chat/stream 一致（``event: {type}`` + ``data: {json}`` +
+    空行分块，见 _sse_from_bus_event）；先回放已有事件，再实时推送。
+    空闲 30s 发送 ``:`` 注释心跳（决策 D2，C 独有）。
+
+    ``user_id`` 必填（缺失 422）+ 归属校验：本人/无痕迹/root 放行，他人 403
+    （缺口 7，D4/D5）。
     """
+    await _authorize_session_access(request, user_id, session_id)
     session_id = coerce_id(session_id, default=str(uuid.uuid4()))
     from agentscope.app.message_bus import MessageBusKeys
 
@@ -1109,7 +1210,7 @@ async def session_event_stream(request: Request, session_id: str):
             events_key,
             max_count=MessageBusKeys.SESSION_REPLAY_MAX_LEN,
         ):
-            yield f"data: {json.dumps(event, ensure_ascii=False)}\n"
+            yield _sse_from_bus_event(event)
 
         # 2. 订阅实时事件
         queue: asyncio.Queue[dict | None] = asyncio.Queue()
@@ -1133,7 +1234,7 @@ async def session_event_stream(request: Request, session_id: str):
                     item = await asyncio.wait_for(queue.get(), timeout=30)
                     if item is None:
                         break
-                    yield f"data: {json.dumps(item, ensure_ascii=False)}\n"
+                    yield _sse_from_bus_event(item)
                 except asyncio.TimeoutError:
                     # 心跳
                     yield ":\n"
@@ -1167,12 +1268,16 @@ class InterruptRequest(BaseModel):
 async def interrupt_session(
     request: Request,
     session_id: str,
+    user_id: str,
     body: InterruptRequest,
 ):
-    """请求中断当前生成（任意设备可调用）
+    """请求中断当前生成（同会话任意设备可调用）
 
     生成者会在下一个事件检查点停止，所有设备收到 interrupted 事件。
+
+    ``user_id`` 必填（缺失 422）+ 归属校验（缺口 7，D4/D5）。
     """
+    await _authorize_session_access(request, user_id, session_id)
     session_id = coerce_id(session_id, default=str(uuid.uuid4()))
     status_tracker = getattr(request.app.state, "session_status_tracker", None)
     if not status_tracker:
@@ -1186,8 +1291,12 @@ async def interrupt_session(
 
 
 @router.get("/sessions/{session_id}/status")
-async def get_session_status(request: Request, session_id: str):
-    """查询会话当前状态（idle/generating/interrupting）"""
+async def get_session_status(request: Request, session_id: str, user_id: str):
+    """查询会话当前状态（idle/generating/interrupting）
+
+    ``user_id`` 必填（缺失 422）+ 归属校验（缺口 7，D4/D5）。
+    """
+    await _authorize_session_access(request, user_id, session_id)
     session_id = coerce_id(session_id, default=str(uuid.uuid4()))
     status_tracker = getattr(request.app.state, "session_status_tracker", None)
     if not status_tracker:

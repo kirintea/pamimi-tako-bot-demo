@@ -24,6 +24,7 @@ from loguru import logger
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
+from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -32,9 +33,12 @@ from api.channels import router as channels_router
 from api.images import router as images_router
 from api.mcp import router as mcp_router
 from api.observe import router as observe_router
+from api.rag_proxy import router as rag_proxy_router
 from api.skill import router as skill_router
 from api.stats import router as stats_router
+from api.admin_credentials import router as admin_credentials_router
 from api.ws_chat import router as ws_chat_router
+from api.users import router as users_router
 # from api.workspace import router as workspace_router
 # from api.webui import router as webui_router
 
@@ -104,23 +108,56 @@ def _security_headers_middleware(app):
     return middleware
 
 
-def _api_key_auth_middleware(app, *, auth_required: bool = False, api_key: str = ""):
+def _api_key_auth_middleware(app, *, auth_required: bool = False, api_key: str = "",
+                              db_provider=None):
     """全局 API-Key 鉴权（默认关闭，仅 auth_required=True 或 AUTH_REQUIRED=true 时生效）
 
     放行路径：/webui、/webui/、/health、/docs、/openapi.json、/redoc
     以及所有以 /webui/ 开头的路径。其余路径需携带正确的 X-API-Key 请求头。
 
+    /rag 与 /webui-config 一并放行：/rag/ 是 LightRAG webui 的反代入口（浏览器直接
+    打开，带不了 X-API-Key 头），其页面内 API 由反代注入 LightRAG 自己的 token 认证；
+    /webui-config 仅下发功能开关（RAG 地址或 null、auth_required），无敏感信息。
+
+    /static/vendor/swagger-ui/ 一并放行：/docs /redoc 页面（已在白名单）由浏览器
+    直接加载其 JS/CSS/favicon，带不了 X-API-Key 头；仅此子目录（本地托管的
+    swagger-ui/redoc 公开资源），不含其他 /static 文件。
+
     优先级：环境变量 AUTH_REQUIRED/API_KEY > YAML 配置 auth.required/auth.api_key。
+
+    按应用凭证（缺口 2，2026-11-11 子计划）——非主 key 走凭证表三分支：
+      主 key 命中（env > YAML）→ 放行，不注入 credential（D7 旁路）
+      db_provider 未接线 → 维持旧行为 401（单测/旧调用方；生产 create_app 恒接线）
+      DB 未初始化 / 查询异常 → 503 {"error":"CredentialStoreUnavailable"}（D3）
+      凭证表命中（status=active, cred_type=api_key）→ state["credential"] 注入 + 放行
+      凭证表未命中 → 401（同原文案）
     """
+    from core.credentials import verify_credential  # 延迟导入避免循环
+
     _PUBLIC_EXACT = {
         "/webui", "/webui/", "/health", "/docs",
         "/openapi.json", "/redoc",
+        "/webui-config", "/rag",
     }
+    _PUBLIC_PREFIX = ("/webui/", "/rag/", "/static/vendor/swagger-ui/")
+
+    _UNAUTHORIZED = {"error": "Unauthorized", "hint": "Missing or invalid X-API-Key"}
 
     async def middleware(scope, receive, send):
         if scope["type"] != "http":
             await app(scope, receive, send)
             return
+
+        async def deny(status: int, payload: dict) -> None:
+            await send({
+                "type": "http.response.start",
+                "status": status,
+                "headers": [(b"content-type", b"application/json")],
+            })
+            await send({
+                "type": "http.response.body",
+                "body": json.dumps(payload).encode("utf-8"),
+            })
 
         # 环境变量优先，YAML 配置兜底
         env_required = os.environ.get("AUTH_REQUIRED", "").lower()
@@ -136,28 +173,45 @@ def _api_key_auth_middleware(app, *, auth_required: bool = False, api_key: str =
             return
 
         path = scope.get("path", "")
-        if path in _PUBLIC_EXACT or path.startswith("/webui/"):
+        if path in _PUBLIC_EXACT or path.startswith(_PUBLIC_PREFIX):
             await app(scope, receive, send)
             return
 
         headers = {k.lower(): v for k, v in scope.get("headers", [])}
         provided = headers.get(b"x-api-key", b"").decode("latin-1")
         expected = os.environ.get("API_KEY") or api_key
+        scope.setdefault("state", {})
         if expected and provided == expected:
-            # 将已验证的 API key 存入 scope state，供下游端点使用
-            scope.setdefault("state", {})["api_key"] = provided
+            # D7 主 key 旁路：只存 api_key，不注入 credential（运维身份非应用身份）
+            scope["state"]["api_key"] = provided
             await app(scope, receive, send)
             return
 
-        body = json.dumps(
-            {"error": "Unauthorized", "hint": "Missing or invalid X-API-Key"}
-        ).encode("utf-8")
-        await send({
-            "type": "http.response.start",
-            "status": 401,
-            "headers": [(b"content-type", b"application/json")],
-        })
-        await send({"type": "http.response.body", "body": body})
+        if not provided:
+            await deny(401, _UNAUTHORIZED)
+            return
+
+        # --- 缺口 2：非主 key 走按应用凭证表 ---
+        if db_provider is None:
+            # 未接入凭证库（旧行为兼容）：错误 key 一律 401
+            await deny(401, _UNAUTHORIZED)
+            return
+        db = db_provider()
+        if db is None or not getattr(db, "is_initialized", False):
+            # D3：凭证库不可用 ≠ 凭证错误，客户端需可区分
+            await deny(503, {"error": "CredentialStoreUnavailable"})
+            return
+        try:
+            cred = await verify_credential(db, provided)
+        except Exception:
+            await deny(503, {"error": "CredentialStoreUnavailable"})
+            return
+        if cred is None:
+            await deny(401, _UNAUTHORIZED)
+            return
+        scope["state"]["credential"] = cred
+        scope["state"]["api_key"] = provided
+        await app(scope, receive, send)
 
     return middleware
 
@@ -170,6 +224,156 @@ async def _database_unavailable_handler(
         status_code=503,
         content={"detail": f"数据库不可用: {exc}"},
     )
+
+
+# ------------------------------------------------------------
+# /ws/chat 协议文档（方案 A，人工批准：.draft/2026-11-10-ws-in-openapi-docs.md）
+# OpenAPI 3.x 无 WebSocket 通道概念，@router.websocket 不会写入 schema，
+# 故在 app.openapi() 生成结果上注入伪路径；帧结构对照 api/ws_chat.py 实现。
+# ------------------------------------------------------------
+_WS_CHAT_DESCRIPTION = """WebSocket 全双工流式对话通道（替代 SSE 单向通信）。
+
+> **注意**：这是 WebSocket 升级端点，Swagger UI 的 **Try it out 不可用**（点击会发起普通 GET → **404**）。请用 WebSocket 客户端连接，例如浏览器 `new WebSocket(...)` 或 `wscat`。
+
+## 连接
+
+```
+wss://<host>/ws/chat?user_id=<uid>&session_id=<sid>&device_id=<did>&channel=<ch>
+```
+
+| Query 参数 | 必填 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| `user_id` | 认证启用时必填 | `anonymous` | 用户标识（认证启用时不允许 anonymous） |
+| `session_id` | 否 | 自动创建 UUID | 会话 ID，不传则新建 |
+| `device_id` | 否 | `unknown` | 设备标识，用于多端状态广播 |
+| `channel` | 否 | `web` | 渠道标识（连接级归因，1-16 位 `[A-Za-z0-9_-]`；非法 → `error` 帧 + close **4400**） |
+
+## 认证（AUTH_REQUIRED=true 时）
+
+连接后**首帧**必须为：
+
+```json
+{"type": "auth", "payload": {"api_key": "<API_KEY>"}}
+```
+
+否则服务端关闭连接（close code **4401**）；认证启用且 `user_id` 非法 → close code **4400**。未启用认证时忽略 `auth` 帧。
+
+连接建立后服务端先发 `connected`。
+
+## 客户端 → 服务端（入站帧）
+
+| type | payload | 说明 |
+| --- | --- | --- |
+| `auth` | `{"api_key": "..."}` | 首帧认证（见上） |
+| `chat` | `{"message": "文本或多模态数组"}` | 发起一轮对话 |
+| `cancel` | `{}` | 取消当前连接的生成任务 |
+| `interrupt` | `{}` | 多端中断请求（任意设备可发） |
+| `ping` | `{}` | 心跳，服务端回 `pong` |
+
+`message` 支持多模态（ContentPart 数组）：
+
+```json
+{"type": "chat", "payload": {"message": [
+  {"type": "text", "text": "描述"},
+  {"type": "image", "key": "<由 /images/upload 返回的对象存储 key>"}
+]}}
+```
+
+## 服务端 → 客户端（出站帧）
+
+| type | payload 字段 | 说明 |
+| --- | --- | --- |
+| `connected` | `session_id`, `user_id`, `device_id` | 连接建立确认 |
+| `pong` | — | `ping` 应答 |
+| `busy` | `owner`, `started_at`, `message` | 其他设备正在生成，本次 `chat` 被拒 |
+| `pending_reply` | `text`, `reply_status` | 重连时补发上一轮未读回复 |
+| `generation_in_progress` | `message`, `partial_text` | 重连时上一轮仍在生成 |
+| `other_device_active` | `device_id`, `message` | 其他设备正在生成的广播 |
+| `text_delta` | `delta` | 回复文本增量 |
+| `thinking_delta` | `delta` | 思考文本增量 |
+| `tool_call` | `tool_name`, `tool_call_id`, `tool_args` | 工具调用开始 |
+| `tool_result` | `tool_call_id`, `state`, `result` | 工具执行结果 |
+| `reply_end` | `text`, `finished`, `finished_reason`, `command`, `new_session_id` | 本轮结束 |
+| `interrupted` | `reason`, `session_id` | 生成被中断 |
+| `interrupt_requested` | `status` | 中断请求受理结果（`cancel_requested` / `no_active_generation`） |
+| `error` | `message` | 错误描述 |
+
+一轮对话时序：`connected` → (`thinking_delta` / `text_delta` / `tool_call` / `tool_result`)* → `reply_end`。
+"""
+
+_WS_CHAT_PATH_ITEM = {
+    "get": {
+        "tags": ["websocket"],
+        "summary": "WebSocket 流式对话",
+        "description": _WS_CHAT_DESCRIPTION,
+        "operationId": "websocket_chat",
+        # 非标准扩展：标记这是 WebSocket 升级端点（非普通 HTTP GET）
+        "x-websocket": True,
+        "parameters": [
+            {
+                "name": "user_id",
+                "in": "query",
+                "required": False,
+                "description": "用户标识（认证启用时必填，不允许 anonymous）",
+                "schema": {"type": "string", "default": "anonymous"},
+            },
+            {
+                "name": "session_id",
+                "in": "query",
+                "required": False,
+                "description": "会话 ID，不传则自动创建",
+                "schema": {"type": "string"},
+            },
+            {
+                "name": "device_id",
+                "in": "query",
+                "required": False,
+                "description": "设备标识，用于多端状态广播",
+                "schema": {"type": "string", "default": "unknown"},
+            },
+            {
+                "name": "channel",
+                "in": "query",
+                "required": False,
+                "description": "渠道标识（连接级归因，1-16 位 [A-Za-z0-9_-]；非法 → error 帧 + close 4400）",
+                "schema": {"type": "string", "default": "web"},
+            },
+        ],
+        "responses": {
+            "101": {"description": "Switching Protocols — WebSocket 升级成功"},
+        },
+    }
+}
+
+# SSE 端点 → 200 响应标注 text/event-stream（替代误导性的 application/json）
+_SSE_ANNOTATIONS = (
+    ("/chat/stream", "post"),
+    ("/sessions/{session_id}/stream", "get"),
+)
+
+# 启动时落盘的 OpenAPI schema 路径（仓库根 openapi.json，人工指令 2026-11-10）
+# HTTP/S 路由或文档改动后，重启服务即自动刷新该文件。
+_OPENAPI_DUMP_PATH = Path(__file__).resolve().parent / "openapi.json"
+
+
+def _dump_openapi_schema(schema: dict, path: Path) -> bool:
+    """把 OpenAPI schema 落盘为 JSON（UTF-8、中文不转义、内容无变化则不写）。
+
+    Args:
+        schema: 完整 OpenAPI schema（dict）
+        path: 目标文件路径
+
+    Returns:
+        bool: 是否发生写入（False = 内容无变化，跳过写入）
+
+    Raises:
+        OSError: 写入失败时抛出（由调用方决定告警策略，不得阻断启动）
+    """
+    text = json.dumps(schema, ensure_ascii=False, indent=2) + "\n"
+    if path.exists() and path.read_text(encoding="utf-8") == text:
+        return False
+    path.write_text(text, encoding="utf-8")
+    return True
 
 
 def create_app(config) -> FastAPI:
@@ -404,6 +608,10 @@ def create_app(config) -> FastAPI:
         app.state.skill_config_store = skill_config_store
         logger.info("Skill 配置存储已就绪（配置文件: {}）", skill_config_store._path)
 
+        # RAG WebUI 反代（rag.api_url 非空时启用；/rag/ → 上游 LightRAG，自动登录注入）
+        from api.rag_proxy import startup as rag_proxy_startup
+        await rag_proxy_startup(config)
+
         # 自动打开浏览器 (仅开发环境)
         if config.otel.environment == "development":
             def _open_browser():
@@ -473,6 +681,10 @@ def create_app(config) -> FastAPI:
             await message_bus.aclose()
         logger.info("消息总线已关闭")
 
+        # 关闭 RAG WebUI 反代（释放上游 HTTP 客户端）
+        from api.rag_proxy import shutdown as rag_proxy_shutdown
+        await rag_proxy_shutdown()
+
         if db_mgr.is_initialized:
             await db_mgr.shutdown()
             logger.info("数据库连接池已关闭")
@@ -486,11 +698,81 @@ def create_app(config) -> FastAPI:
     # 2. 创建 FastAPI 应用
     # ============================================================
     app = FastAPI(
-        title="Base Agent",
+        title="Pamimi Tako Bot Demo",
         description="基于 AgentScope 的对话智能体平台",
         version="0.2.1",
         lifespan=lifespan,
+        # 关闭默认 /docs /redoc：其 HTML 引用 cdn.jsdelivr.net / Google Fonts 等
+        # 外部资源，会被安全响应头中间件的 CSP（仅允许 'self'）拦截导致白屏。
+        # 改为下方自注册路由，资源本地托管于 api/static/vendor/swagger-ui/。
+        docs_url=None,
+        redoc_url=None,
     )
+
+    # ------------------------------------------------------------
+    # /docs /redoc — 本地资源版（方案 A，见 .draft/2026-11-10-docs-blank-csp.md）
+    # CSP 不放宽；升级 swagger-ui/redoc 时替换 vendor 目录内文件即可。
+    # 注意：create_app 末尾 app 会被 ASGI 中间件函数重新赋值，闭包引用的
+    # 必须是此处捕获的 FastAPI 实例属性，不能在请求时再读 app.*。
+    # ------------------------------------------------------------
+    _openapi_url = app.openapi_url
+    _app_title = app.title
+
+    @app.get("/docs", include_in_schema=False)
+    async def swagger_ui_local():
+        return get_swagger_ui_html(
+            openapi_url=_openapi_url,
+            title=f"{_app_title} - Swagger UI",
+            swagger_js_url="/static/vendor/swagger-ui/swagger-ui-bundle.js",
+            swagger_css_url="/static/vendor/swagger-ui/swagger-ui.css",
+            swagger_favicon_url="/static/vendor/swagger-ui/favicon.svg",
+        )
+
+    @app.get("/redoc", include_in_schema=False)
+    async def redoc_local():
+        return get_redoc_html(
+            openapi_url=_openapi_url,
+            title=f"{_app_title} - ReDoc",
+            redoc_js_url="/static/vendor/swagger-ui/redoc.standalone.js",
+            redoc_favicon_url="/static/vendor/swagger-ui/favicon.svg",
+            with_google_fonts=False,
+        )
+
+    # ------------------------------------------------------------
+    # OpenAPI 扩展：注入 /ws/chat 伪路径 + SSE 响应标注（方案 A）
+    # 覆写实例方法而非类方法；原 openapi() 带缓存（app.openapi_schema），
+    # 注入保持幂等，路由变化触发重新生成后会再次注入。
+    # ------------------------------------------------------------
+    _orig_openapi = app.openapi
+
+    def _openapi_with_non_http():
+        schema = _orig_openapi()
+        paths = schema.setdefault("paths", {})
+
+        # 1) WebSocket 端点（OpenAPI 无 ws 通道概念，以 get 伪路径 + x-websocket 标记）
+        if "/ws/chat" not in paths:
+            paths["/ws/chat"] = _WS_CHAT_PATH_ITEM
+
+        # 2) SSE 端点：200 响应从 application/json 改为 text/event-stream
+        for path, method in _SSE_ANNOTATIONS:
+            op = paths.get(path, {}).get(method)
+            if not op:
+                continue
+            resp = op.setdefault("responses", {}).setdefault(
+                "200", {"description": "Successful Response"}
+            )
+            content = resp.setdefault("content", {})
+            if "application/json" in content and "text/event-stream" not in content:
+                content.pop("application/json")
+                content["text/event-stream"] = {
+                    "schema": {"type": "string"},
+                    "example": "data: {\"type\":\"text_delta\",\"payload\":{\"delta\":\"...\"}}\n\n",
+                }
+                resp["description"] = "SSE 事件流（text/event-stream）"
+
+        return schema
+
+    app.openapi = _openapi_with_non_http
 
     # 数据库不可用统一转 503（未初始化/运行期故障下 /mcp /skill 等路由不抛 500）
     app.add_exception_handler(DatabaseUnavailableError, _database_unavailable_handler)
@@ -538,8 +820,11 @@ def create_app(config) -> FastAPI:
     app.include_router(mcp_router)
     app.include_router(skill_router)
     app.include_router(observe_router)
+    app.include_router(rag_proxy_router)  # /webui-config + /rag/*（LightRAG webui 反代）
+    app.include_router(admin_credentials_router)
     app.include_router(stats_router)
     app.include_router(ws_chat_router, tags=["websocket"])
+    app.include_router(users_router, tags=["users"])
 
     # app.include_router(workspace_router)
     # app.include_router(webui_router)  # WebUI 兼容层 (/webui/*)
@@ -548,9 +833,29 @@ def create_app(config) -> FastAPI:
     app.mount("/static", StaticFiles(directory=_static_dir), name="static")
 
     # ------------------------------------------------------------
+    # 启动时落盘 OpenAPI schema → 仓库根 openapi.json（人工指令 2026-11-10）
+    # 此处全部路由已注册，app.openapi()（含 /ws/chat 注入 + SSE 标注）即最终 schema；
+    # 内容无变化不重写（不扰动 git），落盘失败仅告警、不阻断启动。
+    # ------------------------------------------------------------
+    try:
+        _dumped = _dump_openapi_schema(app.openapi(), _OPENAPI_DUMP_PATH)
+        logger.info(
+            "OpenAPI schema 已{}: {}",
+            "更新" if _dumped else "同步（无变化）",
+            _OPENAPI_DUMP_PATH,
+        )
+    except Exception as _dump_err:  # noqa: BLE001
+        logger.warning("OpenAPI schema 落盘失败（不影响启动）: {}", _dump_err)
+
+    # ------------------------------------------------------------
     # 中间件（纯 ASGI 包裹，置于最终返回前）
     # 顺序：API-Key 鉴权在内，安全响应头在外（对所有响应生效，含 401）
     # ------------------------------------------------------------
+    # 在 rate_limit/CORS 包裹前捕获 FastAPI 实例——凭证校验的 db_provider
+    # 需读 app.state.database_manager（lifespan 里赋值），闭包不能引用
+    # 之后被重新赋值的中间件变量 app。
+    fastapi_app = app
+
     # 速率限制（在 auth 之前，基于 API Key 或 user_id 限流）
     from middleware.rate_limit import RateLimitMiddleware
     rl_config = getattr(config.middleware, "rate_limit", None)
@@ -565,7 +870,30 @@ def create_app(config) -> FastAPI:
         app,
         auth_required=getattr(config.auth, "required", False),
         api_key=getattr(config.auth, "api_key", ""),
+        # 惰性取值：lifespan 前（未赋值 → None）/DB 未配置（未初始化）均安全（D3 → 503）
+        db_provider=lambda: getattr(fastapi_app.state, "database_manager", None),
     )
+
+    # CORS：必须包在 auth 外层——预检 OPTIONS 不携带 X-API-Key，若 auth 在
+    # 外层会把预检 401 掉；同时保持在安全响应头内层，让预检/401/429 响应
+    # 也带上安全头（D3 顺序：安全头 → CORS → auth → rate_limit → 路由）。
+    # enabled=false（schema 默认）时整段不挂载，行为与旧版完全一致。
+    # WS 不受 CORS 管辖（浏览器 WebSocket 握手不执行 CORS 检查），无需处理。
+    _cors_cfg = getattr(config.middleware, "cors", None)
+    if _cors_cfg is not None and _cors_cfg.enabled:
+        # FastAPI 文档惯用路径；实为 starlette.middleware.cors 同一类（已验证 is 同一对象）
+        from fastapi.middleware.cors import CORSMiddleware
+
+        app = CORSMiddleware(
+            app,
+            allow_origins=_cors_cfg.allow_origins,
+            allow_methods=_cors_cfg.allow_methods,
+            allow_headers=_cors_cfg.allow_headers,
+            expose_headers=_cors_cfg.expose_headers,
+            max_age=_cors_cfg.max_age,
+            allow_credentials=_cors_cfg.allow_credentials,
+        )
+
     app = _security_headers_middleware(app)
 
     return app

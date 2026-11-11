@@ -24,6 +24,7 @@ class FakeBackend(DatabaseBackend):
         self.missing: list[str] = []
         self.insert_id: int | str = 99
         self.fetchval_result = None
+        self.fetchrow_result = None
         self.connected = False
 
     async def connect(self) -> None:
@@ -44,7 +45,7 @@ class FakeBackend(DatabaseBackend):
 
     async def fetchrow(self, sql: str, *args):
         self.executed.append((sql, args))
-        return None
+        return self.fetchrow_result
 
     async def fetchval(self, sql: str, *args):
         self.executed.append((sql, args))
@@ -61,3 +62,11 @@ class FakeBackend(DatabaseBackend):
 
     async def missing_tables(self, required: list[str]) -> list[str]:
         return list(self.missing)
+
+
+def find_executed(fake: "FakeBackend", needle: str) -> tuple[str, tuple]:
+    """按 SQL 片段取最近一次执行记录（配合写时事实插入，避免误取 stats_daily 行）"""
+    for sql, args in reversed(fake.executed):
+        if needle in sql:
+            return sql, args
+    raise AssertionError(f"未找到含 {needle!r} 的执行记录")

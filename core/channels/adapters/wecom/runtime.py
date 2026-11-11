@@ -277,9 +277,6 @@ class WecomChannel(BaseChannel):
                 sender_id = "config-file"
                 sender_name = ""
 
-            # [DEBUG] 企微用户名追踪 — 临时日志，调试完删除
-            self.logger.info("[DEBUG] wecom sender_name={!r}, sender_id={!r}, from_info={!r}", sender_name, sender_id, from_info)
-
             # 鉴权（白名单）。未通过直接丢弃，避免下载/转发开销。
             if not self.is_allowed(sender_id):
                 self.logger.debug("发送者不在白名单，忽略：{}", sender_id)

@@ -271,7 +271,13 @@ class SkillConfigStore:
         """从 JSON 文件加载配置"""
         path = Path(self._path)
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            text = path.read_text(encoding="utf-8")
+            if not text.strip():
+                # 空文件（编辑器截断/写入中断）与文件不存在同样处理：生成默认配置
+                logger.warning("SkillConfigStore: 配置文件为空，重新生成默认配置: {}", self._path)
+                await self._create_default_config()
+                return
+            data = json.loads(text)
             new_map: dict[str, SkillConfigEntry] = {}
             for d in data.get("skills", []):
                 entry = SkillConfigEntry.from_dict(d)
@@ -281,6 +287,11 @@ class SkillConfigStore:
             logger.info("SkillConfigStore: 加载 {} 条 Skill 元数据", len(new_map))
         except Exception:  # noqa: BLE001
             logger.exception("SkillConfigStore: 加载配置文件失败")
+            # 失败也同步 mtime，避免热加载轮询每 2s 重复判定"文件变更"并反复报错
+            try:
+                self._mtime = path.stat().st_mtime
+            except OSError:
+                pass
 
     async def _save_config(self) -> None:
         """将当前配置写回 JSON 文件（tmp+rename 原子替换）"""

@@ -5,6 +5,7 @@
 export const CHANNEL_LABELS: Record<string, string> = {
 	web: 'Web',
 	wecom: '企业微信',
+	napcat: 'NapCat (QQ)',
 };
 
 /** 渠道名 → 中文标签；未知渠道原样返回，空值返回空串 */

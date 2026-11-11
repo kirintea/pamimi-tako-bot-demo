@@ -26,8 +26,8 @@ from core.stats import CHANNEL_ALL, CHANNEL_LABELS, compute_stats, custom_window
 
 router = APIRouter(prefix="/admin/stats", tags=["stats"])
 
-_CSV_COLUMNS = ["日期", "使用人数", "活跃会话", "新增会话", "对话轮次"]
-_CSV_BC_COLUMNS = ["日期", "渠道", "使用人数", "活跃会话", "新增会话", "对话轮次"]
+_CSV_COLUMNS = ["日期", "使用人次", "活跃会话", "新增会话", "对话轮次"]
+_CSV_BC_COLUMNS = ["日期", "渠道", "使用人次", "活跃会话", "新增会话", "对话轮次"]
 
 
 async def _require_root_and_db(request: Request, viewer: str | None):
@@ -45,6 +45,13 @@ def _resolve_tz(db) -> str:
     """取 database.timezone（与 DatabaseManager.now() 同源），未配置时回落 Asia/Shanghai"""
     cfg = getattr(db, "_config", None)
     return getattr(cfg, "timezone", None) or "Asia/Shanghai"
+
+
+def _resolve_backend(request: Request) -> str:
+    """取 stats.backend（app.state.config），未配置回落 facts"""
+    cfg = getattr(request.app.state, "config", None)
+    stats_cfg = getattr(cfg, "stats", None)
+    return getattr(stats_cfg, "backend", "facts") or "facts"
 
 
 def _resolve_window(
@@ -88,6 +95,7 @@ async def _load(
         granularity=granularity,
         channel=channel,
         range_key=range_key,
+        backend=_resolve_backend(request),
     )
 
 

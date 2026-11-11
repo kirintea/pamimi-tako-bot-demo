@@ -266,7 +266,7 @@ export function ChannelsSettingsPage() {
 
 				{/* 添加表单 */}
 				{showAdd && (
-					<SettingsGroup className="relative mb-4 border border-border bg-[#F9FAFB] p-4">
+					<SettingsGroup className="relative mb-4 border border-border bg-canvas p-4">
 						{/* 渠道类型下拉：列出 已知可接入的全部类型 */}
 						<div className="relative">
 							<button

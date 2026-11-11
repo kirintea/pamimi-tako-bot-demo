@@ -707,4 +707,159 @@ STATEMENTS: dict[str, Statement] = {
             ORDER BY 1
         """,
     ),
+
+    # ============================================================
+    # 统计事实表查询（facts 后端；core/stats.py::_compute_stats_facts 消费）
+    # 占位符：$1=start_date $2=end_date(排他) $3=channel(NULL=全部)
+    # stat_day 已是本地 DATE，无需时区转换；周/月桶由 Python 侧归并。
+    # ============================================================
+
+    # 天粒度系列（series / totals / prev_totals）：uv/session_active 按天跨渠道去重
+    "stats_daily_series": Statement(
+        pg="""
+            SELECT "stat_day" AS "stat_day",
+                   COUNT(DISTINCT "entity_id") FILTER (WHERE "metric" = 'uv') AS "uv",
+                   COUNT(DISTINCT "entity_id") FILTER (WHERE "metric" = 'session_active') AS "sessions_active",
+                   COUNT(*) FILTER (WHERE "metric" IN ('turn', 'turn_legacy')) AS "turns",
+                   COUNT(*) FILTER (WHERE "metric" = 'session_new') AS "sessions_new"
+            FROM "stats_daily"
+            WHERE "stat_day" >= $1 AND "stat_day" < $2
+              AND ($3::text IS NULL OR "channel" = $3)
+            GROUP BY 1
+            ORDER BY 1
+        """,
+        mysql="""
+            SELECT "stat_day" AS "stat_day",
+                   COUNT(DISTINCT CASE WHEN "metric" = 'uv' THEN "entity_id" END) AS "uv",
+                   COUNT(DISTINCT CASE WHEN "metric" = 'session_active' THEN "entity_id" END) AS "sessions_active",
+                   SUM(CASE WHEN "metric" IN ('turn', 'turn_legacy') THEN 1 ELSE 0 END) AS "turns",
+                   SUM(CASE WHEN "metric" = 'session_new' THEN 1 ELSE 0 END) AS "sessions_new"
+            FROM "stats_daily"
+            WHERE "stat_day" >= $1 AND "stat_day" < $2
+              AND ($3 IS NULL OR "channel" = $3)
+            GROUP BY 1
+            ORDER BY 1
+        """,
+    ),
+
+    # 天粒度 × 渠道（series_by_channel / channels / channel_options）
+    "stats_daily_by_channel": Statement(
+        pg="""
+            SELECT "stat_day" AS "stat_day",
+                   "channel" AS "channel",
+                   COUNT(*) FILTER (WHERE "metric" = 'uv') AS "uv",
+                   COUNT(*) FILTER (WHERE "metric" = 'session_active') AS "sessions_active",
+                   COUNT(*) FILTER (WHERE "metric" IN ('turn', 'turn_legacy')) AS "turns",
+                   COUNT(*) FILTER (WHERE "metric" = 'session_new') AS "sessions_new"
+            FROM "stats_daily"
+            WHERE "stat_day" >= $1 AND "stat_day" < $2
+              AND ($3::text IS NULL OR "channel" = $3)
+            GROUP BY 1, 2
+            ORDER BY 1, 2
+        """,
+        mysql="""
+            SELECT "stat_day" AS "stat_day",
+                   "channel" AS "channel",
+                   SUM(CASE WHEN "metric" = 'uv' THEN 1 ELSE 0 END) AS "uv",
+                   SUM(CASE WHEN "metric" = 'session_active' THEN 1 ELSE 0 END) AS "sessions_active",
+                   SUM(CASE WHEN "metric" IN ('turn', 'turn_legacy') THEN 1 ELSE 0 END) AS "turns",
+                   SUM(CASE WHEN "metric" = 'session_new' THEN 1 ELSE 0 END) AS "sessions_new"
+            FROM "stats_daily"
+            WHERE "stat_day" >= $1 AND "stat_day" < $2
+              AND ($3 IS NULL OR "channel" = $3)
+            GROUP BY 1, 2
+            ORDER BY 1, 2
+        """,
+    ),
+    # ============================================================
+    # 按应用凭证（缺口 2，2026-11-11）
+    #   时间列（created_at / revoked_at）由应用侧 db.now() 生成传参，
+    #   不用 NOW()/DEFAULT——与既有时区哲学一致（DB 服务端可能跑 UTC）。
+    # ============================================================
+    "get_credential_by_hash": Statement(
+        pg="""
+            SELECT "id", "cred_type", "app_id", "channel", "scopes"
+            FROM app_credentials
+            WHERE "key_hash" = $1 AND "status" = 'active' AND "cred_type" = 'api_key'
+            LIMIT 1
+        """,
+        mysql="""
+            SELECT "id", "cred_type", "app_id", "channel", "scopes"
+            FROM app_credentials
+            WHERE "key_hash" = $1 AND "status" = 'active' AND "cred_type" = 'api_key'
+            LIMIT 1
+        """,
+    ),
+    "get_credential_by_id": Statement(
+        pg="""
+            SELECT "id", "cred_type", "key_prefix", "app_id", "channel", "scopes",
+                   "status", "description", "created_at", "revoked_at"
+            FROM app_credentials WHERE "id" = $1
+        """,
+        mysql="""
+            SELECT "id", "cred_type", "key_prefix", "app_id", "channel", "scopes",
+                   "status", "description", "created_at", "revoked_at"
+            FROM app_credentials WHERE "id" = $1
+        """,
+    ),
+    "insert_credential": Statement(
+        pg="""
+            INSERT INTO app_credentials
+                ("cred_type", "key_hash", "key_prefix", "app_id", "channel",
+                 "scopes", "status", "description", "created_at")
+            VALUES ($1, $2, $3, $4, $5, $6, 'active', $7, $8)
+            RETURNING "id"
+        """,
+        mysql="""
+            INSERT INTO app_credentials
+                ("cred_type", "key_hash", "key_prefix", "app_id", "channel",
+                 "scopes", "status", "description", "created_at")
+            VALUES ($1, $2, $3, $4, $5, $6, 'active', $7, $8)
+        """,
+        # 自增主键纯 INSERT → MySQL 走 lastrowid，无需回查
+    ),
+    "list_credentials": Statement(
+        pg="""
+            SELECT "id", "cred_type", "key_prefix", "app_id", "channel", "scopes",
+                   "status", "description", "created_at", "revoked_at"
+            FROM app_credentials ORDER BY "id" DESC
+        """,
+        mysql="""
+            SELECT "id", "cred_type", "key_prefix", "app_id", "channel", "scopes",
+                   "status", "description", "created_at", "revoked_at"
+            FROM app_credentials ORDER BY "id" DESC
+        """,
+    ),
+    # $1 = id，$2 = revoked_at（应用侧时间）；仅吊销活跃凭证
+    "revoke_credential": Statement(
+        pg="""
+            UPDATE app_credentials
+            SET "status" = 'revoked', "revoked_at" = $2
+            WHERE "id" = $1 AND "status" = 'active'
+        """,
+        mysql="""
+            UPDATE app_credentials
+            SET "status" = 'revoked', "revoked_at" = $2
+            WHERE "id" = $1 AND "status" = 'active'
+        """,
+    ),
+    # ============================================================
+    # 会话归属校验（缺口 7，2026-11-11）
+    #   sessions 优先、conversations 兜底；mysql 变体 $1 重复出现时
+    #   translate_placeholders 自动复用同一参数 → 两方言调用均只传 sid 一次
+    # ============================================================
+    "get_session_owner": Statement(
+        pg="""
+            SELECT "user_id" FROM sessions WHERE "id" = $1
+            UNION ALL
+            SELECT "user_id" FROM conversations WHERE "session_id" = $1
+            LIMIT 1
+        """,
+        mysql="""
+            SELECT "user_id" FROM sessions WHERE "id" = $1
+            UNION ALL
+            SELECT "user_id" FROM conversations WHERE "session_id" = $1
+            LIMIT 1
+        """,
+    ),
 }

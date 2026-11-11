@@ -1,0 +1,4070 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Pamimi Tako Bot Demo",
+    "description": "基于 AgentScope 的对话智能体平台",
+    "version": "0.2.1"
+  },
+  "paths": {
+    "/": {
+      "get": {
+        "summary": "Serve Frontend",
+        "description": "前端对话界面（旧版）",
+        "operationId": "serve_frontend__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/webui/{path}": {
+      "get": {
+        "summary": "Serve Webui",
+        "description": "新版 WebUI 入口",
+        "operationId": "serve_webui_webui__path__get",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Path"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/webui": {
+      "get": {
+        "summary": "Serve Webui",
+        "description": "新版 WebUI 入口",
+        "operationId": "serve_webui_webui_get",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Path"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/chat/stream": {
+      "post": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Chat Stream",
+        "description": "流式对话 — SSE 事件流\n\n事件类型：\n- text_delta     : 文本增量\n- thinking_delta : 思考增量\n- tool_call      : 工具调用开始\n- tool_result    : 工具执行结果\n- reply_end      : 回复结束\n- error          : 错误",
+        "operationId": "chat_stream_chat_stream_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "SSE 事件流（text/event-stream）",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                },
+                "example": "data: {\"type\":\"text_delta\",\"payload\":{\"delta\":\"...\"}}\n\n"
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Health",
+        "description": "健康检查 — 验证 Redis / 数据库（PostgreSQL / MySQL）连通性",
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sessions": {
+      "get": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "List Sessions",
+        "description": "列出活跃会话（仅内存中）",
+        "operationId": "list_sessions_sessions_get",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sessions/{user_id}": {
+      "get": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "List User Sessions",
+        "description": "列出指定用户的所有历史会话（从 PG 查询）\n\n返回会话元数据列表，包含标题、时间、消息数等信息。\n用于前端侧边栏展示。",
+        "operationId": "list_user_sessions_sessions__user_id__get",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sessions/{user_id}/{session_id}/messages": {
+      "get": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Get Session Messages",
+        "description": "获取会话的消息历史（从 PG 查询，支持游标分页）\n\nArgs:\n    before_id: 游标，获取此 ID 之前的消息（用于加载更多）\n    limit: 每页消息数，默认 50\n    viewer: 发起查看的用户（查询参数）；缺省视为本人。\n        非本人访问需为 root（只读查看他人会话，见方案 §8.6）。\n\n用于前端切换会话时加载聊天记录，支持滚动加载更多。",
+        "operationId": "get_session_messages_sessions__user_id___session_id__messages_get",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          },
+          {
+            "name": "before_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Before Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "viewer",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Viewer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/me": {
+      "get": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Get Me",
+        "description": "返回当前用户身份与角色（前端据此判断是否展示 root 管理视图）。\n\ndemo 阶段 user_id 由查询参数提供（与前端 localStorage 一致）；\n生产环境应改由认证 token 解析，而非客户端自报。",
+        "operationId": "get_me_me_get",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "anonymous",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/sessions": {
+      "get": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Admin List Sessions",
+        "description": "root 管理视图：列出所有用户的全部会话（跨用户查询）\n\n仅 root 可访问。``viewer`` 为查询参数，表示调用者身份\n（demo 阶段用查询参数表达调用者；生产环境应改由认证 token 解析）。\n\n优先从 PG 数据库查询（数据持久化，不会因 KV TTL 过期而丢失）；\nPG 不可用时降级到 KV 扫描（仅返回未过期的会话）。",
+        "operationId": "admin_list_sessions_admin_sessions_get",
+        "parameters": [
+          {
+            "name": "viewer",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Viewer"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 200,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sessions/{user_id}/{session_id}/delete": {
+      "post": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Soft Delete Session",
+        "description": "软删除会话（标记为 deleted，实际删除由数据部门处理）\n\n- PG: 将 conversations 表中该会话所有消息标记为 deleted\n- Redis: 清除会话状态",
+        "operationId": "soft_delete_session_sessions__user_id___session_id__delete_post",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sessions/{user_id}/{session_id}/rename": {
+      "post": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Rename Session",
+        "description": "重命名会话\n\n标题存储在 sessions 表的 config 字段中。",
+        "operationId": "rename_session_sessions__user_id___session_id__rename_post",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenameSessionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sessions/{user_id}/{session_id}/fork": {
+      "post": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Fork Session",
+        "description": "基于父会话创建分支，返回新会话信息",
+        "operationId": "fork_session_sessions__user_id___session_id__fork_post",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ForkSessionRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForkSessionResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sessions/{user_id}/{session_id}/context": {
+      "get": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Get Session Context",
+        "description": "获取会话的上下文用量信息\n\n返回当前会话的 token 估算、消息数、压缩状态等。\n用于前端上下文用量指示器。",
+        "operationId": "get_session_context_sessions__user_id___session_id__context_get",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sessions/{user_id}/{session_id}/compress": {
+      "post": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Compress Session",
+        "description": "手动触发上下文压缩\n\n调用 Agent 的 compress_context 方法，将历史消息压缩为摘要。\n压缩前会先通过 Offloader 卸载被移除的内容。",
+        "operationId": "compress_session_sessions__user_id___session_id__compress_post",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/chat/": {
+      "post": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Chat Trigger",
+        "description": "Fire-and-Forget 触发 — 立即返回，后台执行\n\n事件通过 GET /sessions/{session_id}/stream 订阅。",
+        "operationId": "chat_trigger_chat__post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatTriggerRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatTriggerResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sessions/{session_id}/stream": {
+      "get": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Session Event Stream",
+        "description": "SSE 事件流订阅 — 实时接收 session 事件\n\n输出格式与 POST /chat/stream 一致（``event: {type}`` + ``data: {json}`` +\n空行分块，见 _sse_from_bus_event）；先回放已有事件，再实时推送。\n空闲 30s 发送 ``:`` 注释心跳（决策 D2，C 独有）。\n\n``user_id`` 必填（缺失 422）+ 归属校验：本人/无痕迹/root 放行，他人 403\n（缺口 7，D4/D5）。",
+        "operationId": "session_event_stream_sessions__session_id__stream_get",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "SSE 事件流（text/event-stream）",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                },
+                "example": "data: {\"type\":\"text_delta\",\"payload\":{\"delta\":\"...\"}}\n\n"
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sessions/{session_id}/interrupt": {
+      "post": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Interrupt Session",
+        "description": "请求中断当前生成（同会话任意设备可调用）\n\n生成者会在下一个事件检查点停止，所有设备收到 interrupted 事件。\n\n``user_id`` 必填（缺失 422）+ 归属校验（缺口 7，D4/D5）。",
+        "operationId": "interrupt_session_sessions__session_id__interrupt_post",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InterruptRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sessions/{session_id}/status": {
+      "get": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Get Session Status",
+        "description": "查询会话当前状态（idle/generating/interrupting）\n\n``user_id`` 必填（缺失 422）+ 归属校验（缺口 7，D4/D5）。",
+        "operationId": "get_session_status_sessions__session_id__status_get",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/channels": {
+      "get": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "List Channels",
+        "description": "列出配置文件中的所有渠道",
+        "operationId": "list_channels_channels_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListChannelsResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Create Channel",
+        "description": "新增渠道（写入 JSON 配置文件，可选立即启用）",
+        "operationId": "create_channel_channels_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateChannelRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/channels/status": {
+      "get": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Channels Status",
+        "description": "运行态快照（来自 ChannelManager）",
+        "operationId": "channels_status_channels_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/channels/manifests": {
+      "get": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Channels Manifests",
+        "description": "渠道元数据（前端用于渲染添加表单 + 依赖可用性指示灯）。\n\n返回全量目录：已知可接入的全部渠道类型，\n无论后端是否实现适配器；backend_supported 标记后端是否已接入，\ndependencies 含运行时探测到的可用性（available）。",
+        "operationId": "channels_manifests_channels_manifests_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManifestsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/channels/{channel_id}": {
+      "get": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Get Channel",
+        "description": "获取单个渠道",
+        "operationId": "get_channel_channels__channel_id__get",
+        "parameters": [
+          {
+            "name": "channel_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Channel Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Update Channel",
+        "description": "更新渠道（写入 JSON 配置文件，热加载自动感知）",
+        "operationId": "update_channel_channels__channel_id__patch",
+        "parameters": [
+          {
+            "name": "channel_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Channel Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateChannelRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Delete Channel",
+        "description": "删除渠道（从配置文件移除 + 停止运行实例）",
+        "operationId": "delete_channel_channels__channel_id__delete",
+        "parameters": [
+          {
+            "name": "channel_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Channel Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/channels/{channel_id}/start": {
+      "post": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Start Channel",
+        "description": "热启动单个渠道（启用配置 + 连接）",
+        "operationId": "start_channel_channels__channel_id__start_post",
+        "parameters": [
+          {
+            "name": "channel_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Channel Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/channels/{channel_id}/stop": {
+      "post": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Stop Channel",
+        "description": "热停止单个渠道（禁用配置 + 断开）",
+        "operationId": "stop_channel_channels__channel_id__stop_post",
+        "parameters": [
+          {
+            "name": "channel_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Channel Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/images/upload": {
+      "post": {
+        "tags": [
+          "images"
+        ],
+        "summary": "Request Upload",
+        "description": "请求图片上传凭证\n\nSaaS 模式：返回 presigned PUT URL，前端直传存储服务。\n本地模式：返回后端代理 URL，前端 POST 文件到后端。",
+        "operationId": "request_upload_images_upload_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UploadRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/images/{key}/url": {
+      "get": {
+        "tags": [
+          "images"
+        ],
+        "summary": "Get Image Access Url",
+        "description": "获取图片访问 URL（历史消息加载用）",
+        "operationId": "get_image_access_url_images__key__url_get",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/images/upload/{key}": {
+      "put": {
+        "tags": [
+          "images"
+        ],
+        "summary": "Proxy Upload",
+        "description": "本地存储模式的代理上传（前端 POST 文件到后端写磁盘）\n\n仅 backend=local 时使用。S3/OSS 模式下前端直接 PUT 到 presigned URL。",
+        "operationId": "proxy_upload_images_upload__key__put",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_proxy_upload_images_upload__key__put"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/images/files/{key}": {
+      "get": {
+        "tags": [
+          "images"
+        ],
+        "summary": "Serve Local Image",
+        "description": "本地存储模式的静态文件访问\n\n仅 backend=local 时使用。S3/OSS 模式下前端直接访问 presigned GET URL。",
+        "operationId": "serve_local_image_images_files__key__get",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mcp": {
+      "get": {
+        "tags": [
+          "mcp"
+        ],
+        "summary": "List Mcps",
+        "description": "列出已安装 MCP",
+        "operationId": "list_mcps_mcp_get",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "anonymous",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListMCPsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "mcp"
+        ],
+        "summary": "Create Mcp",
+        "description": "添加 MCP",
+        "operationId": "create_mcp_mcp_post",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "anonymous",
+              "title": "User Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateMCPRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MCPResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mcp/{mcp_id}": {
+      "patch": {
+        "tags": [
+          "mcp"
+        ],
+        "summary": "Update Mcp",
+        "description": "更新 MCP",
+        "operationId": "update_mcp_mcp__mcp_id__patch",
+        "parameters": [
+          {
+            "name": "mcp_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Mcp Id"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "anonymous",
+              "title": "User Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateMCPRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MCPResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "mcp"
+        ],
+        "summary": "Delete Mcp",
+        "description": "删除 MCP",
+        "operationId": "delete_mcp_mcp__mcp_id__delete",
+        "parameters": [
+          {
+            "name": "mcp_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Mcp Id"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "anonymous",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/skill": {
+      "get": {
+        "tags": [
+          "skill"
+        ],
+        "summary": "List Skills",
+        "description": "列出已安装 Skill",
+        "operationId": "list_skills_skill_get",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "anonymous",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListSkillsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "skill"
+        ],
+        "summary": "Create Skill",
+        "description": "添加 Skill\n\n重要：同时在 agent_space/skills/ 目录下创建实际的 SKILL.md 文件，\n因为该目录是运行时加载的真相源。",
+        "operationId": "create_skill_skill_post",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "anonymous",
+              "title": "User Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSkillRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/skill/{skill_id}": {
+      "get": {
+        "tags": [
+          "skill"
+        ],
+        "summary": "Get Skill",
+        "description": "获取单个 Skill",
+        "operationId": "get_skill_skill__skill_id__get",
+        "parameters": [
+          {
+            "name": "skill_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Skill Id"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "anonymous",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "skill"
+        ],
+        "summary": "Update Skill",
+        "description": "更新 Skill",
+        "operationId": "update_skill_skill__skill_id__patch",
+        "parameters": [
+          {
+            "name": "skill_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Skill Id"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "anonymous",
+              "title": "User Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateSkillRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "skill"
+        ],
+        "summary": "Delete Skill",
+        "description": "删除 Skill\n\n同时删除 agent_space/skills/ 目录下的实际 SKILL.md 文件。",
+        "operationId": "delete_skill_skill__skill_id__delete",
+        "parameters": [
+          {
+            "name": "skill_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Skill Id"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "anonymous",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/observe/sessions/{user_id}/{session_id}/turns": {
+      "get": {
+        "tags": [
+          "observe"
+        ],
+        "summary": "Observe Turns",
+        "description": "会话轮次 + 节点树（root 专属）\n\nArgs:\n    user_id: 会话所属用户\n    session_id: 会话 ID\n    viewer: 发起查看的用户（查询参数，同现有约定；缺省无角色 → 403）\n    limit: 返回最近 N 轮\n\nReturns:\n    {\"user_id\", \"session_id\", \"channel\", \"turns\": [...]}",
+        "operationId": "observe_turns_admin_observe_sessions__user_id___session_id__turns_get",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          },
+          {
+            "name": "viewer",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Viewer"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Observe Turns Admin Observe Sessions  User Id   Session Id  Turns Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/webui-config": {
+      "get": {
+        "summary": "Webui Config",
+        "description": "前端功能开关下发\n\n- rag_url: 反代入口，null 时前端显示占位提示\n- auth_required: AUTH 是否开启（is_auth_enabled：env AUTH_REQUIRED > YAML\n  auth.required）——setup 页据此把 API Key 从「可选」改必填强校验（D9）",
+        "operationId": "webui_config_webui_config_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/rag": {
+      "get": {
+        "summary": "Rag Root Redirect",
+        "operationId": "rag_root_redirect_rag_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/rag/{path}": {
+      "put": {
+        "summary": "Rag Proxy",
+        "description": "反代 /rag/* → 上游 RAG 服务（API 注入 token，静态资源透传）",
+        "operationId": "rag_proxy_rag__path__put",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Path"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "options": {
+        "summary": "Rag Proxy",
+        "description": "反代 /rag/* → 上游 RAG 服务（API 注入 token，静态资源透传）",
+        "operationId": "rag_proxy_rag__path__put",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Path"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Rag Proxy",
+        "description": "反代 /rag/* → 上游 RAG 服务（API 注入 token，静态资源透传）",
+        "operationId": "rag_proxy_rag__path__put",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Path"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "head": {
+        "summary": "Rag Proxy",
+        "description": "反代 /rag/* → 上游 RAG 服务（API 注入 token，静态资源透传）",
+        "operationId": "rag_proxy_rag__path__put",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Path"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Rag Proxy",
+        "description": "反代 /rag/* → 上游 RAG 服务（API 注入 token，静态资源透传）",
+        "operationId": "rag_proxy_rag__path__put",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Path"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "Rag Proxy",
+        "description": "反代 /rag/* → 上游 RAG 服务（API 注入 token，静态资源透传）",
+        "operationId": "rag_proxy_rag__path__put",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Path"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "summary": "Rag Proxy",
+        "description": "反代 /rag/* → 上游 RAG 服务（API 注入 token，静态资源透传）",
+        "operationId": "rag_proxy_rag__path__put",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Path"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/credentials": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Create Credential",
+        "operationId": "create_credential_admin_credentials_post",
+        "parameters": [
+          {
+            "name": "viewer",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Viewer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CredentialCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "List Credentials",
+        "operationId": "list_credentials_admin_credentials_get",
+        "parameters": [
+          {
+            "name": "viewer",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Viewer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/credentials/{cred_id}/revoke": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Revoke Credential",
+        "operationId": "revoke_credential_admin_credentials__cred_id__revoke_post",
+        "parameters": [
+          {
+            "name": "cred_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cred Id"
+            }
+          },
+          {
+            "name": "viewer",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Viewer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/stats": {
+      "get": {
+        "tags": [
+          "stats"
+        ],
+        "summary": "Stats Overview",
+        "description": "看板概览（root 专属）\n\nArgs:\n    viewer: 调用者身份（查询参数，同现有约定；缺省无角色 → 403）\n    stat_range: 时间窗 7d / 30d / 90d（URL 参数名 range；与 start/end 互斥）\n    start/end: 自定义区间 YYYY-MM-DD（含首尾，1–366 天；与 range 互斥）\n    granularity: 分桶粒度 day / week / month（缺省 day，前端已锁按天）\n    channel: 渠道过滤，缺省 / 'all' = 全部",
+        "operationId": "stats_overview_admin_stats_get",
+        "parameters": [
+          {
+            "name": "viewer",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Viewer"
+            }
+          },
+          {
+            "name": "range",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^(7d|30d|90d)$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Range"
+            }
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Start"
+            }
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "End"
+            }
+          },
+          {
+            "name": "granularity",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^(day|week|month)$",
+              "default": "day",
+              "title": "Granularity"
+            }
+          },
+          {
+            "name": "channel",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 64
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Channel"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Stats Overview Admin Stats Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/stats/export.csv": {
+      "get": {
+        "tags": [
+          "stats"
+        ],
+        "summary": "Stats Export Csv",
+        "description": "两段式明细 CSV 导出（UTF-8 带 BOM，Excel 打开中文不乱码）\n\n第一段按天汇总，空行后第二段按天×渠道（渠道列取 CHANNEL_LABELS 兜底显示名）。",
+        "operationId": "stats_export_csv_admin_stats_export_csv_get",
+        "parameters": [
+          {
+            "name": "viewer",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Viewer"
+            }
+          },
+          {
+            "name": "range",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^(7d|30d|90d)$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Range"
+            }
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Start"
+            }
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "End"
+            }
+          },
+          {
+            "name": "granularity",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^(day|week|month)$",
+              "default": "day",
+              "title": "Granularity"
+            }
+          },
+          {
+            "name": "channel",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 64
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Channel"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users": {
+      "post": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Upsert User",
+        "description": "创建/更新用户信息（按 user_id 幂等 upsert）\n\n- 400: user_id 格式非法\n- 422: 缺 user_id / channel 非法 / extra 非对象（pydantic）\n- 503: 数据库未配置 或 user_service 未装配\n- 入参 ``user_name`` 映射为服务层 ``display_name``（后端语义；\n  响应回显字段名保持 ``display_name``）",
+        "operationId": "upsert_user_users_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserUpsertRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Upsert User Users Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ws/chat": {
+      "get": {
+        "tags": [
+          "websocket"
+        ],
+        "summary": "WebSocket 流式对话",
+        "description": "WebSocket 全双工流式对话通道（替代 SSE 单向通信）。\n\n> **注意**：这是 WebSocket 升级端点，Swagger UI 的 **Try it out 不可用**（点击会发起普通 GET → **404**）。请用 WebSocket 客户端连接，例如浏览器 `new WebSocket(...)` 或 `wscat`。\n\n## 连接\n\n```\nwss://<host>/ws/chat?user_id=<uid>&session_id=<sid>&device_id=<did>&channel=<ch>\n```\n\n| Query 参数 | 必填 | 默认 | 说明 |\n| --- | --- | --- | --- |\n| `user_id` | 认证启用时必填 | `anonymous` | 用户标识（认证启用时不允许 anonymous） |\n| `session_id` | 否 | 自动创建 UUID | 会话 ID，不传则新建 |\n| `device_id` | 否 | `unknown` | 设备标识，用于多端状态广播 |\n| `channel` | 否 | `web` | 渠道标识（连接级归因，1-16 位 `[A-Za-z0-9_-]`；非法 → `error` 帧 + close **4400**） |\n\n## 认证（AUTH_REQUIRED=true 时）\n\n连接后**首帧**必须为：\n\n```json\n{\"type\": \"auth\", \"payload\": {\"api_key\": \"<API_KEY>\"}}\n```\n\n否则服务端关闭连接（close code **4401**）；认证启用且 `user_id` 非法 → close code **4400**。未启用认证时忽略 `auth` 帧。\n\n连接建立后服务端先发 `connected`。\n\n## 客户端 → 服务端（入站帧）\n\n| type | payload | 说明 |\n| --- | --- | --- |\n| `auth` | `{\"api_key\": \"...\"}` | 首帧认证（见上） |\n| `chat` | `{\"message\": \"文本或多模态数组\"}` | 发起一轮对话 |\n| `cancel` | `{}` | 取消当前连接的生成任务 |\n| `interrupt` | `{}` | 多端中断请求（任意设备可发） |\n| `ping` | `{}` | 心跳，服务端回 `pong` |\n\n`message` 支持多模态（ContentPart 数组）：\n\n```json\n{\"type\": \"chat\", \"payload\": {\"message\": [\n  {\"type\": \"text\", \"text\": \"描述\"},\n  {\"type\": \"image\", \"key\": \"<由 /images/upload 返回的对象存储 key>\"}\n]}}\n```\n\n## 服务端 → 客户端（出站帧）\n\n| type | payload 字段 | 说明 |\n| --- | --- | --- |\n| `connected` | `session_id`, `user_id`, `device_id` | 连接建立确认 |\n| `pong` | — | `ping` 应答 |\n| `busy` | `owner`, `started_at`, `message` | 其他设备正在生成，本次 `chat` 被拒 |\n| `pending_reply` | `text`, `reply_status` | 重连时补发上一轮未读回复 |\n| `generation_in_progress` | `message`, `partial_text` | 重连时上一轮仍在生成 |\n| `other_device_active` | `device_id`, `message` | 其他设备正在生成的广播 |\n| `text_delta` | `delta` | 回复文本增量 |\n| `thinking_delta` | `delta` | 思考文本增量 |\n| `tool_call` | `tool_name`, `tool_call_id`, `tool_args` | 工具调用开始 |\n| `tool_result` | `tool_call_id`, `state`, `result` | 工具执行结果 |\n| `reply_end` | `text`, `finished`, `finished_reason`, `command`, `new_session_id` | 本轮结束 |\n| `interrupted` | `reason`, `session_id` | 生成被中断 |\n| `interrupt_requested` | `status` | 中断请求受理结果（`cancel_requested` / `no_active_generation`） |\n| `error` | `message` | 错误描述 |\n\n一轮对话时序：`connected` → (`thinking_delta` / `text_delta` / `tool_call` / `tool_result`)* → `reply_end`。\n",
+        "operationId": "websocket_chat",
+        "x-websocket": true,
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": false,
+            "description": "用户标识（认证启用时必填，不允许 anonymous）",
+            "schema": {
+              "type": "string",
+              "default": "anonymous"
+            }
+          },
+          {
+            "name": "session_id",
+            "in": "query",
+            "required": false,
+            "description": "会话 ID，不传则自动创建",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "device_id",
+            "in": "query",
+            "required": false,
+            "description": "设备标识，用于多端状态广播",
+            "schema": {
+              "type": "string",
+              "default": "unknown"
+            }
+          },
+          {
+            "name": "channel",
+            "in": "query",
+            "required": false,
+            "description": "渠道标识（连接级归因，1-16 位 [A-Za-z0-9_-]；非法 → error 帧 + close 4400）",
+            "schema": {
+              "type": "string",
+              "default": "web"
+            }
+          }
+        ],
+        "responses": {
+          "101": {
+            "description": "Switching Protocols — WebSocket 升级成功"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ActionResponse": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok",
+            "default": true
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "title": "ActionResponse",
+        "description": "通用操作结果（含提示）"
+      },
+      "Body_proxy_upload_images_upload__key__put": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_proxy_upload_images_upload__key__put"
+      },
+      "ChannelConfigRequest": {
+        "properties": {
+          "bot_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bot Id",
+            "description": "企微 Bot ID"
+          },
+          "secret": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Secret",
+            "description": "企微 Secret"
+          },
+          "allow_from": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allow From",
+            "description": "发送者白名单"
+          },
+          "welcome_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Welcome Message",
+            "description": "欢迎语"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "ChannelConfigRequest",
+        "description": "渠道配置（创建/局部更新共用；字段均可选）\n\nextra=\"allow\"：本模型只显式声明了企微字段，其余类型（如 napcat 的\nws_url/access_token/group_policy 等）经 WebUI 通用表单提交时必须原样\n保留——Pydantic 默认忽略未知键，会把 napcat 配置静默剥离成空 dict。"
+      },
+      "ChannelResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "stopped"
+          },
+          "config": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Config"
+          },
+          "session_idle_hours": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Idle Hours",
+            "description": "会话空闲自动新开阈值（小时），None=默认 24"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "type",
+          "enabled"
+        ],
+        "title": "ChannelResponse",
+        "description": "渠道响应"
+      },
+      "ChatRequest": {
+        "properties": {
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "items": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/TextContent"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ImageContent"
+                    }
+                  ]
+                },
+                "type": "array"
+              }
+            ],
+            "title": "Message",
+            "description": "用户消息内容"
+          },
+          "user_id": {
+            "type": "string",
+            "title": "User Id",
+            "description": "用户标识（区分不同用户）",
+            "default": "anonymous"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id",
+            "description": "会话 ID（不传则自动创建新会话）"
+          },
+          "device_id": {
+            "type": "string",
+            "title": "Device Id",
+            "description": "设备标识（用于多端并发状态广播）",
+            "default": "unknown"
+          },
+          "channel": {
+            "type": "string",
+            "title": "Channel",
+            "description": "渠道标识（可选，默认 web；1-16 位 [A-Za-z0-9_-]。归因用：落 conversations.channel / users.channel / OTel span 属性）",
+            "default": "web"
+          }
+        },
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "title": "ChatRequest",
+        "description": "对话请求 — 向后兼容纯字符串"
+      },
+      "ChatTriggerRequest": {
+        "properties": {
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "items": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/TextContent"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ImageContent"
+                    }
+                  ]
+                },
+                "type": "array"
+              }
+            ],
+            "title": "Message",
+            "description": "用户消息内容"
+          },
+          "user_id": {
+            "type": "string",
+            "title": "User Id",
+            "description": "用户标识",
+            "default": "anonymous"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id",
+            "description": "会话 ID"
+          },
+          "device_id": {
+            "type": "string",
+            "title": "Device Id",
+            "description": "设备标识",
+            "default": "unknown"
+          },
+          "channel": {
+            "type": "string",
+            "title": "Channel",
+            "description": "渠道标识（可选，默认 web；1-16 位 [A-Za-z0-9_-]。归因用：落 conversations.channel / users.channel / OTel span 属性）",
+            "default": "web"
+          }
+        },
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "title": "ChatTriggerRequest",
+        "description": "Fire-and-Forget 触发请求"
+      },
+      "ChatTriggerResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "状态: started | command"
+          },
+          "session_id": {
+            "type": "string",
+            "title": "Session Id",
+            "description": "会话 ID"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "session_id"
+        ],
+        "title": "ChatTriggerResponse",
+        "description": "Fire-and-Forget 触发响应"
+      },
+      "CreateChannelRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "渠道名称（同一配置文件唯一）"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type",
+            "description": "渠道类型",
+            "default": "wecom"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "description": "创建后是否立即启用并启动",
+            "default": false
+          },
+          "config": {
+            "$ref": "#/components/schemas/ChannelConfigRequest"
+          },
+          "session_idle_hours": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Idle Hours",
+            "description": "会话空闲自动新开阈值（小时）：未配置=默认 24，<=0=禁用"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "CreateChannelRequest",
+        "description": "新增渠道请求"
+      },
+      "CreateMCPRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "MCP 名称（唯一）"
+          },
+          "transport": {
+            "type": "string",
+            "title": "Transport",
+            "description": "传输方式: stdio / http / streamable_http",
+            "default": "stdio"
+          },
+          "command": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Command",
+            "description": "stdio 命令"
+          },
+          "args": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Args",
+            "description": "stdio 参数"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url",
+            "description": "HTTP MCP 地址"
+          },
+          "headers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Headers",
+            "description": "HTTP 请求头"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name",
+            "description": "显示名称"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "description": "描述",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "CreateMCPRequest",
+        "description": "添加 MCP 请求"
+      },
+      "CreateSkillRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "Skill 名称（唯一）"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name",
+            "description": "显示名称"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "description": "描述",
+            "default": ""
+          },
+          "markdown": {
+            "type": "string",
+            "title": "Markdown",
+            "description": "SKILL.md 内容",
+            "default": ""
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags",
+            "description": "标签"
+          },
+          "author": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author",
+            "description": "作者"
+          },
+          "files": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Files",
+            "description": "额外文件映射（文件路径 → 内容），用于压缩包上传"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "CreateSkillRequest",
+        "description": "添加 Skill 请求"
+      },
+      "CredentialCreate": {
+        "properties": {
+          "app_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "App Id"
+          },
+          "channel": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,16}$",
+            "title": "Channel"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "cred_type": {
+            "type": "string",
+            "maxLength": 16,
+            "title": "Cred Type",
+            "default": "api_key"
+          },
+          "scopes": {
+            "type": "string",
+            "maxLength": 255,
+            "title": "Scopes",
+            "default": "chat"
+          },
+          "key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Key"
+          }
+        },
+        "type": "object",
+        "required": [
+          "app_id",
+          "channel"
+        ],
+        "title": "CredentialCreate"
+      },
+      "ForkSessionRequest": {
+        "properties": {
+          "branch_after_message_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch After Message Id",
+            "description": "中途 fork 的截断点消息 ID（包含该消息）；None 表示复制全部历史"
+          }
+        },
+        "type": "object",
+        "title": "ForkSessionRequest",
+        "description": "会话分支请求"
+      },
+      "ForkSessionResponse": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id",
+            "description": "新创建的子会话 ID"
+          },
+          "parent_session_id": {
+            "type": "string",
+            "title": "Parent Session Id",
+            "description": "父会话 ID"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "description": "子会话标题"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id",
+          "parent_session_id",
+          "title"
+        ],
+        "title": "ForkSessionResponse",
+        "description": "会话分支响应"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "ImageContent": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "image",
+            "title": "Type",
+            "default": "image"
+          },
+          "key": {
+            "type": "string",
+            "title": "Key",
+            "description": "对象存储 key（由 /images/upload 返回）"
+          }
+        },
+        "type": "object",
+        "required": [
+          "key"
+        ],
+        "title": "ImageContent",
+        "description": "图片内容"
+      },
+      "InterruptRequest": {
+        "properties": {
+          "device_id": {
+            "type": "string",
+            "title": "Device Id",
+            "description": "发起中断的设备标识",
+            "default": "unknown"
+          }
+        },
+        "type": "object",
+        "title": "InterruptRequest",
+        "description": "中断请求"
+      },
+      "ListChannelsResponse": {
+        "properties": {
+          "channels": {
+            "items": {
+              "$ref": "#/components/schemas/ChannelResponse"
+            },
+            "type": "array",
+            "title": "Channels"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          }
+        },
+        "type": "object",
+        "required": [
+          "channels",
+          "total"
+        ],
+        "title": "ListChannelsResponse",
+        "description": "渠道列表响应"
+      },
+      "ListMCPsResponse": {
+        "properties": {
+          "mcps": {
+            "items": {
+              "$ref": "#/components/schemas/MCPResponse"
+            },
+            "type": "array",
+            "title": "Mcps"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          }
+        },
+        "type": "object",
+        "required": [
+          "mcps",
+          "total"
+        ],
+        "title": "ListMCPsResponse",
+        "description": "MCP 列表响应"
+      },
+      "ListSkillsResponse": {
+        "properties": {
+          "skills": {
+            "items": {
+              "$ref": "#/components/schemas/SkillResponse"
+            },
+            "type": "array",
+            "title": "Skills"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          }
+        },
+        "type": "object",
+        "required": [
+          "skills",
+          "total"
+        ],
+        "title": "ListSkillsResponse",
+        "description": "Skill 列表响应"
+      },
+      "MCPResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "user_id": {
+            "type": "string",
+            "title": "User Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "transport": {
+            "type": "string",
+            "title": "Transport"
+          },
+          "command": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Command"
+          },
+          "args": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Args"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          },
+          "headers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Headers"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note",
+            "description": "操作提示：MCP 变更后已有会话不会自动重载，需新开会话生效"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "user_id",
+          "name",
+          "transport",
+          "command",
+          "args",
+          "url",
+          "headers",
+          "display_name",
+          "description",
+          "enabled",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "MCPResponse",
+        "description": "MCP 响应"
+      },
+      "ManifestsResponse": {
+        "properties": {
+          "manifests": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Manifests"
+          }
+        },
+        "type": "object",
+        "title": "ManifestsResponse",
+        "description": "渠道清单响应"
+      },
+      "RenameSessionRequest": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 100,
+            "title": "Title",
+            "description": "新会话标题"
+          }
+        },
+        "type": "object",
+        "required": [
+          "title"
+        ],
+        "title": "RenameSessionRequest",
+        "description": "重命名会话请求"
+      },
+      "SkillResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "user_id": {
+            "type": "string",
+            "title": "User Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags"
+          },
+          "author": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "user_id",
+          "name",
+          "display_name",
+          "description",
+          "tags",
+          "author",
+          "enabled",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "SkillResponse",
+        "description": "Skill 响应（不含 markdown，运行时从文件读取）"
+      },
+      "StatusResponse": {
+        "properties": {
+          "runtime": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Runtime"
+          }
+        },
+        "type": "object",
+        "title": "StatusResponse",
+        "description": "运行态响应"
+      },
+      "TextContent": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "text",
+            "title": "Type",
+            "default": "text"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "title": "TextContent",
+        "description": "文本内容"
+      },
+      "UpdateChannelRequest": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name",
+            "description": "新名称"
+          },
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled",
+            "description": "启用/禁用（触发热切换）"
+          },
+          "config": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ChannelConfigRequest"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "配置覆盖"
+          },
+          "session_idle_hours": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Idle Hours",
+            "description": "会话空闲自动新开阈值（小时）：未配置=默认 24，<=0=禁用"
+          }
+        },
+        "type": "object",
+        "title": "UpdateChannelRequest",
+        "description": "更新渠道请求"
+      },
+      "UpdateMCPRequest": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name",
+            "description": "新名称（改名）"
+          },
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled",
+            "description": "启用/禁用"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name",
+            "description": "显示名称"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description",
+            "description": "描述"
+          }
+        },
+        "type": "object",
+        "title": "UpdateMCPRequest",
+        "description": "更新 MCP 请求"
+      },
+      "UpdateSkillRequest": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name",
+            "description": "新名称（改名）"
+          },
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled",
+            "description": "启用/禁用"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name",
+            "description": "显示名称"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description",
+            "description": "描述"
+          }
+        },
+        "type": "object",
+        "title": "UpdateSkillRequest",
+        "description": "更新 Skill 请求"
+      },
+      "UploadRequest": {
+        "properties": {
+          "filename": {
+            "type": "string",
+            "title": "Filename",
+            "description": "文件名"
+          },
+          "content_type": {
+            "type": "string",
+            "title": "Content Type",
+            "description": "MIME 类型"
+          },
+          "size": {
+            "type": "integer",
+            "title": "Size",
+            "description": "文件大小（字节）"
+          }
+        },
+        "type": "object",
+        "required": [
+          "filename",
+          "content_type",
+          "size"
+        ],
+        "title": "UploadRequest",
+        "description": "上传凭证请求"
+      },
+      "UploadResponse": {
+        "properties": {
+          "upload_url": {
+            "type": "string",
+            "title": "Upload Url",
+            "description": "上传地址（presigned URL 或代理接口）"
+          },
+          "key": {
+            "type": "string",
+            "title": "Key",
+            "description": "对象 key"
+          },
+          "expires_in": {
+            "type": "integer",
+            "title": "Expires In",
+            "description": "有效期（秒）"
+          },
+          "headers": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Headers",
+            "description": "上传时的额外 headers"
+          }
+        },
+        "type": "object",
+        "required": [
+          "upload_url",
+          "key",
+          "expires_in"
+        ],
+        "title": "UploadResponse",
+        "description": "上传凭证响应"
+      },
+      "UserUpsertRequest": {
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "title": "User Id",
+            "description": "用户标识（^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$）"
+          },
+          "channel": {
+            "type": "string",
+            "title": "Channel",
+            "description": "来源渠道（1-16 位 [A-Za-z0-9_-]，落 users.channel）",
+            "default": "web"
+          },
+          "user_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Name",
+            "description": "用户名称（可选；strip 后 ≤128 字符，超长截断）；入参名 user_name，端点内映射为服务层 display_name（后端语义）"
+          },
+          "extra": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extra",
+            "description": "任意补充 JSON 对象（多个可补充字段统一放此）；D1 决策：仅日志记录，暂不入库"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_id"
+        ],
+        "title": "UserUpsertRequest",
+        "description": "用户信息上报请求 — user_id 必填，其余可选可补充"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}

@@ -19,7 +19,7 @@
 # ── 链路追踪（可选，开发默认关闭）────────────────────────────
 # 把每次 LLM 调用 / 工具调用串成一条链路，方便排查。用 Jaeger/Collector 时再开。
 otel:
-  enabled: false                 # false = 不追踪
+  enabled: true                 # false = 不追踪
   endpoint: "${OTEL_ENDPOINT:-http://localhost:4317}"   # OTLP gRPC 上报地址
   service_name: "pamimi-tako-bot-demo"
   service_version: "0.2.1"
@@ -44,7 +44,7 @@ llm:
   base_url: "${LLM_BASE_URL}"
   model: "${LLM_MODEL_NAME:-qwen-max}"
   stream: true                   # 默认流式输出
-  context_size: 128000           # 模型上下文窗口（token），超过触发压缩
+  context_size: 256000           # 模型上下文窗口（token），超过触发压缩
   max_tokens: 4096               # 单次回复最大 token
   temperature: 0.7               # 采样温度：越高越发散，越低越刻板
 
@@ -59,7 +59,7 @@ auth:
 server:
   host: "0.0.0.0"
   port: 8090
-  workers: 1
+  workers: 3
   log_level: "DEBUG"
   log_dir: "logs"
   log_backup_count: 7
@@ -163,7 +163,7 @@ redis:
 kv:
   # 当前硬编码 jsonl（本地无 Redis 开发）。此时 .env 的 KV_BACKEND 不生效；
   # 要改回「按环境变量切换」，注释掉本行、放开下面 ${KV_BACKEND:-redis} 那行。
-  backend: "jsonl"               # redis / jsonl
+  backend: "${KV_BACKEND:-redis}"               # redis / jsonl
   # backend: "${KV_BACKEND:-redis}"
   jsonl_path: "${KV_JSONL_PATH:-workspaces/.history/kv_data}"
   jsonl_compact_threshold: 5000   # 追加行数达此阈值时压缩重写文件
@@ -240,3 +240,22 @@ image:
     - "image/gif"
     - "image/webp"
   presigned_url_ttl: 300         # 图片临时访问链接有效期（秒）
+
+# ── RAG 知识库（LightRAG webui 反代）───────────────────────
+# api_url 非空即启用：侧边栏「知识库 RAG」入口跳本站 /rag/（新标签），
+# 由后端反代上游 LightRAG webui 并用下面的账号自动登录（用户无需输密码）。
+# api_url 留空则不启用，前端显示「即将支持，规划中」占位提示。
+# ⚠ 上游地址与登录凭据属敏感信息（内网 IP / 密码），不写死在 YAML：
+#   在 .env（已 gitignore）设置 LIGHTRAG_BASE_URL / LIGHTRAG_SERVER_USERNAME /
+#   LIGHTRAG_SERVER_PASSWORD，见 .env.example 第 12 节。生产见 prod.yaml。
+rag:
+  api_url: "${LIGHTRAG_BASE_URL:-}"   # 上游 RAG 服务根地址（不带路径），如 http://IP:PORT
+  webui_path: "/webui/"          # 上游 webui 挂载路径（LightRAG 默认）
+  webui_username: "${LIGHTRAG_SERVER_USERNAME:-}"
+  webui_password: "${LIGHTRAG_SERVER_PASSWORD:-}"
+
+# ── 运营统计看板（数据源）──────────────────────────────────
+# facts  — 读独立统计事实表 stats_daily（写时增量，需先跑 scripts/backfill_stats_daily.py 回填历史）
+# legacy — 回退到 conversations 实时聚合（旧口径，无回填依赖；上线初期先置 legacy）
+stats:
+  backend: "facts"               # facts / legacy

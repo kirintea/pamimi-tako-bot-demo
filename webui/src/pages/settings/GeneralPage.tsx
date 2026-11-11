@@ -9,21 +9,12 @@ import { wsManager } from '@/api/ws';
 import { SettingsGroup, SettingsRow, ReadOnlyRow } from '@/components/settings';
 import { SettingsSectionTitle } from '@/components/settings/SettingsSectionTitle';
 import { Button } from '@/components/ui/button';
+import { getStoredTheme, setTheme } from '@/lib/theme';
 
 export function GeneralPage() {
 	const { t, i18n } = useTranslation();
 	const currentUserId = wsManager.getUserId();
 	const currentLang = i18n.language?.startsWith('zh') ? 'zh' : 'en';
-
-	const handleThemeChange = (theme: 'light' | 'dark' | 'system') => {
-		if (theme === 'system') {
-			localStorage.removeItem('theme');
-			document.documentElement.classList.toggle('dark', window.matchMedia('(prefers-color-scheme: dark)').matches);
-		} else {
-			localStorage.setItem('theme', theme);
-			document.documentElement.classList.toggle('dark', theme === 'dark');
-		}
-	};
 
 	const handleLanguageChange = (lang: 'en' | 'zh') => {
 		i18n.changeLanguage(lang);
@@ -47,15 +38,14 @@ export function GeneralPage() {
 								{ key: 'system' as const, icon: Monitor, label: '系统' },
 							].map((opt) => {
 								const Icon = opt.icon;
-								const isActive = localStorage.getItem('theme') === opt.key ||
-									(opt.key === 'system' && !localStorage.getItem('theme'));
+								const isActive = getStoredTheme() === opt.key;
 								return (
 									<Button
 										key={opt.key}
 										variant={isActive ? 'secondary' : 'ghost'}
 										size="sm"
 										className="h-8 px-2.5 rounded-full text-[12px] gap-1.5"
-										onClick={() => handleThemeChange(opt.key)}
+										onClick={() => setTheme(opt.key)}
 									>
 										<Icon className="size-3.5" />
 										{opt.label}

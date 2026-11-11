@@ -9,10 +9,10 @@ interface StatusPillProps {
 }
 
 const toneClasses: Record<StatusTone, string> = {
-	success: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
-	warning: 'bg-amber-500/10 text-amber-700 dark:text-amber-400',
+	success: 'bg-emerald-500/10 text-emerald-700 ',
+	warning: 'bg-amber-500/10 text-amber-700 ',
 	neutral: 'bg-muted text-muted-foreground',
-	error: 'bg-red-500/10 text-red-700 dark:text-red-400',
+	error: 'bg-red-500/10 text-red-700 ',
 };
 
 export function StatusPill({ tone, children, className }: StatusPillProps) {

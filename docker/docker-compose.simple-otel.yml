@@ -1,0 +1,59 @@
+# docker-compose.simple-otel.yaml
+# 本地可观测性调试栈：OTel Collector + Jaeger（Badger 落盘，重启不丢）
+# 启动: cd docker; docker-compose -f docker-compose.simple-otel.yml up -d
+# 停止: cd docker; docker-compose -f docker-compose.simple-otel.yml down
+#
+# 数据流: Agent ──OTLP(4317)──> Collector ──> Jaeger(Badger) ──> Jaeger UI(16686)
+# 说明: 应用侧只上报 trace（core/tracing/setup.py），metrics/logs 无需入库；
+#       Prometheus / Loki / Grafana 已移除，需要时再从 git 历史加回。
+
+version: "2.2"
+
+services:
+  # ============================================================
+  # 1. OTel Collector - 数据接收与转发（Agent 唯一入口 :4317）
+  # ============================================================
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: otel-collector-dev
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./otel-collector-dev.yaml:/etc/otelcol/config.yaml
+    ports:
+      - "4317:4317"   # OTLP gRPC (Agent 上报)
+      - "4318:4318"   # OTLP HTTP
+    depends_on:
+      - jaeger
+    networks:
+      - otel-network
+
+  # ============================================================
+  # 2. Jaeger - Trace 存储 + UI（Badger 落盘，重启保留）
+  # ============================================================
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: jaeger-dev
+    # 镜像默认 uid 10001，无法在 root 属主的命名卷里建 /badger/{key,data}
+    # （mkdir permission denied → 启动即 Exited(1)），故以容器内 root 运行
+    # （与宿主机 root 无关，仅本容器进程 uid 0）
+    user: "0:0"
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+      - SPAN_STORAGE_TYPE=badger
+      - BADGER_EPHEMERAL=false
+      - BADGER_DIRECTORY_KEY=/badger/key
+      - BADGER_DIRECTORY_VALUE=/badger/data
+    ports:
+      - "16686:16686"   # Jaeger UI
+    volumes:
+      - jaeger-badger:/badger
+    networks:
+      - otel-network
+
+networks:
+  otel-network:
+    driver: bridge
+
+volumes:
+  jaeger-badger:
+    driver: local

@@ -338,6 +338,11 @@ class ChannelConfigStore:
 
         try:
             raw = path.read_text(encoding="utf-8")
+            if not raw.strip():
+                # 空文件（编辑器截断/写入中断）与文件不存在同样处理：生成默认配置
+                logger.warning("ChannelConfigStore: 配置文件为空，重新生成默认配置: {}", path)
+                await self._create_default_config(path)
+                return
             data = json.loads(raw)
             version = data.get("version", 0)
             if version != 1:
@@ -356,8 +361,17 @@ class ChannelConfigStore:
             )
         except json.JSONDecodeError as e:
             logger.error("ChannelConfigStore: JSON 解析失败 ({})，保留上次有效配置", e)
+            # 失败也同步 mtime，避免热加载轮询每 2s 重复判定"文件变更"并反复报错
+            try:
+                self._mtime = path.stat().st_mtime
+            except OSError:
+                pass
         except Exception:
             logger.exception("ChannelConfigStore: 加载配置文件失败")
+            try:
+                self._mtime = path.stat().st_mtime
+            except OSError:
+                pass
 
     async def _save_config(self) -> None:
         """将当前配置写回 JSON 文件"""

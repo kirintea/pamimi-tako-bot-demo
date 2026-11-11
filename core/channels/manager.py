@@ -29,9 +29,54 @@ from core.channels.config_store import (
 from core.channels.events import InboundMessage
 from core.channels.registry import get_channel_class
 from core.channels.session_map import derive_session_id
+from core.channels.settings import ChannelSettings
 from core.multimodal import ContentPart, build_message_with_media
+from core.session_status import SessionBusyError
 # [已删除] core.storage_models 的 ChannelRecord / ChannelStatus 随 channels 表一并移除，
 # 渠道记录改用 core.channels.config_store.ChannelEntry。
+
+#: 单 session 静默积压上限（超出丢最旧）— 方案 Q3（2026-11-11 确认）
+PENDING_MAX_PER_SESSION = 10
+
+#: busy 重试前的短暂等待（秒）— Q4：同 drain 内最多再试一次
+_BUSY_RETRY_DELAY_SECS = 0.15
+
+
+def _merge_jobs(batch: list[dict]) -> dict:
+    """把同 session 积压的多条入站合并为一轮 job（Q1：\\n 连接文本，media 顺序拼接）。
+
+    单条原样返回；多条取首条的 chat/channel 标识，content/media 合并，
+    metadata 记 merged_from 便于日志追踪。
+    """
+    if len(batch) == 1:
+        return batch[0]
+    first = batch[0]
+    first_msg: InboundMessage = first["msg"]
+    contents: list[str] = []
+    media: list[str] = []
+    merged_from: list[str] = []
+    for item in batch:
+        m: InboundMessage = item["msg"]
+        if m.content:
+            contents.append(m.content)
+        if m.media:
+            media.extend(m.media)
+        mid = (m.metadata or {}).get("message_id")
+        merged_from.append(str(mid) if mid else m.content[:32])
+    merged_msg = InboundMessage(
+        channel=first_msg.channel,
+        channel_id=first_msg.channel_id,
+        user_id=first_msg.user_id,
+        chat_id=first_msg.chat_id,
+        sender_id=first_msg.sender_id,
+        content="\n".join(contents),
+        media=media or None,
+        metadata={
+            **(first_msg.metadata or {}),
+            "merged_from": merged_from,
+        },
+    )
+    return {**first, "msg": merged_msg}
 
 
 class ChannelManager:
@@ -49,6 +94,7 @@ class ChannelManager:
         session_map=None,
         status_tracker=None,
         commands=None,
+        channel_settings: ChannelSettings | None = None,
     ) -> None:
         self._config_store = config_store
         self._bus = bus
@@ -58,6 +104,10 @@ class ChannelManager:
         self._session_mgr = session_mgr
         self._session_map = session_map
         self._status_tracker = status_tracker
+        # 渠道行为开关（configs/channel.yaml）；未注入时自行加载（缺失回退默认）
+        self._settings = (
+            channel_settings if channel_settings is not None else ChannelSettings.load()
+        )
         # 指令分发（默认惰性构造，测试可注入）
         if commands is None:
             from core.command.service import CommandService
@@ -67,6 +117,11 @@ class ChannelManager:
         # channel_id → 适配器实例 / 后台任务
         self._instances: dict[str, BaseChannel] = {}
         self._tasks: dict[str, asyncio.Task] = {}
+
+        # 生成中静默积压：session_id → 待合并 job 队列（渠道公共层，适配器无感）
+        self._pending: dict[str, list[dict]] = {}
+        # 正在 drain 的 session（持有时不重复起 drain；asyncio 单线程下 check+add 无 await 即原子）
+        self._inflight: set[str] = set()
 
     # ------------------------------------------------------------------
     # 会话键（跨渠道 chat_id 隔离）
@@ -245,8 +300,14 @@ class ChannelManager:
                 # 其 sid 随下一条普通消息的 §3.4 推送发出，与手动 /new 的表现一致。
                 text = cmd_result.text
                 if rotated_from is not None and not cmd_result.new_session_id:
-                    # idle_h 传入带自动轮换确认语（与 /new 表现对齐）
-                    text = f"{self._new_session_notice(session_id, idle_h)}\n{text}"
+                    # idle_h 传入带自动轮换确认语（与 /new 表现对齐）；
+                    # push_session_id=false 时确认语保留、会话ID 不带
+                    notice = self._new_session_notice(
+                        session_id, idle_h,
+                        include_id=self._push_session_id_enabled(),
+                    )
+                    if notice:
+                        text = f"{notice}\n{text}"
                 stream_id = uuid.uuid4().hex
                 try:
                     await inst.send_delta(
@@ -268,28 +329,111 @@ class ChannelManager:
         # 空闲自动轮换的表现与 /new 对齐：确认语 + 会话 ID 一并发出。
         # rotated_from 是自动轮换的权威信号：一旦轮换必须发提示（用户要求「有提示有会话ID」），
         # 不得被 session_exists 的保守判定（PG 抖动时抛异常返回 True）吞掉，故短路跳过存在性检查。
-        if rotated_from is not None or await self._session_is_new(msg.user_id, session_id):
+        # push_session_id=false（configs/channel.yaml）时：跳过首次创建探测与纯会话ID
+        # 推送；空闲轮换仍发确认语（不含会话ID）。
+        push_id = self._push_session_id_enabled()
+        if rotated_from is not None or (
+            push_id and await self._session_is_new(msg.user_id, session_id)
+        ):
             # idle_h 仅在自动轮换时带确认语；/new 手动轮换/首次创建走纯会话ID 文案
             body = self._new_session_notice(
                 session_id, idle_h if rotated_from is not None else None,
+                include_id=push_id,
             )
-            try:
-                await inst.send_delta(
-                    msg.chat_id, body,
-                    stream_id=uuid.uuid4().hex, stream_end=True,
-                )
-                logger.info(
-                    "ChannelManager: 新会话推送 session_id transport={} session={} rotated_from={}",
-                    msg.channel, session_id, rotated_from,
-                )
-            except Exception:
-                logger.exception(
-                    "ChannelManager: 会话ID 推送失败 (session={})", session_id,
-                )
+            if body:
+                try:
+                    await inst.send_delta(
+                        msg.chat_id, body,
+                        stream_id=uuid.uuid4().hex, stream_end=True,
+                    )
+                    logger.info(
+                        "ChannelManager: 新会话推送 session_id transport={} session={} rotated_from={}",
+                        msg.channel, session_id, rotated_from,
+                    )
+                except Exception:
+                    logger.exception(
+                        "ChannelManager: 会话ID 推送失败 (session={})", session_id,
+                    )
 
         # 提取渠道用户名（企微 from.name），用于落库 users.display_name
         sender_name = (msg.metadata or {}).get("sender_name") or None
-        logger.info("[DEBUG] manager.handle_inbound sender_name={!r}, metadata={!r}", sender_name, msg.metadata)
+        job = {
+            "msg": msg,
+            "session_id": session_id,
+            "inst": inst,
+            "display_name": sender_name,
+        }
+        # 生成中静默入队；空闲则立刻 drain（渠道公共层，所有适配器共用）
+        self._enqueue(session_id, job)
+        await self._drain_session(session_id)
+
+    # ------------------------------------------------------------------
+    # 生成中排队 + 合并续跑（渠道公共能力）
+    # ------------------------------------------------------------------
+
+    def _enqueue(self, session_id: str, job: dict) -> None:
+        """入队；超过 PENDING_MAX_PER_SESSION 丢最旧（Q3=10）"""
+        q = self._pending.setdefault(session_id, [])
+        q.append(job)
+        while len(q) > PENDING_MAX_PER_SESSION:
+            dropped = q.pop(0)
+            dropped_msg = dropped.get("msg")
+            logger.warning(
+                "ChannelManager: 会话积压超限({})，丢弃最旧消息 session={} content={!r}",
+                PENDING_MAX_PER_SESSION, session_id,
+                getattr(dropped_msg, "content", None),
+            )
+
+    async def _drain_session(self, session_id: str) -> None:
+        """排空该 session 的 pending；已在 drain 中则直接返回。
+
+        结构：pop 整批 → merge → 执行 → 再 pop（执行期间新到的进下一批）。
+        check+add inflight 之间无 await，asyncio 下不会双开 drain。
+        busy 回队后 break，由下次入站再触发（不自动重试防死循环）。
+        """
+        if session_id in self._inflight:
+            return
+        self._inflight.add(session_id)
+        try:
+            while True:
+                batch = self._pending.pop(session_id, None)
+                if not batch:
+                    break
+                if not await self._process_batch(session_id, batch):
+                    # 仍 busy：本批已回队，等下次入站/外部空闲后再 drain
+                    break
+        finally:
+            self._inflight.discard(session_id)
+
+    async def _process_batch(self, session_id: str, batch: list[dict]) -> bool:
+        """执行一批（merge 后一轮）；False=仍 busy 且已回队（Q4）"""
+        job = _merge_jobs(batch)
+        ok = await self._run_job(session_id, job)
+        if ok:
+            return True
+
+        logger.warning(
+            "ChannelManager: 会话正忙，{}ms 后重试本批 session={} batch={}",
+            int(_BUSY_RETRY_DELAY_SECS * 1000), session_id, len(batch),
+        )
+        await asyncio.sleep(_BUSY_RETRY_DELAY_SECS)
+        if await self._run_job(session_id, job):
+            return True
+
+        logger.warning(
+            "ChannelManager: 会话仍 busy，本批回队等待下次触发 session={} batch={}",
+            session_id, len(batch),
+        )
+        q = self._pending.setdefault(session_id, [])
+        self._pending[session_id] = batch + q
+        while len(self._pending[session_id]) > PENDING_MAX_PER_SESSION:
+            self._pending[session_id].pop(0)
+        return False
+
+    async def _run_job(self, session_id: str, job: dict) -> bool:
+        """订阅 → 占位 → _safe_run → 转发事件；True=完成，False=SessionBusyError"""
+        msg: InboundMessage = job["msg"]
+        inst: BaseChannel = job["inst"]
         events_key = MessageBusKeys.session_events(session_id)
         stream_id = uuid.uuid4().hex
 
@@ -302,16 +446,16 @@ class ChannelManager:
         except Exception:
             logger.exception("ChannelManager: 发送占位失败 (chat_id={})", msg.chat_id)
 
-        # 触发内核（后台 task，流式事件经总线回传）
         run_task = asyncio.ensure_future(
             self._safe_run(
                 msg.user_id, session_id, msg.content, msg.media, stream_id, msg.chat_id, inst,
-                display_name=sender_name, channel=msg.channel,
+                display_name=job.get("display_name"), channel=msg.channel,
             )
         )
 
         full_text = ""
         done = False
+        run_ok = True
         try:
             async for event in sub:
                 etype = event.get("type")
@@ -336,8 +480,10 @@ class ChannelManager:
                     done = True
                     break
                 # 忽略 thinking_delta / tool_call / busy / interrupted / run_start
+                # （busy 后内核补发 run_end — Q6，靠 run_end 收尾不挂起）
         except asyncio.CancelledError:
             run_task.cancel()
+            raise
         except Exception:
             logger.exception("ChannelManager: 订阅会话事件异常 (session={})", session_id)
         finally:
@@ -345,17 +491,40 @@ class ChannelManager:
                 await sub.aclose()
             except Exception:
                 pass
-            await run_task
+            result = await run_task
+            run_ok = result is not False  # _safe_run: False=SessionBusyError
+        return run_ok
+
+    def _push_session_id_enabled(self) -> bool:
+        """是否向渠道聊天输出会话 ID（configs/channel.yaml push_session_id）。
+
+        每次触发点 refresh：文件 mtime 变化即生效，无需重启；注入的
+        测试实例（path=None）不跟踪文件。
+        """
+        return self._settings.refresh().push_session_id
 
     @staticmethod
-    def _new_session_notice(session_id: str, idle_h: float | None = None) -> str:
-        """新会话提示文案：idle_h 非空时带自动轮换确认语（与 /new 表现对齐）。"""
-        body = f"本次对话会话ID: {session_id}\n可用于查询对话历史。"
+    def _new_session_notice(
+        session_id: str,
+        idle_h: float | None = None,
+        *,
+        include_id: bool = True,
+    ) -> str:
+        """新会话提示文案：idle_h 非空时带自动轮换确认语（与 /new 表现对齐）。
+
+        include_id=False（push_session_id: false）时不输出会话 ID：
+        - 空闲轮换（idle_h 非空）→ 仅确认语
+        - 首次创建（无确认语）→ 空串，调用方跳过发送
+        """
+        body = (
+            f"本次对话会话ID: {session_id}\n可用于查询对话历史。" if include_id else ""
+        )
         if idle_h is not None:
-            body = (
+            confirm = (
                 f"✅ 已自动开启新会话（距上次对话超过 {idle_h:g} 小时），"
-                f"之前的历史不再携带。\n{body}"
+                f"之前的历史不再携带。"
             )
+            body = f"{confirm}\n{body}" if body else confirm
         return body
 
     def _idle_hours(self, channel_id: str) -> float:
@@ -421,8 +590,13 @@ class ChannelManager:
         inst: BaseChannel,
         display_name: str | None = None,
         channel: str = "web",
-    ) -> None:
-        """调用内核 ChatService.run（fire-and-forget），异常兜底。"""
+    ) -> bool:
+        """调用内核 ChatService.run（fire-and-forget），异常兜底。
+
+        Returns:
+            True=正常完成或非 busy 异常（不重试）；
+            False=SessionBusyError（Q4：上层可回队重试一次，P1：warning 无栈）。
+        """
         try:
             # 本地媒体（渠道适配器已下载）→ 上传对象存储 → list[ContentPart]，
             # 内核 build_user_msg 据此生成图片 DataBlock；无图时保持纯字符串
@@ -441,8 +615,17 @@ class ChannelManager:
                 display_name=display_name,
                 channel=channel,
             )
+            return True
+        except SessionBusyError as e:
+            # P1：预期内并发拒绝 → warning 无栈，避免 ERROR 全栈噪音
+            logger.warning(
+                "ChannelManager: 会话正忙 (session={} owner={} started_at={})",
+                session_id, e.owner, e.started_at,
+            )
+            return False
         except Exception:
             logger.exception("ChannelManager: ChatService.run 异常 (session={})", session_id)
+            return True
 
     # ------------------------------------------------------------------
     # 状态

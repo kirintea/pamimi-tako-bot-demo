@@ -3,8 +3,9 @@
  *
  * 272px 展开 / 56px 折叠；bg #F9FAFB + 右侧 1px 分隔线。
  * 结构：Logo+折叠 → 蓝色「新建对话」→ 搜索 → 工作台导航(5 项)
- *      → 最近会话 → 底部 用户行(r0) + 设置行(r10 含绿点)。
- * 知识库 RAG / 自动化 为后端未实现的占位项（toast 提示）。
+ * → 最近会话 → 底部 用户行(r0) + 设置行(r10 含绿点)。
+ * 知识库 RAG：后端配置了 rag.api_url 时经 /rag/ 反代新标签打开（自动登录），
+ * 未配置时与「自动化」一样为占位项（toast 提示）。
  */
 
 import { format } from 'date-fns';
@@ -16,6 +17,7 @@ import {
 	ChevronDown,
 	ChevronRight,
 	Crown,
+		KeyRound,
 	Database,
 	Ellipsis,
 	LogIn,
@@ -30,13 +32,14 @@ import {
 	UserRound,
 	Zap,
 } from 'lucide-react';
-import { type ReactNode, useMemo, useState } from 'react';
+import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
 import { useRole } from '@/hooks/useRole';
 import { wsManager } from '@/api/ws';
+import { webuiApi } from '@/api/webui';
 import type { SessionInfo } from '@/api/types';
 import { Button } from '@/components/ui/button';
 import {
@@ -120,8 +123,25 @@ export function AppSidebar({
 	const [renameValue, setRenameValue] = useState('');
 	const [query, setQuery] = useState('');
 	const [workbenchOpen, setWorkbenchOpen] = useState(true);
+	// RAG webui 反代入口（后端 /webui-config 下发）；null = 未配置，入口退回占位提示
+	const [ragUrl, setRagUrl] = useState<string | null>(null);
 	const currentUserId = wsManager.getUserId();
 	const { isRoot } = useRole();
+
+	useEffect(() => {
+		let cancelled = false;
+		webuiApi
+			.getConfig()
+			.then((cfg) => {
+				if (!cancelled) setRagUrl(cfg.rag_url || null);
+			})
+			.catch(() => {
+				// 配置端点不可用（旧后端等）时保持占位提示，不打扰用户
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, []);
 
 	const handleSwitchUser = () => {
 		const trimmed = newUserId.trim();
@@ -168,16 +188,34 @@ export function AppSidebar({
 		label: string;
 		to?: string;
 		placeholder?: boolean;
+		/** true = 新标签打开外部/反代地址（不走 react-router） */
+		external?: boolean;
 	}> = [
 		{ key: 'chat', icon: <MessageSquare className="size-3.5" />, label: t('common.chat', { defaultValue: '对话' }), to: '/chat' },
 		{ key: 'mcp', icon: <Cable className="size-3.5" />, label: t('sidebar.navMcp', { defaultValue: 'MCP 服务' }), to: '/mcp' },
 		{ key: 'skill', icon: <BookText className="size-3.5" />, label: t('sidebar.navSkill', { defaultValue: '技能 Skill' }), to: '/skill' },
-		{ key: 'rag', icon: <Database className="size-3.5" />, label: t('sidebar.navRag', { defaultValue: '知识库 RAG' }), placeholder: true },
+		// 知识库 RAG：后端配置了 rag.api_url 时经本站 /rag/ 反代新标签打开（后端自动登录 LightRAG）；
+		// 未配置时保持占位提示
+		ragUrl
+			? { key: 'rag', icon: <Database className="size-3.5" />, label: t('sidebar.navRag', { defaultValue: '知识库 RAG' }), to: ragUrl, external: true }
+			: { key: 'rag', icon: <Database className="size-3.5" />, label: t('sidebar.navRag', { defaultValue: '知识库 RAG' }), placeholder: true },
 		{ key: 'automation', icon: <Zap className="size-3.5" />, label: t('sidebar.navAutomation', { defaultValue: '自动化' }), placeholder: true },
 	];
 
+	const handleNavClick = (item: (typeof navItems)[number]) => {
+		if (item.external && item.to) {
+			window.open(item.to, '_blank', 'noopener,noreferrer');
+			return;
+		}
+		if (item.placeholder) {
+			handlePlaceholderNav(item.label);
+			return;
+		}
+		if (item.to) navigate(item.to);
+	};
+
 	const isNavActive = (item: (typeof navItems)[number]) => {
-		if (item.placeholder || !item.to) return false;
+		if (item.external || item.placeholder || !item.to) return false;
 		if (item.key === 'chat') return isChatActive;
 		return location.pathname === item.to;
 	};
@@ -230,9 +268,9 @@ export function AppSidebar({
 					</div>
 
 				{/* 中部滚动区：工作台 / 管理视图 / 最近。
-				    root 全部展开时内容可能高于侧栏可视高度——整体滚动，
-				    而不是让各行 flex-shrink 压扁（h-34 被压缩）甚至底部行溢出侧栏。
-				    注意用 block 流容器：子元素不是 flex item，高度不会被压缩。 */}
+				 root 全部展开时内容可能高于侧栏可视高度——整体滚动，
+				 而不是让各行 flex-shrink 压扁（h-34 被压缩）甚至底部行溢出侧栏。
+				 注意用 block 流容器：子元素不是 flex item，高度不会被压缩。 */}
 				<div className="mt-4 min-h-0 flex-1 overflow-y-auto">
 				{/* 工作台（可折叠，root 用户可收起以腾出空间看最近对话） */}
 				<button
@@ -256,11 +294,7 @@ export function AppSidebar({
 								icon={item.icon}
 								label={item.label}
 								active={isNavActive(item)}
-								onClick={() =>
-									item.placeholder
-										? handlePlaceholderNav(item.label)
-										: item.to && navigate(item.to)
-								}
+								onClick={() => handleNavClick(item)}
 							/>
 						))}
 					</nav>
@@ -290,6 +324,12 @@ export function AppSidebar({
 								label={t('sidebar.adminStats', { defaultValue: '运营数据看板' })}
 								active={location.pathname.startsWith('/admin/stats')}
 								onClick={() => navigate('/admin/stats')}
+							/>
+							<NavItem
+								icon={<KeyRound className="size-3.5" />}
+								label={t('sidebar.adminCredentials', { defaultValue: '凭证管理' })}
+								active={location.pathname.startsWith('/admin/credentials')}
+								onClick={() => navigate('/admin/credentials')}
 							/>
 						</nav>
 					</>
@@ -436,11 +476,7 @@ export function AppSidebar({
 								icon={item.icon}
 								label={item.label}
 								active={isNavActive(item)}
-								onClick={() =>
-									item.placeholder
-										? handlePlaceholderNav(item.label)
-										: item.to && navigate(item.to)
-								}
+								onClick={() => handleNavClick(item)}
 								collapsed
 								tooltip={item.label}
 							/>
@@ -524,7 +560,7 @@ export function AppSidebar({
 			{/* User switch dialog */}
 			{showUserDialog && (
 				<div
-					className="fixed inset-0 bg-[#111928]/50 flex items-center justify-center z-50"
+					className="fixed inset-0 bg-scrim/50 flex items-center justify-center z-50"
 					onClick={() => setShowUserDialog(false)}
 				>
 					<div
@@ -559,7 +595,7 @@ export function AppSidebar({
 			{/* Rename dialog */}
 			{renameTarget && (
 				<div
-					className="fixed inset-0 bg-[#111928]/50 flex items-center justify-center z-50"
+					className="fixed inset-0 bg-scrim/50 flex items-center justify-center z-50"
 					onClick={() => setRenameTarget(null)}
 				>
 					<div

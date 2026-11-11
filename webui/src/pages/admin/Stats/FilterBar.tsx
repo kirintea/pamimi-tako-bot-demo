@@ -12,6 +12,12 @@ import { Download } from 'lucide-react';
 import type { StatsQuery, StatsRange } from '@/api/stats';
 
 import { useChannelLabel } from './channelLabel';
+import {
+	CHANNEL_CATEGORY_ORDER,
+	channelCategory,
+	useChannelCategoryLabel,
+	type ChannelCategoryKey,
+} from './channelCategory';
 
 const RANGES: { value: StatsRange; label: string }[] = [
 	{ value: '7d', label: '近7天' },
@@ -41,8 +47,8 @@ function Chip({
 			onClick={onClick}
 			className={
 				active
-					? 'rounded-full bg-[#2563eb] px-3.5 py-1.5 text-[13px] text-white'
-					: 'rounded-full bg-[#f1f5f9] px-3.5 py-1.5 text-[13px] text-[#334155] hover:bg-[#e2e8f0]'
+					? 'rounded-full bg-stats-chip-on px-3.5 py-1.5 text-[13px] text-white'
+					: 'rounded-full bg-stats-chip-off px-3.5 py-1.5 text-[13px] text-stats-body hover:bg-stats-chip-off-hover'
 			}
 		>
 			{children}
@@ -51,16 +57,24 @@ function Chip({
 }
 
 function GroupLabel({ children }: { children: ReactNode }) {
-	return <span className="text-[13px] font-semibold text-[#475569]">{children}</span>;
+	return <span className="text-[13px] font-semibold text-stats-meta">{children}</span>;
 }
 
 const INPUT_CLS =
-	'rounded-lg border border-[#e2e8f0] bg-white px-3 py-1.5 text-[13px] text-[#334155]';
+	'rounded-lg border border-stats-border bg-stats-panel px-3 py-1.5 text-[13px] text-stats-body';
 
 export function FilterBar({ query, onChange, channelOptions, onExport }: FilterBarProps) {
 	const channelLabel = useChannelLabel();
+	const categoryLabel = useChannelCategoryLabel();
 
-	const channels = [{ value: 'all', label: '全部' }, ...channelOptions];
+	// 按类分组（展示层）：「全部」在组外，其余进 optgroup，模板类在前
+	const grouped = new Map<ChannelCategoryKey, { value: string; label: string }[]>();
+	for (const c of channelOptions) {
+		const cat = channelCategory(c.value);
+		const arr = grouped.get(cat);
+		if (arr) arr.push(c);
+		else grouped.set(cat, [c]);
+	}
 
 	return (
 		<div className="flex flex-wrap items-center gap-x-5 gap-y-3">
@@ -88,7 +102,7 @@ export function FilterBar({ query, onChange, channelOptions, onExport }: FilterB
 						onChange({ ...query, range: null, start: e.target.value || undefined })
 					}
 				/>
-				<span className="text-[13px] text-[#94a3b8]">~</span>
+				<span className="text-[13px] text-stats-muted">~</span>
 				<input
 					type="date"
 					className={INPUT_CLS}
@@ -107,18 +121,25 @@ export function FilterBar({ query, onChange, channelOptions, onExport }: FilterB
 					value={query.channel}
 					onChange={(e) => onChange({ ...query, channel: e.target.value })}
 				>
-					{channels.map((c) => (
-						<option key={c.value} value={c.value}>
-							{c.value === 'all' ? c.label : channelLabel(c.value, c.label)}
-						</option>
-					))}
+					<option value="all">全部</option>
+					{CHANNEL_CATEGORY_ORDER.filter((cat) => grouped.get(cat)?.length).map(
+						(cat) => (
+							<optgroup key={cat} label={categoryLabel(cat)}>
+								{grouped.get(cat)!.map((c) => (
+									<option key={c.value} value={c.value}>
+										{channelLabel(c.value, c.label)}
+									</option>
+								))}
+							</optgroup>
+						),
+					)}
 				</select>
 			</div>
 
 			<button
 				type="button"
 				onClick={onExport}
-				className="ml-auto flex items-center gap-1.5 rounded-lg bg-[#2563eb] px-4 py-2 text-[13px] font-semibold text-white hover:bg-[#1d4ed8]"
+				className="ml-auto flex items-center gap-1.5 rounded-lg bg-stats-chip-on px-4 py-2 text-[13px] font-semibold text-white hover:bg-stats-chip-on-hover"
 			>
 				<Download className="size-3.5" />
 				导出报表

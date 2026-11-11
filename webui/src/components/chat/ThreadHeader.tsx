@@ -12,6 +12,7 @@ import { type ReactNode, useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { Button } from '@/components/ui/button';
+import { readTheme, setTheme, type Theme } from '@/lib/theme';
 import { cn } from '@/lib/utils';
 
 interface ThreadHeaderProps {
@@ -21,17 +22,9 @@ interface ThreadHeaderProps {
 	sessionId?: string;
 }
 
-type Theme = 'light' | 'dark';
-
-function readTheme(): Theme {
-	const stored = localStorage.getItem('theme');
-	if (stored === 'light' || stored === 'dark') return stored;
-	return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-}
-
 export function ThreadHeader({ connectionStatus, promptNavigatorAction, sessionId }: ThreadHeaderProps) {
 	const { t } = useTranslation();
-	const [theme, setTheme] = useState<Theme>(() => readTheme());
+	const [theme, setThemeState] = useState<Theme>(() => readTheme());
 	const [copied, setCopied] = useState(false);
 
 	const handleCopySessionId = useCallback(() => {
@@ -44,7 +37,7 @@ export function ThreadHeader({ connectionStatus, promptNavigatorAction, sessionI
 
 	// 外部（设置页）改主题时同步
 	useEffect(() => {
-		const sync = () => setTheme(readTheme());
+		const sync = () => setThemeState(readTheme());
 		window.addEventListener('storage', sync);
 		const media = window.matchMedia('(prefers-color-scheme: dark)');
 		media.addEventListener('change', sync);
@@ -55,12 +48,9 @@ export function ThreadHeader({ connectionStatus, promptNavigatorAction, sessionI
 	}, []);
 
 	const handleToggleTheme = useCallback(() => {
-		setTheme((prev) => {
-			const next: Theme = prev === 'dark' ? 'light' : 'dark';
-			localStorage.setItem('theme', next);
-			document.documentElement.classList.toggle('dark', next === 'dark');
-			return next;
-		});
+		const next: Theme = readTheme() === 'dark' ? 'light' : 'dark';
+		setTheme(next);
+		setThemeState(next);
 	}, []);
 
 	const statusLabel =

@@ -2,8 +2,8 @@
  * PromptRail — 消息区左侧竖排提示词标记栏（新的 简化移植）
  *
  * 保留：[data-user-prompt-id] 测量、ResizeObserver + passive scroll + rAF 节流、
- *       ≥2 提示词且滚动范围 ≥80px 才显示、二分查找 active、16px 均匀分布、
- *       hover 宽度编排 [28,22,16,11]、hover 预览面板（inert）
+ * ≥2 提示词且滚动范围 ≥80px 才显示、二分查找 active、16px 均匀分布、
+ * hover 宽度编排 [28,22,16,11]、hover 预览面板（inert）
  * 简化：去掉分桶逻辑（DENSE_*，仅 ≥30 提示词生效）、预览用纯文本替代 MarkdownText
  */
 
@@ -299,15 +299,15 @@ function markerHeight(hoverDistance: number | null): number {
 
 function railMarkerTone(hoverDistance: number | null, active: boolean): string {
   if (hoverDistance === 0) {
-    return 'bg-[#222222] opacity-100 dark:bg-white';
+    return 'bg-rail-dot-1 opacity-100 ';
   }
   if (hoverDistance !== null && hoverDistance < HOVER_MARKER_WIDTHS_PX.length) {
-    return 'bg-[#d0d0d0] opacity-100 dark:bg-white/35';
+    return 'bg-rail-dot-2 opacity-100 ';
   }
   if (active) {
-    return 'bg-[#6f6f6f] opacity-100 dark:bg-white/55';
+    return 'bg-rail-dot-3 opacity-100 ';
   }
-  return 'bg-[#d8d8d8] opacity-100 dark:bg-white/25';
+  return 'bg-rail-dot-4 opacity-100 ';
 }
 
 function clamp(value: number, min: number, max: number): number {

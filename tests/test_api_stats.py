@@ -57,6 +57,14 @@ def _app(role: str = "root", db=None) -> FastAPI:
     app.include_router(stats_router)
     app.state.database_manager = db if db is not None else FakeDB()
     app.state.user_service = FakeUserService(role)
+
+    class _StatsCfg:
+        backend = "legacy"
+
+    class _Cfg:
+        stats = _StatsCfg()
+
+    app.state.config = _Cfg()
     return app
 
 
@@ -121,10 +129,10 @@ def test_export_csv_has_bom_and_expected_columns():
     assert raw.startswith(b"\xef\xbb\xbf"), "CSV 必须带 UTF-8 BOM"
     text = raw.decode("utf-8-sig")
     lines = text.strip().splitlines()
-    assert lines[0] == "日期,使用人数,活跃会话,新增会话,对话轮次"
+    assert lines[0] == "日期,使用人次,活跃会话,新增会话,对话轮次"
     assert len(lines) == 10  # 表头 + 7 行 + 空行 + 第二段表头（FakeDB 无 bucket_channel 行）
     assert lines[8] == ""
-    assert lines[9] == "日期,渠道,使用人数,活跃会话,新增会话,对话轮次"
+    assert lines[9] == "日期,渠道,使用人次,活跃会话,新增会话,对话轮次"
 
 
 def test_export_csv_filename_reflects_filters():
@@ -208,9 +216,9 @@ def test_export_csv_second_section_day_by_channel():
     text = res.content.decode("utf-8-sig")
     lines = text.strip().splitlines()
     # 第一段：表头 + 近7天 7 行；空行；第二段：表头 + 1 行
-    assert lines[0] == "日期,使用人数,活跃会话,新增会话,对话轮次"
+    assert lines[0] == "日期,使用人次,活跃会话,新增会话,对话轮次"
     assert lines[8] == ""
-    assert lines[9] == "日期,渠道,使用人数,活跃会话,新增会话,对话轮次"
+    assert lines[9] == "日期,渠道,使用人次,活跃会话,新增会话,对话轮次"
     assert lines[10] == "2026-10-16,企业微信,1,0,0,2"
     assert len(lines) == 11
 
@@ -222,3 +230,24 @@ def test_export_csv_custom_range_filename():
     })
     assert res.status_code == 200
     assert "ops-stats-custom-2026-10-16-2026-10-22-day-all.csv" in res.headers["content-disposition"]
+
+
+def test_resolve_backend_reads_app_state_config():
+    from api.stats import _resolve_backend
+
+    class Cfg:
+        stats = type("S", (), {"backend": "legacy"})()
+
+    class Req:
+        app = type("A", (), {"state": type("St", (), {"config": Cfg()})()})()
+
+    assert _resolve_backend(Req()) == "legacy"
+
+
+def test_resolve_backend_default_facts():
+    from api.stats import _resolve_backend
+
+    class Req:
+        app = type("A", (), {"state": type("St", (), {})()})()
+
+    assert _resolve_backend(Req()) == "facts"

@@ -69,7 +69,7 @@ export function StatsPage() {
 
 	if (roleLoading) {
 		return (
-			<div className="flex h-full items-center justify-center bg-[#f1f5f9] text-[13px] text-[#94a3b8]">
+			<div className="flex h-full items-center justify-center bg-stats-app text-[13px] text-stats-muted">
 				加载中…
 			</div>
 		);
@@ -85,10 +85,10 @@ export function StatsPage() {
 				);
 
 	return (
-		<div className="flex h-full flex-col overflow-y-auto bg-[#f1f5f9]">
+		<div className="flex h-full flex-col overflow-y-auto bg-stats-app">
 			<div className="mx-auto w-full max-w-[1440px] px-8 py-6">
-				<h1 className="text-[22px] font-bold text-[#0f172a]">AI 助手运营数据看板</h1>
-				<p className="mt-1 text-[13px] text-[#64748b]">
+				<h1 className="text-[22px] font-bold text-stats-title">AI 助手运营数据看板</h1>
+				<p className="mt-1 text-[13px] text-stats-faint">
 					全面了解 AI 助手的使用情况与运营效果，助力产品持续优化
 				</p>
 
@@ -111,12 +111,12 @@ export function StatsPage() {
 						}}
 					/>
 				</div>
-				<div className="mt-2 text-[12px] text-[#94a3b8]">
+				<div className="mt-2 text-[12px] text-stats-muted">
 					统计区间：{spanLabel(query)} · 渠道：{channelLabel}
 				</div>
 
 				{loading && !data ? (
-					<div className="py-20 text-center text-[13px] text-[#94a3b8]">加载中…</div>
+					<div className="py-20 text-center text-[13px] text-stats-muted">加载中…</div>
 				) : data ? (
 					<div className="mt-6 flex flex-col gap-5">
 						<StatCards
@@ -137,7 +137,7 @@ export function StatsPage() {
 						</div>
 					</div>
 				) : (
-					<div className="py-20 text-center text-[13px] text-[#94a3b8]">暂无数据</div>
+					<div className="py-20 text-center text-[13px] text-stats-muted">暂无数据</div>
 				)}
 			</div>
 		</div>

@@ -62,6 +62,7 @@ class _RecordingDB:
 
     def __init__(self) -> None:
         self.inserts: list[dict] = []
+        self.titles: list[str] = []
 
     async def insert_conversation(
         self, user_id, session_id, role, content,
@@ -73,8 +74,9 @@ class _RecordingDB:
     async def get_session_title(self, user_id, session_id):
         return "已有标题"
 
-    async def upsert_session_title(self, user_id, session_id, title):
-        pass
+    async def upsert_session_title(self, user_id, session_id, title,
+                                   channel="web"):
+        self.titles.append(channel)
 
     async def archive_conversation_rows(self, ids):
         pass
@@ -346,3 +348,35 @@ async def test_wecom_image_reaches_llm_as_datablock(tmp_path):
     stored = json.loads(user_rows[0]["content"])
     assert [p["type"] for p in stored] == ["text", "image"]
     assert stored[1]["key"].endswith(".png")
+
+
+# ============================================================
+# ChatService.run — OTel tracing context 与标题事实（子计划 Task 8）
+# ============================================================
+
+
+async def test_run_sets_channel_in_tracing_context():
+    """run(channel=...) 后 agent.__tracing_context__ 携带 agentscope.channel"""
+    agent = _TextAgent()
+    bus = InMemoryMessageBus()
+    svc = ChatService(_RecordingSessionMgr(agent), bus)
+    await svc.run("u1", "s1", "在吗", channel="partner_a")
+    assert agent.__tracing_context__["agentscope.channel"] == "partner_a"
+    assert agent.__tracing_context__["agentscope.user.id"] == "u1"
+    await bus.aclose()
+
+
+class _NoTitleDB(_RecordingDB):
+    """get_session_title 返回 None → 触发 upsert_session_title（带 channel）"""
+
+    async def get_session_title(self, user_id, session_id):
+        return None
+
+
+async def test_run_upserts_session_title_with_channel():
+    bus = InMemoryMessageBus()
+    db = _NoTitleDB()
+    svc = ChatService(_RecordingSessionMgr(_TextAgent()), bus)
+    await svc.run("u1", "s1", "在吗", db=db, channel="partner_a")
+    assert db.titles == ["partner_a"]
+    await bus.aclose()

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 # ============================================================
@@ -121,17 +121,33 @@ class PermissionConfig(BaseModel):
 
 
 class RAGConfig(BaseModel):
-    """RAG 检索增强生成配置
+    """RAG 配置
 
-    当前为空壳预留，RAG 服务确定后填充具体参数。
-    第三方向量存储通过 ThirdPartyVectorStore(VectorStoreBase) 对接。
+    分两部分：
+    1. WebUI 反代（已实现）：api_url 非空即启用。前端侧边栏「知识库 RAG」入口
+       跳转到本站 /rag/，由后端反代上游 LightRAG webui 并自动注入登录 token
+       （凭据走 webui_username/webui_password）；api_url 为空时前端显示占位提示。
+    2. 检索集成（预留空壳）：Agent 检索对接，第三方向量存储通过
+       ThirdPartyVectorStore(VectorStoreBase) 填充具体参数。
     """
-    enabled: bool = Field(default=False, description="是否启用 RAG")
+    enabled: bool = Field(default=False, description="是否启用 RAG（检索集成功能预留，WebUI 反代不受此开关控制）")
     backend: str = Field(
         default="third_party",
         description="RAG 后端类型: third_party / qdrant / milvus / ...",
     )
-    api_url: str = Field(default="", description="RAG 服务 API 地址")
+    api_url: str = Field(
+        default="",
+        description="RAG 服务根地址（如 http://rag-host:9621，不带路径；真实地址经 LIGHTRAG_BASE_URL 注入）。非空即启用 /rag/ WebUI 反代",
+    )
+    webui_path: str = Field(
+        default="/webui/",
+        description="上游 RAG 服务的 webui 挂载路径（LightRAG 默认 /webui/）",
+    )
+    webui_username: str = Field(
+        default="",
+        description="WebUI 自动登录用户名（空则不注入认证，需在上游手动登录）",
+    )
+    webui_password: str = Field(default="", description="WebUI 自动登录密码")
     api_key: str = Field(default="", description="RAG 服务 API 密钥")
     collection: str = Field(default="default", description="默认 collection 名称")
     top_k: int = Field(default=5, description="检索返回最大结果数")
@@ -252,6 +268,21 @@ class DatabaseConfig(BaseModel):
         return v
 
 
+class StatsConfig(BaseModel):
+    """运营统计看板配置"""
+    backend: str = Field(
+        default="facts",
+        description="看板数据源: facts（独立统计事实表 stats_daily）/ legacy（conversations 实时聚合，降级用）",
+    )
+
+    @field_validator("backend")
+    @classmethod
+    def _validate_backend(cls, v: str) -> str:
+        if v not in ("facts", "legacy"):
+            raise ValueError(f"stats.backend 必须是 facts/legacy 之一，收到: {v!r}")
+        return v
+
+
 class RedisConfig(BaseModel):
     """Redis 配置"""
     url: str = Field(default="redis://localhost:6379/0", description="Redis 连接 URL")
@@ -299,6 +330,52 @@ class RateLimitConfig(BaseModel):
     requests_per_minute: int = Field(default=10, description="每分钟最大请求数（per-user）")
 
 
+class CORSConfig(BaseModel):
+    """跨域资源共享（CORS）配置 — 第三方浏览器页面跨域调用本服务时开启
+
+    默认关闭：不挂载任何 CORS 中间件，行为与旧版完全一致。
+    WebSocket 不受 CORS 管辖（浏览器 WS 握手不执行 CORS 检查），无需配置。
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = Field(default=False, description="是否启用 CORS（默认关闭）")
+    allow_origins: list[str] = Field(
+        default_factory=list,
+        description='允许的来源列表；["*"] 允许任意源（勿与 allow_credentials 同用）',
+    )
+    allow_methods: list[str] = Field(
+        default_factory=lambda: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        description="允许的 HTTP 方法（预检 Access-Control-Allow-Methods）",
+    )
+    allow_headers: list[str] = Field(
+        default_factory=lambda: ["*"],
+        description='允许的请求头；["*"] 时预检镜像回显任意请求头（覆盖 X-API-Key）',
+    )
+    expose_headers: list[str] = Field(
+        default_factory=list,
+        description='暴露给浏览器 JS 的响应头（如 "Retry-After"，跨域读 429 重试提示需要）',
+    )
+    max_age: int = Field(default=600, description="预检结果缓存秒数")
+    allow_credentials: bool = Field(
+        default=False,
+        description="是否允许携带凭据；true 时 allow_origins 禁止含 *",
+    )
+
+    @model_validator(mode="after")
+    def _validate(self) -> "CORSConfig":
+        if self.allow_credentials and "*" in self.allow_origins:
+            raise ValueError(
+                "cors.allow_credentials=true 时 allow_origins 不能含 '*'"
+                "（浏览器禁用该组合，且等效于对任意源开放凭据）"
+            )
+        if self.enabled and not self.allow_origins:
+            raise ValueError(
+                'cors.enabled=true 时 allow_origins 不能为空'
+                '（请配置来源白名单，或 ["*"] 允许任意源）'
+            )
+        return self
+
+
 class MiddlewareConfig(BaseModel):
     """中间件配置"""
     budget_control: BudgetControlConfig = Field(
@@ -308,6 +385,10 @@ class MiddlewareConfig(BaseModel):
     rate_limit: RateLimitConfig = Field(
         default_factory=RateLimitConfig,
         description="速率限制配置",
+    )
+    cors: CORSConfig = Field(
+        default_factory=CORSConfig,
+        description="跨域（CORS）配置",
     )
 
 
@@ -450,4 +531,8 @@ class AppConfig(BaseModel):
     image: ImageConfig = Field(
         default_factory=ImageConfig,
         description="图片输入配置",
+    )
+    stats: StatsConfig = Field(
+        default_factory=StatsConfig,
+        description="运营统计看板配置",
     )

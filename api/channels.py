@@ -29,7 +29,7 @@ import sys
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, status
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from core.channels.catalog import get_channel_catalog
 from core.channels.config_store import ChannelConfigStore, ChannelEntry
@@ -72,7 +72,15 @@ def _validate_idle_hours(v: Any) -> float | None:
 
 
 class ChannelConfigRequest(BaseModel):
-    """渠道配置（创建/局部更新共用；字段均可选）"""
+    """渠道配置（创建/局部更新共用；字段均可选）
+
+    extra="allow"：本模型只显式声明了企微字段，其余类型（如 napcat 的
+    ws_url/access_token/group_policy 等）经 WebUI 通用表单提交时必须原样
+    保留——Pydantic 默认忽略未知键，会把 napcat 配置静默剥离成空 dict。
+    """
+
+    model_config = ConfigDict(extra="allow")
+
     bot_id: str | None = Field(default=None, description="企微 Bot ID")
     secret: str | None = Field(default=None, description="企微 Secret")
     allow_from: list[str] | None = Field(default=None, description="发送者白名单")
@@ -150,10 +158,11 @@ class ManifestsResponse(BaseModel):
 # ============================================================
 
 def _entry_to_response(entry: ChannelEntry, runtime: dict | None = None) -> ChannelResponse:
-    """ChannelEntry → ChannelResponse（config 中 secret 脱敏）"""
+    """ChannelEntry → ChannelResponse（config 中 secret 脱敏，含 napcat 的 access_token）"""
     cfg = dict(entry.config)
-    if cfg.get("secret"):
-        cfg["secret"] = "********"
+    for secret_key in ("secret", "access_token"):
+        if cfg.get(secret_key):
+            cfg[secret_key] = "********"
     rt = runtime or {}
     return ChannelResponse(
         id=entry.id,

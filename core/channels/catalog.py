@@ -15,8 +15,15 @@ from __future__ import annotations
 
 from typing import Any
 
+from core.channels.adapters.napcat.manifest import NAPCAT_MANIFEST
 from core.channels.adapters.wecom.manifest import WECOM_MANIFEST
 from core.channels.registry import REGISTRY
+
+# 各已接入类型的创建表单字段（由各自 manifest 提供；未接入类型为空列表）
+_MANIFEST_FIELDS_BY_TYPE: dict[str, list[dict[str, Any]]] = {
+    "wecom": WECOM_MANIFEST.get("fields", []),
+    "napcat": NAPCAT_MANIFEST.get("fields", []),
+}
 
 # 后端实际已实现适配器的类型（运行时以 registry.REGISTRY 校验为准，此处仅作默认值）
 BACKEND_SUPPORTED_TYPES: list[str] = list(REGISTRY.keys())
@@ -54,6 +61,9 @@ CHANNEL_DEPENDENCIES: dict[str, list[dict[str, str]]] = {
     ],
     "qq": [
         {"name": "aiocqhttp", "import_name": "aiocqhttp"},
+    ],
+    "napcat": [
+        {"name": "aiohttp", "import_name": "aiohttp"},
     ],
     "signal": [
         {"name": "requests", "import_name": "requests"},
@@ -128,6 +138,14 @@ CHANNEL_META: dict[str, dict[str, Any]] = {
         "description": "接入 QQ 频道/群，让智能体在 QQ 中对话。",
         "doc_url": "",
     },
+    "napcat": {
+        "display_name": "NapCat (QQ)",
+        "description": (
+            "通过 OneBot v11 正向 WebSocket 接入 NapCat（个人 QQ 号桥），"
+            "支持私聊与群聊，无需公网 IP。"
+        ),
+        "doc_url": "https://napneko.github.io/",
+    },
     "signal": {
         "display_name": "Signal",
         "description": "接入 Signal 私聊（经由 signal-cli REST API）。",
@@ -167,6 +185,7 @@ CHANNEL_ORDER: list[str] = [
     "mattermost",
     "matrix",
     "qq",
+    "napcat",
     "signal",
     "email",
     "whatsapp",
@@ -194,7 +213,7 @@ def get_channel_catalog() -> list[dict[str, Any]]:
             "backend_supported": ch_type in REGISTRY,
             "dependencies": list(CHANNEL_DEPENDENCIES.get(ch_type, [])),
             # fields 仅后端已接入类型提供
-            "fields": WECOM_MANIFEST.get("fields", []) if ch_type == "wecom" else [],
+            "fields": _MANIFEST_FIELDS_BY_TYPE.get(ch_type, []),
         }
         catalog.append(entry)
     return catalog

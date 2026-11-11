@@ -10,6 +10,7 @@ import feishuSvg from '@/assets/svg/feishu.svg?raw';
 import matrixSvg from '@/assets/svg/matrix.svg?raw';
 import mattermostSvg from '@/assets/svg/mattermost.svg?raw';
 import msteamsSvg from '@/assets/svg/msteams.svg?raw';
+import napcatSvg from '@/assets/svg/napcat.svg?raw';
 import qqSvg from '@/assets/svg/qq.svg?raw';
 import signalSvg from '@/assets/svg/signal.svg?raw';
 import slackSvg from '@/assets/svg/slack.svg?raw';
@@ -36,6 +37,7 @@ export const CHANNEL_BRANDS: Record<string, ChannelBrand> = {
 	mattermost: { brand: '#0058CC', svg: mattermostSvg },
 	matrix: { brand: '#0DBD8B', svg: matrixSvg },
 	qq: { brand: '#12B7F5', svg: qqSvg },
+	napcat: { brand: '#12B7F5', svg: napcatSvg },
 	signal: { brand: '#3a76f0', svg: signalSvg },
 	email: { brand: '#6b7280', svg: emailSvg },
 	whatsapp: { brand: '#25D366', svg: whatsappSvg },

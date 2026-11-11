@@ -18,8 +18,10 @@ import pytest
 from core.validators import (
     coerce_id,
     is_path_within,
+    is_valid_channel,
     is_valid_id,
     resolve_within,
+    validate_channel,
 )
 
 
@@ -159,3 +161,28 @@ def test_is_path_within_inside_dotdot_not_false_positive():
 
         # sub/../sub2/file 同样在 base 内
         assert is_path_within(base, "sub", "..", "sub2", "file") is True
+
+
+# ============================================================
+# is_valid_channel / validate_channel
+# ============================================================
+
+def test_is_valid_channel_accepts():
+    for good in ("web", "wecom", "feishu", "partner_a", "A1-b_9", "x" * 16):
+        assert is_valid_channel(good), f"应接受合法 channel: {good!r}"
+
+
+def test_is_valid_channel_rejects():
+    for bad in ("", "x" * 17, "has space", "渠道", "a.b", "a/b", None, 123, object()):
+        assert not is_valid_channel(bad), f"应拒绝非法 channel: {bad!r}"
+
+
+def test_validate_channel_returns_value():
+    assert validate_channel("partner_a") == "partner_a"
+
+
+def test_validate_channel_raises_on_invalid():
+    with pytest.raises(ValueError, match="channel"):
+        validate_channel("bad channel!")
+    with pytest.raises(ValueError, match="1-16"):
+        validate_channel("x" * 17, field_name="channel")

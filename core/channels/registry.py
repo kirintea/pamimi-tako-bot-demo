@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+from core.channels.adapters.napcat.runtime import NapcatChannel
 from core.channels.adapters.wecom.runtime import WecomChannel
 from core.channels.base import BaseChannel
 
@@ -15,6 +16,7 @@ from core.channels.base import BaseChannel
 # 渠道类型 → 适配器类
 REGISTRY: dict[str, type[BaseChannel]] = {
     "wecom": WecomChannel,
+    "napcat": NapcatChannel,
     # "feishu": FeishuChannel,   # Phase 7 后续补齐
     # "email": EmailChannel,
     # "web": WebChannel,         # 复用现有 /ws/chat（可选封装）
