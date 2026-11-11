@@ -135,7 +135,7 @@ def bucket_key(value: Any) -> str:
     return value.isoformat()
 
 
-CHANNEL_LABELS: dict[str, str] = {"web": "Web", "wecom": "企业微信", "": "未知"}
+CHANNEL_LABELS: dict[str, str] = {"web": "Web", "wecom": "企业微信", "napcat": "NapCat (QQ)", "": "未知"}
 
 # stats_daily 事实表 metric 取值
 METRIC_UV = "uv"

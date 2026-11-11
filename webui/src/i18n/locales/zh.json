@@ -3,6 +3,7 @@
 		"channelNames": {
 			"web": "Web",
 			"wecom": "企业微信",
+			"napcat": "NapCat (QQ)",
 			"unknown": "未知"
 		}
 	},
