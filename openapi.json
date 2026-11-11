@@ -2001,118 +2001,10 @@
       }
     },
     "/rag/{path}": {
-      "head": {
+      "put": {
         "summary": "Rag Proxy",
         "description": "反代 /rag/* → 上游 RAG 服务（API 注入 token，静态资源透传）",
-        "operationId": "rag_proxy_rag__path__head",
-        "parameters": [
-          {
-            "name": "path",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Path"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "patch": {
-        "summary": "Rag Proxy",
-        "description": "反代 /rag/* → 上游 RAG 服务（API 注入 token，静态资源透传）",
-        "operationId": "rag_proxy_rag__path__head",
-        "parameters": [
-          {
-            "name": "path",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Path"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "post": {
-        "summary": "Rag Proxy",
-        "description": "反代 /rag/* → 上游 RAG 服务（API 注入 token，静态资源透传）",
-        "operationId": "rag_proxy_rag__path__head",
-        "parameters": [
-          {
-            "name": "path",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Path"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "summary": "Rag Proxy",
-        "description": "反代 /rag/* → 上游 RAG 服务（API 注入 token，静态资源透传）",
-        "operationId": "rag_proxy_rag__path__head",
+        "operationId": "rag_proxy_rag__path__put",
         "parameters": [
           {
             "name": "path",
@@ -2148,7 +2040,7 @@
       "options": {
         "summary": "Rag Proxy",
         "description": "反代 /rag/* → 上游 RAG 服务（API 注入 token，静态资源透传）",
-        "operationId": "rag_proxy_rag__path__head",
+        "operationId": "rag_proxy_rag__path__put",
         "parameters": [
           {
             "name": "path",
@@ -2181,10 +2073,82 @@
           }
         }
       },
-      "put": {
+      "post": {
         "summary": "Rag Proxy",
         "description": "反代 /rag/* → 上游 RAG 服务（API 注入 token，静态资源透传）",
-        "operationId": "rag_proxy_rag__path__head",
+        "operationId": "rag_proxy_rag__path__put",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Path"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "head": {
+        "summary": "Rag Proxy",
+        "description": "反代 /rag/* → 上游 RAG 服务（API 注入 token，静态资源透传）",
+        "operationId": "rag_proxy_rag__path__put",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Path"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Rag Proxy",
+        "description": "反代 /rag/* → 上游 RAG 服务（API 注入 token，静态资源透传）",
+        "operationId": "rag_proxy_rag__path__put",
         "parameters": [
           {
             "name": "path",
@@ -2220,7 +2184,43 @@
       "get": {
         "summary": "Rag Proxy",
         "description": "反代 /rag/* → 上游 RAG 服务（API 注入 token，静态资源透传）",
-        "operationId": "rag_proxy_rag__path__head",
+        "operationId": "rag_proxy_rag__path__put",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Path"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "summary": "Rag Proxy",
+        "description": "反代 /rag/* → 上游 RAG 服务（API 注入 token，静态资源透传）",
+        "operationId": "rag_proxy_rag__path__put",
         "parameters": [
           {
             "name": "path",
