@@ -29,6 +29,7 @@ from core.channels.config_store import (
 from core.channels.events import InboundMessage
 from core.channels.registry import get_channel_class
 from core.channels.session_map import derive_session_id
+from core.channels.settings import ChannelSettings
 from core.multimodal import ContentPart, build_message_with_media
 # [已删除] core.storage_models 的 ChannelRecord / ChannelStatus 随 channels 表一并移除，
 # 渠道记录改用 core.channels.config_store.ChannelEntry。
@@ -49,6 +50,7 @@ class ChannelManager:
         session_map=None,
         status_tracker=None,
         commands=None,
+        channel_settings: ChannelSettings | None = None,
     ) -> None:
         self._config_store = config_store
         self._bus = bus
@@ -58,6 +60,10 @@ class ChannelManager:
         self._session_mgr = session_mgr
         self._session_map = session_map
         self._status_tracker = status_tracker
+        # 渠道行为开关（configs/channel.yaml）；未注入时自行加载（缺失回退默认）
+        self._settings = (
+            channel_settings if channel_settings is not None else ChannelSettings.load()
+        )
         # 指令分发（默认惰性构造，测试可注入）
         if commands is None:
             from core.command.service import CommandService
@@ -245,8 +251,14 @@ class ChannelManager:
                 # 其 sid 随下一条普通消息的 §3.4 推送发出，与手动 /new 的表现一致。
                 text = cmd_result.text
                 if rotated_from is not None and not cmd_result.new_session_id:
-                    # idle_h 传入带自动轮换确认语（与 /new 表现对齐）
-                    text = f"{self._new_session_notice(session_id, idle_h)}\n{text}"
+                    # idle_h 传入带自动轮换确认语（与 /new 表现对齐）；
+                    # push_session_id=false 时确认语保留、会话ID 不带
+                    notice = self._new_session_notice(
+                        session_id, idle_h,
+                        include_id=self._push_session_id_enabled(),
+                    )
+                    if notice:
+                        text = f"{notice}\n{text}"
                 stream_id = uuid.uuid4().hex
                 try:
                     await inst.send_delta(
@@ -268,24 +280,31 @@ class ChannelManager:
         # 空闲自动轮换的表现与 /new 对齐：确认语 + 会话 ID 一并发出。
         # rotated_from 是自动轮换的权威信号：一旦轮换必须发提示（用户要求「有提示有会话ID」），
         # 不得被 session_exists 的保守判定（PG 抖动时抛异常返回 True）吞掉，故短路跳过存在性检查。
-        if rotated_from is not None or await self._session_is_new(msg.user_id, session_id):
+        # push_session_id=false（configs/channel.yaml）时：跳过首次创建探测与纯会话ID
+        # 推送；空闲轮换仍发确认语（不含会话ID）。
+        push_id = self._push_session_id_enabled()
+        if rotated_from is not None or (
+            push_id and await self._session_is_new(msg.user_id, session_id)
+        ):
             # idle_h 仅在自动轮换时带确认语；/new 手动轮换/首次创建走纯会话ID 文案
             body = self._new_session_notice(
                 session_id, idle_h if rotated_from is not None else None,
+                include_id=push_id,
             )
-            try:
-                await inst.send_delta(
-                    msg.chat_id, body,
-                    stream_id=uuid.uuid4().hex, stream_end=True,
-                )
-                logger.info(
-                    "ChannelManager: 新会话推送 session_id transport={} session={} rotated_from={}",
-                    msg.channel, session_id, rotated_from,
-                )
-            except Exception:
-                logger.exception(
-                    "ChannelManager: 会话ID 推送失败 (session={})", session_id,
-                )
+            if body:
+                try:
+                    await inst.send_delta(
+                        msg.chat_id, body,
+                        stream_id=uuid.uuid4().hex, stream_end=True,
+                    )
+                    logger.info(
+                        "ChannelManager: 新会话推送 session_id transport={} session={} rotated_from={}",
+                        msg.channel, session_id, rotated_from,
+                    )
+                except Exception:
+                    logger.exception(
+                        "ChannelManager: 会话ID 推送失败 (session={})", session_id,
+                    )
 
         # 提取渠道用户名（企微 from.name），用于落库 users.display_name
         sender_name = (msg.metadata or {}).get("sender_name") or None
@@ -347,15 +366,36 @@ class ChannelManager:
                 pass
             await run_task
 
+    def _push_session_id_enabled(self) -> bool:
+        """是否向渠道聊天输出会话 ID（configs/channel.yaml push_session_id）。
+
+        每次触发点 refresh：文件 mtime 变化即生效，无需重启；注入的
+        测试实例（path=None）不跟踪文件。
+        """
+        return self._settings.refresh().push_session_id
+
     @staticmethod
-    def _new_session_notice(session_id: str, idle_h: float | None = None) -> str:
-        """新会话提示文案：idle_h 非空时带自动轮换确认语（与 /new 表现对齐）。"""
-        body = f"本次对话会话ID: {session_id}\n可用于查询对话历史。"
+    def _new_session_notice(
+        session_id: str,
+        idle_h: float | None = None,
+        *,
+        include_id: bool = True,
+    ) -> str:
+        """新会话提示文案：idle_h 非空时带自动轮换确认语（与 /new 表现对齐）。
+
+        include_id=False（push_session_id: false）时不输出会话 ID：
+        - 空闲轮换（idle_h 非空）→ 仅确认语
+        - 首次创建（无确认语）→ 空串，调用方跳过发送
+        """
+        body = (
+            f"本次对话会话ID: {session_id}\n可用于查询对话历史。" if include_id else ""
+        )
         if idle_h is not None:
-            body = (
+            confirm = (
                 f"✅ 已自动开启新会话（距上次对话超过 {idle_h:g} 小时），"
-                f"之前的历史不再携带。\n{body}"
+                f"之前的历史不再携带。"
             )
+            body = f"{confirm}\n{body}" if body else confirm
         return body
 
     def _idle_hours(self, channel_id: str) -> float:
