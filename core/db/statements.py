@@ -771,4 +771,95 @@ STATEMENTS: dict[str, Statement] = {
             ORDER BY 1, 2
         """,
     ),
+    # ============================================================
+    # 按应用凭证（缺口 2，2026-11-11）
+    #   时间列（created_at / revoked_at）由应用侧 db.now() 生成传参，
+    #   不用 NOW()/DEFAULT——与既有时区哲学一致（DB 服务端可能跑 UTC）。
+    # ============================================================
+    "get_credential_by_hash": Statement(
+        pg="""
+            SELECT "id", "cred_type", "app_id", "channel", "scopes"
+            FROM app_credentials
+            WHERE "key_hash" = $1 AND "status" = 'active' AND "cred_type" = 'api_key'
+            LIMIT 1
+        """,
+        mysql="""
+            SELECT "id", "cred_type", "app_id", "channel", "scopes"
+            FROM app_credentials
+            WHERE "key_hash" = $1 AND "status" = 'active' AND "cred_type" = 'api_key'
+            LIMIT 1
+        """,
+    ),
+    "get_credential_by_id": Statement(
+        pg="""
+            SELECT "id", "cred_type", "key_prefix", "app_id", "channel", "scopes",
+                   "status", "description", "created_at", "revoked_at"
+            FROM app_credentials WHERE "id" = $1
+        """,
+        mysql="""
+            SELECT "id", "cred_type", "key_prefix", "app_id", "channel", "scopes",
+                   "status", "description", "created_at", "revoked_at"
+            FROM app_credentials WHERE "id" = $1
+        """,
+    ),
+    "insert_credential": Statement(
+        pg="""
+            INSERT INTO app_credentials
+                ("cred_type", "key_hash", "key_prefix", "app_id", "channel",
+                 "scopes", "status", "description", "created_at")
+            VALUES ($1, $2, $3, $4, $5, $6, 'active', $7, $8)
+            RETURNING "id"
+        """,
+        mysql="""
+            INSERT INTO app_credentials
+                ("cred_type", "key_hash", "key_prefix", "app_id", "channel",
+                 "scopes", "status", "description", "created_at")
+            VALUES ($1, $2, $3, $4, $5, $6, 'active', $7, $8)
+        """,
+        # 自增主键纯 INSERT → MySQL 走 lastrowid，无需回查
+    ),
+    "list_credentials": Statement(
+        pg="""
+            SELECT "id", "cred_type", "key_prefix", "app_id", "channel", "scopes",
+                   "status", "description", "created_at", "revoked_at"
+            FROM app_credentials ORDER BY "id" DESC
+        """,
+        mysql="""
+            SELECT "id", "cred_type", "key_prefix", "app_id", "channel", "scopes",
+                   "status", "description", "created_at", "revoked_at"
+            FROM app_credentials ORDER BY "id" DESC
+        """,
+    ),
+    # $1 = id，$2 = revoked_at（应用侧时间）；仅吊销活跃凭证
+    "revoke_credential": Statement(
+        pg="""
+            UPDATE app_credentials
+            SET "status" = 'revoked', "revoked_at" = $2
+            WHERE "id" = $1 AND "status" = 'active'
+        """,
+        mysql="""
+            UPDATE app_credentials
+            SET "status" = 'revoked', "revoked_at" = $2
+            WHERE "id" = $1 AND "status" = 'active'
+        """,
+    ),
+    # ============================================================
+    # 会话归属校验（缺口 7，2026-11-11）
+    #   sessions 优先、conversations 兜底；mysql 变体 $1 重复出现时
+    #   translate_placeholders 自动复用同一参数 → 两方言调用均只传 sid 一次
+    # ============================================================
+    "get_session_owner": Statement(
+        pg="""
+            SELECT "user_id" FROM sessions WHERE "id" = $1
+            UNION ALL
+            SELECT "user_id" FROM conversations WHERE "session_id" = $1
+            LIMIT 1
+        """,
+        mysql="""
+            SELECT "user_id" FROM sessions WHERE "id" = $1
+            UNION ALL
+            SELECT "user_id" FROM conversations WHERE "session_id" = $1
+            LIMIT 1
+        """,
+    ),
 }

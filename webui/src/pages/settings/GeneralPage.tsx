@@ -103,7 +103,7 @@ export function GeneralPage() {
 					/>
 					<ReadOnlyRow
 						label={t('settings.general.platform', { defaultValue: '平台' })}
-						value="Base Agent"
+						value="Pamimi Tako Bot Demo"
 					/>
 				</SettingsGroup>
 			</section>

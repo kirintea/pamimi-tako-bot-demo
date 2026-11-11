@@ -39,6 +39,7 @@ from loguru import logger
 
 from core.chat_service import acquire_session_lock
 from core.command import get_command_service
+from core.credentials import verify_credential
 from core.multimodal import (
     ContentPart,
     ImageContent,
@@ -47,7 +48,7 @@ from core.multimodal import (
     serialize_message_for_storage,
 )
 from core.session_status import SessionBusyError, SessionState, SessionStatusTracker
-from core.validators import coerce_id, coerce_id_strict, is_auth_enabled
+from core.validators import coerce_id, coerce_id_strict, is_auth_enabled, validate_channel
 
 router = APIRouter()
 
@@ -98,6 +99,7 @@ async def _persist_conversation(
     tool_calls: list[dict] | None = None,
     turn_id: str | None = None,
     turn_rows: list[dict] | None = None,
+    channel: str = "web",
 ) -> None:
     """后台异步持久化对话历史（仅 PG 双写；Redis AgentState 已在锁内同步落库）。
 
@@ -108,7 +110,7 @@ async def _persist_conversation(
             # 写 user 消息（带 turn_id）
             await db.insert_conversation(
                 user_id, session_id, "user", user_message,
-                channel="web", turn_id=turn_id, turn_seq=0,
+                channel=channel, turn_id=turn_id, turn_seq=0,
             )
 
             if turn_rows:
@@ -118,7 +120,7 @@ async def _persist_conversation(
                         user_id, session_id,
                         row["role"], row["content"],
                         metadata=row.get("metadata"),
-                        channel="web",
+                        channel=channel,
                         turn_id=turn_id,
                         turn_seq=row["turn_seq"],
                     )
@@ -131,14 +133,16 @@ async def _persist_conversation(
                     metadata["tool_calls"] = tool_calls
                 await db.insert_conversation(
                     user_id, session_id, "assistant", assistant_reply,
-                    metadata=metadata or None, channel="web",
+                    metadata=metadata or None, channel=channel,
                 )
 
             title = user_message[:30] if user_message else None
             if title:
                 existing = await db.get_session_title(user_id, session_id)
                 if not existing:
-                    await db.upsert_session_title(user_id, session_id, title)
+                    await db.upsert_session_title(
+                        user_id, session_id, title, channel=channel,
+                    )
     except Exception:
         logger.exception("WebSocket 持久化失败")
 
@@ -158,6 +162,7 @@ async def websocket_chat(
     user_id: str = "anonymous",
     session_id: str | None = None,
     device_id: str = "unknown",
+    channel: str = "web",
 ):
     """WebSocket 流式对话端点（支持多端并发观察者模式）
 
@@ -166,6 +171,7 @@ async def websocket_chat(
         user_id: 用户标识（query param）
         session_id: 会话 ID（可选，不传则自动创建）
         device_id: 设备标识（query param，用于多端状态广播）
+        channel: 渠道标识（query param，默认 web；1-16 位 [A-Za-z0-9_-]，连接级归因）
     """
     await ws.accept()
     # 规范化用户 / 会话标识（防止路径穿越等非法输入）
@@ -184,28 +190,71 @@ async def websocket_chat(
     session_id = session_id or str(uuid.uuid4())
     session_id = coerce_id(session_id, default=str(uuid.uuid4()))
 
+    # 渠道校验（连接级；D5：非法 → error 帧 + 4400，对齐 user_id 处理）
+    try:
+        channel = validate_channel(channel)
+    except ValueError:
+        await _send_json(ws, "error", {
+            "message": f"无效的 channel: {channel!r}（1-16 位 [A-Za-z0-9_-]）",
+        })
+        await ws.close(code=4400, reason="invalid_channel")
+        return
+
     # --- 浏览器兼容的 WebSocket 认证 ---
     # 浏览器无法在 WS 握手时设置自定义 header，故采用「首帧认证」：
-    # 启用 AUTH_REQUIRED=true 时，客户端须先发送
+    # 认证启用（D8：与 HTTP 中间件同源，env AUTH_REQUIRED > YAML auth.required，
+    # 即上方 is_auth_enabled(config) 的结果——不再 env-only 覆盖）时，客户端须先发送
     #   {"type": "auth", "payload": {"api_key": "<API_KEY>"}}
-    # 否则服务端直接关闭连接（code=4401）。未启用时则忽略任何 auth 帧，
+    # 否则 error 帧 + 关闭 4401。未启用时则忽略任何 auth 帧，
     # 首帧无论是 auth 还是 chat 均按原协议处理（不再从 URL 读取 api_key）。
-    auth_required = os.environ.get("AUTH_REQUIRED") == "true"
+    #
+    # 按应用凭证（缺口 2）：主 key（env API_KEY > YAML auth.api_key，D7 旁路）
+    # 直接过；非主 key 查凭证表——命中注入 credential、未命中 4401、
+    # 凭证库不可用 4503（D3，与 HTTP 503 对齐）。
+    credential: dict | None = None
     if auth_required:
         try:
             first = await ws.receive_json()
         except Exception:
             await ws.close(code=4401, reason="unauthorized")
             return
-        payload = first.get("payload") if isinstance(first, dict) else None
-        api_key = payload.get("api_key") if isinstance(payload, dict) else None
-        if not (
-            isinstance(first, dict)
-            and first.get("type") == "auth"
-            and api_key == os.environ.get("API_KEY")
-        ):
+        if not (isinstance(first, dict) and first.get("type") == "auth"):
+            await _send_json(ws, "error", {"message": "未发送认证帧"})
             await ws.close(code=4401, reason="unauthorized")
             return
+        payload = first.get("payload")
+        api_key = (payload.get("api_key") or "") if isinstance(payload, dict) else ""
+        master = (
+            os.environ.get("API_KEY")
+            or getattr(getattr(config, "auth", None), "api_key", "")
+            or ""
+        )
+        if master and api_key == master:
+            pass  # D7 主 key 旁路：不注入 credential
+        else:
+            db0 = getattr(ws.app.state, "database_manager", None)
+            if db0 is None or not getattr(db0, "is_initialized", False):
+                await _send_json(ws, "error", {"message": "凭证库不可用"})
+                await ws.close(code=4503, reason="credential_store_unavailable")
+                return
+            try:
+                credential = await verify_credential(db0, api_key)
+            except Exception:
+                await _send_json(ws, "error", {"message": "凭证库不可用"})
+                await ws.close(code=4503, reason="credential_store_unavailable")
+                return
+            if credential is None:
+                await _send_json(ws, "error", {"message": "认证失败"})
+                await ws.close(code=4401, reason="unauthorized")
+                return
+
+    # D2：凭证 channel 强制覆盖（query 校验之后；仅被动接入入口，与 HTTP 同语义）
+    if credential and channel != credential["channel"]:
+        logger.info(
+            "WS channel 由凭证覆盖: query={!r} → {!r}（app_id={}）",
+            channel, credential["channel"], credential.get("app_id"),
+        )
+        channel = credential["channel"]
 
     # 获取服务实例
     session_mgr = ws.app.state.session_manager
@@ -394,6 +443,7 @@ async def websocket_chat(
                             ws, session_mgr, db, user_id, session_id, message,
                             cancelled, device_id=device_id,
                             status_tracker=status_tracker,
+                            channel=channel,
                         )
                     )
 
@@ -477,6 +527,7 @@ async def _handle_chat(
     cancelled: asyncio.Event,
     device_id: str = "unknown",
     status_tracker: SessionStatusTracker | None = None,
+    channel: str = "web",
 ) -> None:
     """处理单轮对话的流式回复（支持多端并发状态广播）
 
@@ -561,11 +612,14 @@ async def _handle_chat(
                         serialize_message_for_storage(message),
                     )
 
-                agent = await session_mgr.get_or_create(user_id, session_id)
+                agent = await session_mgr.get_or_create(
+                    user_id, session_id, channel=channel,
+                )
                 # 注入 OTel 追踪上下文（供 TracingContextMiddleware 使用）
                 agent.__tracing_context__ = {
                     "agentscope.user.id": user_id,
                     "agentscope.device.id": device_id,
+                    "agentscope.channel": channel,
                 }
                 # 多实例场景：强制刷新状态
                 await session_mgr.refresh_state(user_id, session_id)
@@ -813,6 +867,7 @@ async def _handle_chat(
             tool_calls=list(tool_call_records.values()) or None,
             turn_id=turn_id,
             turn_rows=turn_rows or None,
+            channel=channel,
         ))
         _PERSIST_TASKS.add(task)
         task.add_done_callback(_PERSIST_TASKS.discard)

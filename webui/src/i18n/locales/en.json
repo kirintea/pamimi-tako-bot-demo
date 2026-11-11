@@ -5,6 +5,11 @@
 			"wecom": "WeCom",
 			"napcat": "NapCat (QQ)",
 			"unknown": "Unknown"
+		},
+		"channelCategories": {
+			"web-like": "Web-like",
+			"im": "IM channels",
+			"unknown": "Unknown"
 		}
 	},
 	"common": {
@@ -60,6 +65,36 @@
 		"llm": "LLM",
 		"tts": "TTS",
 		"embedding": "Embedding"
+	},
+	"sidebar": {
+		"adminCredentials": "Credentials"
+	},
+	"credentials": {
+		"title": "Credential Management",
+		"create": "Create credential",
+		"createTitle": "Create credential",
+		"channel": "Channel",
+		"status": "Status",
+		"createdAt": "Created at",
+		"expiresAt": "Expires / revoked at",
+		"neverExpires": "Never expires",
+		"description": "Description",
+		"active": "Active",
+		"revoked": "Revoked",
+		"revoke": "Revoke",
+		"revokeTitle": "Revoke credential",
+		"revokeConfirm": "Revoke",
+		"revokeConfirmEnd": "? All requests for this app will return 401 and this cannot be undone.",
+		"empty": "No credentials",
+		"needRoot": "Root role is required to access credential management",
+		"createdTitle": "Credential created",
+		"keyOnce": "⚠ The plaintext key is shown only once. After closing, only the prefix remains—copy it now!",
+		"copy": "Copy",
+		"copied": "Copied",
+		"copyUnavailable": "Copy unavailable. Select the text manually and use right-click Copy.",
+		"savedClose": "Saved, close",
+		"channelPlaceholder": "Channel (1-16 letters, digits, _ or -, e.g. acme_im)",
+		"descPlaceholder": "Description (optional)"
 	},
 	"error": {
 		"description": "The page hit an unexpected error. You can retry or go back home.",
@@ -564,6 +599,10 @@
 		"serverUrlPlaceholder": "https://...",
 		"username": "Username",
 		"usernamePlaceholder": "Your username",
+		"apiKey": "API Key (optional)",
+		"apiKeyOn": "API Key (required)",
+		"apiKeyHint": "Required when server auth (AUTH_REQUIRED) is on: the master key or a dedicated credential from your admin",
+		"apiKeyRequired": "Server auth is enabled — API Key is required (enter it here, or ask an admin for the master key / a dedicated credential)",
 		"submit": "Get Started",
 		"checking": "Connecting...",
 		"errorUnreachable": "Cannot reach this server. Check the address, make sure the service is running, and that it allows cross-origin requests.",

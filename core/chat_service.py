@@ -122,6 +122,12 @@ class ChatService:
                     "owner": status.get("owner", "unknown"),
                     "started_at": status.get("started_at"),
                 })
+                # Q6：busy 路径在 raise 前补 run_end，保证订阅方能收到终态，
+                # 避免 channel/Web 订阅方挂起或串上一轮事件（三入口一致收尾）。
+                await self._publish_event(events_key, {
+                    "type": "run_end",
+                    "session_id": session_id,
+                })
                 raise SessionBusyError(
                     owner=status.get("owner", "unknown"),
                     started_at=status.get("started_at"),
@@ -183,6 +189,7 @@ class ChatService:
                 agent.__tracing_context__ = {
                     "agentscope.user.id": user_id,
                     "agentscope.device.id": device_id,
+                    "agentscope.channel": channel,
                 }
 
                 # 多实例无状态：每次 run 前强制从 Redis 刷新内存 AgentState，
@@ -407,7 +414,10 @@ class ChatService:
                         if title:
                             existing = await db.get_session_title(user_id, session_id)
                             if not existing:
-                                await db.upsert_session_title(user_id, session_id, title)
+                                await db.upsert_session_title(
+                                    user_id, session_id, title,
+                                    channel=channel,
+                                )
                     except Exception:
                         logger.exception(
                             "Chat run PG 持久化失败: user={} session={}",

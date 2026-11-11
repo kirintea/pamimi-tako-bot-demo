@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 
-"""运营统计聚合
+"""运营统计聚合 —— 口径见 .draft/2026-10-22-ops-stats-dashboard.md
 
 职责：时间窗切分、分桶键生成、统计 SQL 调用与响应组装。
 SQL 本体在 core/db/statements.py 注册表（stats_* 前缀）。
 
-口径要点：
+口径要点（改动前先读设计文档）：
 - 行过滤 status='active'（排除软删 deleted 与轮内归档 archived）
 - 对话轮次 = COUNT(DISTINCT turn_id) + 旧数据(turn_id IS NULL)按 role='user' 行数
 - 会话双口径：活跃（按活动日，跨天各计一次）/ 新增（按创建日，每会话一次）
@@ -243,7 +243,7 @@ async def _compute_stats_legacy(
     channel: str | None,
     range_key: str,
 ) -> dict[str, Any]:
-    """按口径组装看板响应
+    """按口径组装看板响应（详见 .draft/2026-10-22-ops-stats-dashboard.md）
 
     Args:
         db: 提供 fetch_named(name, *args) 的对象（DatabaseManager 或测试替身）

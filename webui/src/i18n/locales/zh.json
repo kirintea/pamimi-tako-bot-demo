@@ -5,6 +5,11 @@
 			"wecom": "企业微信",
 			"napcat": "NapCat (QQ)",
 			"unknown": "未知"
+		},
+		"channelCategories": {
+			"web-like": "类 Web",
+			"im": "IM 渠道",
+			"unknown": "未知"
 		}
 	},
 	"common": {
@@ -60,6 +65,36 @@
 		"llm": "LLM",
 		"tts": "TTS",
 		"embedding": "向量"
+	},
+	"sidebar": {
+		"adminCredentials": "凭证管理"
+	},
+	"credentials": {
+		"title": "凭证管理",
+		"create": "创建凭证",
+		"createTitle": "创建凭证",
+		"channel": "渠道",
+		"status": "状态",
+		"createdAt": "创建时间",
+		"expiresAt": "失效/吊销时间",
+		"neverExpires": "永不过期",
+		"description": "描述",
+		"active": "有效",
+		"revoked": "已吊销",
+		"revoke": "吊销",
+		"revokeTitle": "吊销凭证",
+		"revokeConfirm": "确定吊销",
+		"revokeConfirmEnd": "？吊销后该应用所有请求将返回 401，且不可恢复。",
+		"empty": "暂无凭证",
+		"needRoot": "需要 root 角色才能访问凭证管理",
+		"createdTitle": "凭证创建成功",
+		"keyOnce": "⚠ 明文 key 仅显示这一次，关闭后仅保留前缀——请立即复制保存！",
+		"copy": "复制",
+		"copied": "已复制",
+		"copyUnavailable": "复制不可用，请手动选中文本后右键复制",
+		"savedClose": "已保存，关闭",
+		"channelPlaceholder": "渠道（1-16 位字母数字_-，如 acme_im）",
+		"descPlaceholder": "描述（可选）"
 	},
 	"error": {
 		"description": "页面遇到意外错误。你可以重试或返回首页。",
@@ -564,6 +599,10 @@
 		"serverUrlPlaceholder": "https://...",
 		"username": "用户名",
 		"usernamePlaceholder": "请输入用户名",
+		"apiKey": "API Key（可选）",
+		"apiKeyOn": "API Key（必填）",
+		"apiKeyHint": "服务端开启认证（AUTH_REQUIRED）时必填：主 key 或管理员发放的专用凭证",
+		"apiKeyRequired": "服务端已开启认证，API Key 必填（setup 页填写，或向管理员索取主 key / 专用凭证）",
 		"submit": "开始使用",
 		"checking": "连接中...",
 		"errorUnreachable": "无法连接到该服务器。请检查地址是否正确、服务是否已启动，以及是否允许跨域请求。",

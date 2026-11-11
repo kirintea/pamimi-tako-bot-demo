@@ -12,6 +12,12 @@ import { Download } from 'lucide-react';
 import type { StatsQuery, StatsRange } from '@/api/stats';
 
 import { useChannelLabel } from './channelLabel';
+import {
+	CHANNEL_CATEGORY_ORDER,
+	channelCategory,
+	useChannelCategoryLabel,
+	type ChannelCategoryKey,
+} from './channelCategory';
 
 const RANGES: { value: StatsRange; label: string }[] = [
 	{ value: '7d', label: '近7天' },
@@ -59,8 +65,16 @@ const INPUT_CLS =
 
 export function FilterBar({ query, onChange, channelOptions, onExport }: FilterBarProps) {
 	const channelLabel = useChannelLabel();
+	const categoryLabel = useChannelCategoryLabel();
 
-	const channels = [{ value: 'all', label: '全部' }, ...channelOptions];
+	// 按类分组（展示层）：「全部」在组外，其余进 optgroup，模板类在前
+	const grouped = new Map<ChannelCategoryKey, { value: string; label: string }[]>();
+	for (const c of channelOptions) {
+		const cat = channelCategory(c.value);
+		const arr = grouped.get(cat);
+		if (arr) arr.push(c);
+		else grouped.set(cat, [c]);
+	}
 
 	return (
 		<div className="flex flex-wrap items-center gap-x-5 gap-y-3">
@@ -107,11 +121,18 @@ export function FilterBar({ query, onChange, channelOptions, onExport }: FilterB
 					value={query.channel}
 					onChange={(e) => onChange({ ...query, channel: e.target.value })}
 				>
-					{channels.map((c) => (
-						<option key={c.value} value={c.value}>
-							{c.value === 'all' ? c.label : channelLabel(c.value, c.label)}
-						</option>
-					))}
+					<option value="all">全部</option>
+					{CHANNEL_CATEGORY_ORDER.filter((cat) => grouped.get(cat)?.length).map(
+						(cat) => (
+							<optgroup key={cat} label={categoryLabel(cat)}>
+								{grouped.get(cat)!.map((c) => (
+									<option key={c.value} value={c.value}>
+										{channelLabel(c.value, c.label)}
+									</option>
+								))}
+							</optgroup>
+						),
+					)}
 				</select>
 			</div>
 

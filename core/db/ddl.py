@@ -218,6 +218,30 @@ DDL_POSTGRES = [
     """
     CREATE INDEX IF NOT EXISTS idx_stats_daily_day ON stats_daily("stat_day")
     """,
+
+    # ============================================================
+    # 按应用凭证（缺口 2，2026-11-11 子计划）
+    #   只存 SHA-256 key_hash + 展示用 key_prefix，明文 key 仅创建时回显一次（D1）
+    # ============================================================
+    """
+    CREATE TABLE IF NOT EXISTS app_credentials (
+        "id"           BIGSERIAL PRIMARY KEY,
+        "cred_type"    VARCHAR(16)  NOT NULL DEFAULT 'api_key',
+        "key_hash"     VARCHAR(64)  NOT NULL,
+        "key_prefix"   VARCHAR(16)  NOT NULL,
+        "app_id"       VARCHAR(64)  NOT NULL,
+        "channel"      VARCHAR(16)  NOT NULL,
+        "scopes"       VARCHAR(255) NOT NULL DEFAULT 'chat',
+        "status"       VARCHAR(16)  NOT NULL DEFAULT 'active',
+        "description"  VARCHAR(255) NULL,
+        "meta"         JSONB        NULL,
+        "created_at"   TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+        "revoked_at"   TIMESTAMPTZ  NULL
+    )
+    """,
+    """CREATE UNIQUE INDEX IF NOT EXISTS "uk_cred_key_hash" ON "app_credentials"("key_hash")""",
+    # 会话归属校验（缺口 7）：按 session_id 反查 user_id
+    """CREATE INDEX IF NOT EXISTS "idx_conv_session" ON "conversations"("session_id")""",
 ]
 
 # ============================================================
@@ -315,6 +339,31 @@ DDL_MYSQL = [
     )
     """,
     'CREATE INDEX idx_stats_daily_day ON stats_daily("stat_day")',
+
+    # ============================================================
+    # 按应用凭证（缺口 2，2026-11-11 子计划）
+    #   MySQL 禁 JSONB/TIMESTAMPTZ → JSON + DATETIME(3)，索引内联
+    # ============================================================
+    """
+    CREATE TABLE IF NOT EXISTS app_credentials (
+        "id"           BIGINT AUTO_INCREMENT PRIMARY KEY,
+        "cred_type"    VARCHAR(16)  NOT NULL DEFAULT 'api_key',
+        "key_hash"     VARCHAR(64)  NOT NULL,
+        "key_prefix"   VARCHAR(16)  NOT NULL,
+        "app_id"       VARCHAR(64)  NOT NULL,
+        "channel"      VARCHAR(16)  NOT NULL,
+        "scopes"       VARCHAR(255) NOT NULL DEFAULT 'chat',
+        "status"       VARCHAR(16)  NOT NULL DEFAULT 'active',
+        "description"  VARCHAR(255) NULL,
+        "meta"         JSON         NULL,
+        "created_at"   DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+        "revoked_at"   DATETIME(3)  NULL,
+        UNIQUE KEY "uk_cred_key_hash" ("key_hash"),
+        KEY "idx_cred_app" ("app_id")
+    )
+    """,
+    # 会话归属校验（缺口 7）：按 session_id 反查 user_id
+    'CREATE INDEX idx_conv_session ON conversations("session_id")',
 ]
 
 # MySQL 幂等性错误码（可安全忽略）：
@@ -346,4 +395,5 @@ REQUIRED_TABLES = [
     "sessions",
     "users",
     "stats_daily",
+    "app_credentials",
 ]

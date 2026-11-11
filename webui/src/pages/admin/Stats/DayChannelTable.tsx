@@ -10,6 +10,7 @@ import type { StatsBucketChannel } from '@/api/stats';
 import { ChannelBrandLogo } from '@/components/ChannelBrandLogo';
 
 import { useChannelLabel } from './channelLabel';
+import { channelLogoType } from './channelCategory';
 
 export function DayChannelTable({ rows }: { rows: StatsBucketChannel[] }) {
 	const channelLabel = useChannelLabel();
@@ -39,7 +40,7 @@ export function DayChannelTable({ rows }: { rows: StatsBucketChannel[] }) {
 								<td className="px-3 py-2.5">{row.bucket.slice(5)}</td>
 								<td className="px-3 py-2.5">
 									<span className="flex items-center gap-1.5">
-										<ChannelBrandLogo type={row.channel} size={14} />
+										<ChannelBrandLogo type={channelLogoType(row.channel)} size={14} />
 										{channelLabel(row.channel)}
 									</span>
 								</td>

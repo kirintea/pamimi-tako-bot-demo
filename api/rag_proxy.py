@@ -231,9 +231,20 @@ async def shutdown() -> None:
 # ── 端点 ────────────────────────────────────────────────────
 
 @router.get("/webui-config")
-async def webui_config() -> JSONResponse:
-    """前端功能开关下发：rag_url 为反代入口，null 时前端显示占位提示"""
-    return JSONResponse({"rag_url": "/rag/" if _service is not None else None})
+async def webui_config(request: Request) -> JSONResponse:
+    """前端功能开关下发
+
+    - rag_url: 反代入口，null 时前端显示占位提示
+    - auth_required: AUTH 是否开启（is_auth_enabled：env AUTH_REQUIRED > YAML
+      auth.required）——setup 页据此把 API Key 从「可选」改必填强校验（D9）
+    """
+    from core.validators import is_auth_enabled
+
+    config = getattr(request.app.state, "config", None)
+    return JSONResponse({
+        "rag_url": "/rag/" if _service is not None else None,
+        "auth_required": is_auth_enabled(config),
+    })
 
 
 @router.get("/rag")

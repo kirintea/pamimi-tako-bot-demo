@@ -3,8 +3,10 @@
  *
  * 三 tab（用户数/会话数量/对话轮次）切换占比分母指标；
  * share 前端现算：行指标 ÷ channels 各行该指标合计（uv_share 保留不删，备用）。
- * 渠道图标：品牌 logo（ChannelBrandLogo，无资源时两字母缩写）。
- * 显示名走 useChannelLabel（中文 wecom → 企业微信）。
+ * 渠道图标：品牌 logo（ChannelBrandLogo，无资源时两字母缩写；web-like 类
+ * 无资源回落类模板 web 图标，见 channelLogoType）。
+ * 显示名走 useChannelLabel（中文 wecom → 企业微信）；按渠道类分组小节
+ * （web-like 模板类在前），类纯展示、占比分母仍为全渠道合计。
  */
 
 import { useState } from 'react';
@@ -15,6 +17,13 @@ import { ChannelBrandLogo } from '@/components/ChannelBrandLogo';
 import { chart } from '@/lib/themeColors';
 
 import { useChannelLabel } from './channelLabel';
+import {
+	CHANNEL_CATEGORY_ORDER,
+	channelCategory,
+	channelLogoType,
+	useChannelCategoryLabel,
+	type ChannelCategoryKey,
+} from './channelCategory';
 
 type MetricKey = 'uv' | 'sessions_active' | 'turns';
 
@@ -26,9 +35,18 @@ const TABS: { key: MetricKey; label: string; color: string }[] = [
 
 export function ChannelCards({ rows }: { rows: StatsChannelRow[] }) {
 	const channelLabel = useChannelLabel();
+	const categoryLabel = useChannelCategoryLabel();
 	const [tab, setTab] = useState<MetricKey>('uv');
 	const active = TABS.find((t) => t.key === tab) ?? TABS[0];
+	// 占比分母仍为全渠道合计（口径不变）；类分组纯展示
 	const total = rows.reduce((sum, r) => sum + r[tab], 0);
+	const grouped = new Map<ChannelCategoryKey, StatsChannelRow[]>();
+	for (const r of rows) {
+		const cat = channelCategory(r.channel);
+		const arr = grouped.get(cat);
+		if (arr) arr.push(r);
+		else grouped.set(cat, [r]);
+	}
 
 	return (
 		<div className="rounded-xl border border-stats-border bg-stats-panel p-5">
@@ -53,44 +71,62 @@ export function ChannelCards({ rows }: { rows: StatsChannelRow[] }) {
 							</button>
 						))}
 					</div>
-					<div className="flex flex-col gap-3">
-						{rows.map((r) => {
-							const share = total > 0 ? r[tab] / total : 0;
-							return (
-								<div key={r.channel || 'unknown'} className="rounded-xl border border-stats-border p-4">
-									<div className="flex items-center gap-3">
-										<ChannelBrandLogo type={r.channel} size={36} />
-										<div className="min-w-0">
-											<div className="truncate text-[14px] font-semibold text-stats-title">
-												{channelLabel(r.channel, r.label)}
-											</div>
-											<div className="mt-0.5 flex gap-3 text-[12px] text-stats-faint">
-												<span>用户 {r.uv.toLocaleString()}</span>
-												<span>会话 {r.sessions_active.toLocaleString()}</span>
-												<span>轮次 {r.turns.toLocaleString()}</span>
-											</div>
-										</div>
+					<div className="flex flex-col gap-4">
+						{CHANNEL_CATEGORY_ORDER.filter((cat) => grouped.get(cat)?.length).map(
+							(cat) => (
+								<div key={cat} className="flex flex-col gap-3">
+									<div className="flex items-center gap-2">
+										<span className="text-[12px] font-semibold text-stats-meta">
+											{categoryLabel(cat)}
+										</span>
+										<span className="h-px flex-1 bg-stats-border" />
 									</div>
-									<div className="mt-3">
-										<div className="flex items-center justify-between text-[12px]">
-											<span className="text-stats-muted">{active.label}占比</span>
-											<span className="font-semibold text-stats-body">
-												{Math.round(share * 100)}%
-											</span>
-										</div>
-										<div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-stats-track">
+									{grouped.get(cat)!.map((r) => {
+										const share = total > 0 ? r[tab] / total : 0;
+										return (
 											<div
-												className="h-full rounded-full"
-												style={{
-													width: `${Math.round(share * 100)}%`,
-													backgroundColor: active.color,
-												}}
-											/>
-										</div>
-									</div>
+												key={r.channel || 'unknown'}
+												className="rounded-xl border border-stats-border p-4"
+											>
+												<div className="flex items-center gap-3">
+													<ChannelBrandLogo
+														type={channelLogoType(r.channel)}
+														size={36}
+													/>
+													<div className="min-w-0">
+														<div className="truncate text-[14px] font-semibold text-stats-title">
+															{channelLabel(r.channel, r.label)}
+														</div>
+														<div className="mt-0.5 flex gap-3 text-[12px] text-stats-faint">
+															<span>用户 {r.uv.toLocaleString()}</span>
+															<span>会话 {r.sessions_active.toLocaleString()}</span>
+															<span>轮次 {r.turns.toLocaleString()}</span>
+														</div>
+													</div>
+												</div>
+												<div className="mt-3">
+													<div className="flex items-center justify-between text-[12px]">
+														<span className="text-stats-muted">{active.label}占比</span>
+														<span className="font-semibold text-stats-body">
+															{Math.round(share * 100)}%
+														</span>
+													</div>
+													<div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-stats-track">
+														<div
+															className="h-full rounded-full"
+															style={{
+																width: `${Math.round(share * 100)}%`,
+																backgroundColor: active.color,
+															}}
+														/>
+													</div>
+												</div>
+											</div>
+										);
+									})}
 								</div>
-							);
-						})}
+							),
+						)}
 					</div>
 				</>
 			)}

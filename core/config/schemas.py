@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 # ============================================================
@@ -167,7 +167,7 @@ class AgentConfig(BaseModel):
     """Agent 行为配置"""
     model_config = ConfigDict(extra="forbid")
 
-    name: str = Field(default="base_agent", description="Agent 名称")
+    name: str = Field(default="pamimi_tako_bot_demo", description="Agent 名称")
     system_prompt: str = Field(default="你是一个有帮助的助手。", description="系统提示词")
     max_iters: int = Field(default=20, description="ReAct 最大迭代次数")
     context_trigger_ratio: float = Field(default=0.6, description="上下文压缩触发比例")
@@ -330,6 +330,52 @@ class RateLimitConfig(BaseModel):
     requests_per_minute: int = Field(default=10, description="每分钟最大请求数（per-user）")
 
 
+class CORSConfig(BaseModel):
+    """跨域资源共享（CORS）配置 — 第三方浏览器页面跨域调用本服务时开启
+
+    默认关闭：不挂载任何 CORS 中间件，行为与旧版完全一致。
+    WebSocket 不受 CORS 管辖（浏览器 WS 握手不执行 CORS 检查），无需配置。
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = Field(default=False, description="是否启用 CORS（默认关闭）")
+    allow_origins: list[str] = Field(
+        default_factory=list,
+        description='允许的来源列表；["*"] 允许任意源（勿与 allow_credentials 同用）',
+    )
+    allow_methods: list[str] = Field(
+        default_factory=lambda: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        description="允许的 HTTP 方法（预检 Access-Control-Allow-Methods）",
+    )
+    allow_headers: list[str] = Field(
+        default_factory=lambda: ["*"],
+        description='允许的请求头；["*"] 时预检镜像回显任意请求头（覆盖 X-API-Key）',
+    )
+    expose_headers: list[str] = Field(
+        default_factory=list,
+        description='暴露给浏览器 JS 的响应头（如 "Retry-After"，跨域读 429 重试提示需要）',
+    )
+    max_age: int = Field(default=600, description="预检结果缓存秒数")
+    allow_credentials: bool = Field(
+        default=False,
+        description="是否允许携带凭据；true 时 allow_origins 禁止含 *",
+    )
+
+    @model_validator(mode="after")
+    def _validate(self) -> "CORSConfig":
+        if self.allow_credentials and "*" in self.allow_origins:
+            raise ValueError(
+                "cors.allow_credentials=true 时 allow_origins 不能含 '*'"
+                "（浏览器禁用该组合，且等效于对任意源开放凭据）"
+            )
+        if self.enabled and not self.allow_origins:
+            raise ValueError(
+                'cors.enabled=true 时 allow_origins 不能为空'
+                '（请配置来源白名单，或 ["*"] 允许任意源）'
+            )
+        return self
+
+
 class MiddlewareConfig(BaseModel):
     """中间件配置"""
     budget_control: BudgetControlConfig = Field(
@@ -339,6 +385,10 @@ class MiddlewareConfig(BaseModel):
     rate_limit: RateLimitConfig = Field(
         default_factory=RateLimitConfig,
         description="速率限制配置",
+    )
+    cors: CORSConfig = Field(
+        default_factory=CORSConfig,
+        description="跨域（CORS）配置",
     )
 
 

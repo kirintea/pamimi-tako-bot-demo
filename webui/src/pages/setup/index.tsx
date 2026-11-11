@@ -16,6 +16,7 @@ import { useTranslation } from 'react-i18next';
 
 import { chatApi } from '@/api/chat';
 import type { HealthResponse } from '@/api/types';
+import { webuiApi } from '@/api/webui';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
@@ -118,6 +119,8 @@ export const SetupPage = ({ onComplete, className }: Props) => {
 		return `${protocol}//${window.location.host}/ws/chat`;
 	});
 	const [apiKey, setApiKey] = useState(() => localStorage.getItem('api_key') ?? '');
+	// D9：服务端 AUTH 开关（/webui-config 下发）→ API Key 必填强校验
+	const [authRequired, setAuthRequired] = useState(false);
 
 	// step2：模型配置
 	const [modelName, setModelName] = useState(() => localStorage.getItem('llm_model_name') || 'glm-5');
@@ -143,6 +146,14 @@ export const SetupPage = ({ onComplete, className }: Props) => {
 		void runHealth();
 	}, [runHealth]);
 
+	// 拉取服务端功能开关（auth_required 决定 API Key 是否必填；失败按未开启处理）
+	useEffect(() => {
+		void webuiApi
+			.getConfig()
+			.then((cfg) => setAuthRequired(!!cfg.auth_required))
+			.catch(() => {});
+	}, []);
+
 	const checks = buildChecks(health, healthChecking);
 
 	const saveConnection = () => {
@@ -154,6 +165,16 @@ export const SetupPage = ({ onComplete, className }: Props) => {
 		localStorage.setItem('user_id', trimmedUser);
 		localStorage.setItem('ws_address', wsAddress.trim().replace(/\/+$/, ''));
 		const trimmedKey = apiKey.trim();
+		if (authRequired && !trimmedKey) {
+			// D9：服务端已开启认证时 API Key 必填，空则阻止保存
+			setErrorMsg(
+				t('setup.apiKeyRequired', {
+					defaultValue:
+						'服务端已开启认证，API Key 必填（setup 页填写，或向管理员索取主 key / 专用凭证）',
+				}),
+			);
+			return false;
+		}
 		if (trimmedKey) localStorage.setItem('api_key', trimmedKey);
 		else localStorage.removeItem('api_key');
 		return true;
@@ -324,7 +345,14 @@ export const SetupPage = ({ onComplete, className }: Props) => {
 									className={inputClassName}
 								/>
 							</FieldBlock>
-							<FieldBlock label={t('setup.apiKey', { defaultValue: 'API Key（可选）' })} hint={t('setup.apiKeyHint', { defaultValue: '仅在服务端开启 AUTH_REQUIRED 时填写' })}>
+							<FieldBlock
+								label={t(authRequired ? 'setup.apiKeyOn' : 'setup.apiKey', {
+									defaultValue: authRequired ? 'API Key（必填）' : 'API Key（可选）',
+								})}
+								hint={t('setup.apiKeyHint', {
+									defaultValue: '服务端开启认证（AUTH_REQUIRED）时必填：主 key 或管理员发放的专用凭证',
+								})}
+							>
 								<Input
 									type="password"
 									value={apiKey}

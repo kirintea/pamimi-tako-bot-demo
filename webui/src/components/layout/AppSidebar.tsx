@@ -17,6 +17,7 @@ import {
 	ChevronDown,
 	ChevronRight,
 	Crown,
+		KeyRound,
 	Database,
 	Ellipsis,
 	LogIn,
@@ -323,6 +324,12 @@ export function AppSidebar({
 								label={t('sidebar.adminStats', { defaultValue: '运营数据看板' })}
 								active={location.pathname.startsWith('/admin/stats')}
 								onClick={() => navigate('/admin/stats')}
+							/>
+							<NavItem
+								icon={<KeyRound className="size-3.5" />}
+								label={t('sidebar.adminCredentials', { defaultValue: '凭证管理' })}
+								active={location.pathname.startsWith('/admin/credentials')}
+								onClick={() => navigate('/admin/credentials')}
 							/>
 						</nav>
 					</>

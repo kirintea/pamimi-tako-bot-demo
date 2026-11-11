@@ -93,3 +93,28 @@ def resolve_within(base_dir: str, *parts: str) -> str | None:
     if not is_path_within(base_dir, *parts):
         return None
     return os.path.realpath(os.path.join(base_dir, *parts))
+
+
+# 合法渠道标识：1-16 字符，仅字母/数字/下划线/连字符（对齐 conversations.channel VARCHAR(16)）
+_CHANNEL_RE = re.compile(r"^[A-Za-z0-9_-]{1,16}$")
+
+
+def is_valid_channel(value: object) -> bool:
+    """判断值是否为合法渠道标识（仅接受字符串）。"""
+    if not isinstance(value, str) or not value:
+        return False
+    return bool(_CHANNEL_RE.match(value))
+
+
+def validate_channel(value: object, field_name: str = "channel") -> str:
+    """严格校验渠道标识 — 输入非法时抛出 ValueError 而非静默回退。
+
+    用于对话请求 body 与 WS query 的 channel 校验；静默回退会悄悄丢归因
+    （本功能的存在意义），故严格拒绝。
+    """
+    if not is_valid_channel(value):
+        raise ValueError(
+            f"无效的 {field_name}: {value!r}。"
+            f"仅允许 1-16 位字母/数字/下划线/连字符。"
+        )
+    return str(value)
