@@ -40,6 +40,7 @@ configs/skills.json
 .vscode/
 .claude/
 .workbuddy/
+.codex/
 
 # Else
 .dist

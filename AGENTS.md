@@ -1,0 +1,285 @@
+# AGENTS.md — Pamimi Tako Bot Demo 项目指引
+
+## 项目概述
+
+基于 **AgentScope 2.0.7** 构建的 AI Agent 平台服务，使用 FastAPI 提供 HTTP 接口。
+
+- **Python**: >=3.12
+- **核心依赖**: agentscope 2.0.7, fastapi, uvicorn, dashscope, openai, anthropic
+- **详细文档**: [docs/agentscope-guide.md](docs/agentscope-guide.md)
+
+## 项目结构
+
+```
+pamimi-tako-bot-demo/
+├── main.py                    # 启动入口 — 配置加载 + 日志 + OTel + uvicorn
+├── server.py                  # FastAPI 应用 — create_app(config) + lifespan + 路由注册
+├── api/
+│   ├── chat.py                # 对话 API 路由（/chat/stream, /chat/, /sessions/*）
+│   ├── ws_chat.py             # WebSocket 对话端点（/ws/chat）
+│   ├── mcp.py                 # MCP 管理（/mcp）
+│   ├── skill.py               # Skill 管理（/skill）
+│   └── static/                # 旧版前端对话界面（index.html + chat.js）
+├── core/
+│   ├── agent/factory.py       # Agent 工厂（模型/工具/中间件组装）
+│   ├── config/                # 配置加载（YAML + 环境变量）
+│   │   ├── schemas.py         # Pydantic Schema
+│   │   ├── loader.py          # YAML 加载器
+│   │   ├── manager.py         # ConfigManager 单例
+│   │   └── resolver.py        # 环境变量解析器
+│   ├── database.py            # 数据库管理器（后端分派 + fail-fast 初始化 + 便捷方法）
+│   ├── db/                    # 后端实现（base/factory/dialect/statements/postgres/mysql/ddl）
+│   ├── storage.py             # PostgreSQL 存储层（Agent/Session/MCP/Skill CRUD）
+│   ├── storage_models.py      # 数据模型定义（AgentRecord/MCPRecord/SkillRecord 等）
+│   ├── chat_service.py        # Chat 服务层（Fire-and-Forget 事件驱动模式）
+│   ├── session.py             # 会话管理器（KV 持久化 [redis/jsonl] + 元数据 + 消息历史 + fork）
+│   ├── kv/                    # KV 存储抽象（RedisKVStore / JsonlKVStore 开发用 JSONL）
+│   ├── redis_message_bus.py   # Redis 分布式消息总线（分布式锁 + Pub/Sub）
+│   ├── message_bus.py         # 消息总线抽象
+│   ├── formatter/             # 自定义 Formatter（SiliconFlow 兼容）
+│   │   ├── __init__.py
+│   │   └── siliconflow.py     # SiliconFlowFormatter（content list 扁平化）
+│   ├── workspace.py           # 自有 LocalWorkspaceManager（base_dir="./workspaces"）
+│   ├── log/                   # 日志初始化（loguru + 文件轮转）
+│   └── tracing/               # OTel 追踪初始化 + 装饰器
+├── middleware/
+│   ├── tool_guard.py          # 工具名级黑白名单中间件
+│   ├── command_guard.py       # 命令内容级安全守卫（拦截危险命令）
+│   ├── path_guard.py          # 路径访问守卫
+│   └── tool_manager.py        # 工具管理器（从 configs/tools.yaml 选择性加载）
+├── webui/                     # 新版 React 19 SPA（/webui）
+│   ├── src/                   # 源码（React + TypeScript + TailwindCSS）
+│   ├── dist/                  # 构建产物（由 server.py 直接服务）
+│   └── package.json           # 前端依赖
+├── health_check/              # 健康检查工具集（可单独执行）
+│   ├── check_all.py           # 总入口：一键运行所有检查
+│   ├── check_http.py          # HTTP 服务 + API 端点检查
+│   ├── check_redis.py         # Redis 连接读写检查
+│   ├── check_postgres.py      # PostgreSQL 连接表结构检查
+│   ├── check_mysql.py         # MySQL 连接/版本/表结构检查
+│   └── check_llm.py           # LLM API 可达性检查
+├── workflow/
+│   └── base.py                # 自用工作流基类
+├── workspaces/                # 统一沙箱与工作路径
+├── tests/                     # 单元测试
+├── configs/
+│   ├── dev.yaml               # 开发环境配置
+│   ├── prod.yaml              # 生产环境配置
+│   └── tools.yaml             # 工具选择性加载配置
+├── docker/
+│   ├── docker-compose.yaml    # 可观测性栈 + Redis + PostgreSQL
+│   ├── deploy_yml/            # 模块化部署 compose 文件（dev/各数据库独立）
+│   └── *.yaml / *.yml         # OTel/Prometheus/Loki 配置
+├── docs/                      # 设计文档
+│   ├── agentscope-guide.md    # AgentScope 使用指南
+│   ├── refactor-plan.md       # 重构规划
+│   ├── health-check-plan.md   # 健康检查规划
+│   ├── webui-plan.md          # WebUI 设计
+│   ├── websocket-plan.md      # WebSocket 通道设计
+│   ├── sandbox-plan.md        # 沙箱隔离设计
+│   └── tool-middleware-plan.md # 工具守卫设计
+├── scripts/
+│   └── start.sh               # 启动服务（VENV_PATH 可配置）
+├── .env.example               # 环境变量模板
+├── pyproject.toml             # 项目依赖
+└── requirements.txt           # 锁定依赖
+```
+
+## 服务架构
+
+### main.py + server.py (端口 8090) — 自有平台层
+
+- **main.py** — 启动入口：配置加载、日志初始化、OTel 初始化、uvicorn 启动
+- **server.py** — FastAPI 应用：`create_app(config)` 工厂函数、lifespan 资源管理、路由注册
+- 自有 SessionManager、DatabaseManager、RedisMessageBus、PostgresStorage、ChatService
+- 会话存储：Redis `dmx_agent_redis:session:*` 前缀
+- 工作区：`workspaces/{user_id}/{session_id}/`
+
+### 访问入口
+
+| 前端         | 地址                            | 说明                     |
+| ------------ | ------------------------------- | ------------------------ |
+| 新版 WebUI   | `http://localhost:8090/webui` | React 19 SPA（需先构建） |
+| 旧版静态界面 | `http://localhost:8090/`      | api/static/index.html    |
+| Swagger 文档 | `http://localhost:8090/docs`  | API 文档                 |
+
+### 统一沙箱与工作路径 — workspaces/
+
+8090 的自有 `LocalWorkspaceManager(base_dir="./workspaces")` 共享同一 `workspaces/` 根目录：
+
+- 8090 路径结构：`workspaces/{user_id}/{session_id}/`（自有 workspace.py `_get_workdir`）
+- 旧目录 `webui_workspaces/` 已废弃，数据已迁移，目录已删除
+
+## 关键配置
+
+### 环境变量（.env.example）
+
+```bash
+# LLM 配置（必填）
+LLM_API_KEY=sk-xxx
+LLM_BASE_URL=http://your-llm-api-base-url/v1
+LLM_MODEL_NAME=glm-5
+
+# OTel 追踪（可选，默认 http://localhost:4317）
+OTEL_ENDPOINT=http://localhost:4317
+
+# 数据库（可选，默认连本地 PostgreSQL）
+DATABASE_URL=postgresql://user:password@localhost:5432/dmx_agent_db
+
+# Redis（可选，默认本地）
+REDIS_URL=redis://localhost:6379/0
+
+# 应用环境：dev / prod
+APP_ENV=dev
+```
+
+> YAML 配置中所有外部依赖地址均支持 `${VAR:-default}` 语法，未设置环境变量时使用默认值。
+
+## API 端点
+
+### 对话（chat）
+
+| 方法 | 路径                              | 说明                             |
+| ---- | --------------------------------- | -------------------------------- |
+| POST | `/chat/stream`                  | 流式对话（SSE 事件流）           |
+| POST | `/chat/`                        | Fire-and-Forget 触发（事件驱动） |
+| GET  | `/sessions/{session_id}/stream` | SSE 事件流订阅                   |
+| GET  | `/health`                       | 健康检查                         |
+
+### WebSocket 对话
+
+| 方法 | 路径                                                   | 说明                      |
+| ---- | ------------------------------------------------------ | ------------------------- |
+| WS   | `/ws/chat?user_id={user_id}&session_id={session_id}` | 全双工 WebSocket 对话通道 |
+
+### 会话（session）
+
+| 方法   | 路径                                          | 说明                                       |
+| ------ | --------------------------------------------- | ------------------------------------------ |
+| GET    | `/sessions`                                 | 列出内存中活跃会话（可选`user_id` 过滤） |
+| GET    | `/sessions/{user_id}`                       | 列出用户所有历史会话（Redis SCAN）         |
+| GET    | `/sessions/{user_id}/{session_id}/messages` | 获取会话消息历史                           |
+| POST   | `/sessions/{user_id}/{session_id}/fork`     | 基于父会话创建分支                         |
+| DELETE | `/sessions/{user_id}/{session_id}`          | 删除会话                                   |
+
+### MCP 管理
+
+| 方法   | 路径              | 说明                        |
+| ------ | ----------------- | --------------------------- |
+| GET    | `/mcp`          | 列出已安装 MCP              |
+| POST   | `/mcp`          | 添加 MCP                    |
+| PATCH  | `/mcp/{mcp_id}` | 更新 MCP（启用/禁用、改名） |
+| DELETE | `/mcp/{mcp_id}` | 删除 MCP                    |
+
+### Skill 管理
+
+| 方法   | 路径                  | 说明             |
+| ------ | --------------------- | ---------------- |
+| GET    | `/skill`            | 列出已安装 Skill |
+| POST   | `/skill`            | 添加 Skill       |
+| GET    | `/skill/{skill_id}` | 获取单个 Skill   |
+| DELETE | `/skill/{skill_id}` | 删除 Skill       |
+
+## 会话与持久化
+
+### 架构
+
+```
+SessionManager
+  ├── 内存缓存: (user_id, session_id) → SessionEntry
+  └── KVStore（kv.backend: redis | jsonl，key 前缀/TTL 取自 redis 配置）
+      ├── dmx_agent_redis:session:{user_id}:{session_id}      → AgentState JSON (TTL 1800s)
+      └── dmx_agent_redis:session:{user_id}:{session_id}:meta → 会话元数据 JSON (TTL 1800s)
+          {session_id, user_id, title, created_at, last_active, message_count}
+          # kv.backend=jsonl 时改落 workspaces/.history/kv_data/kv.jsonl（开发/资源受限，单进程，惰性 TTL）
+
+PostgresStorage (PostgreSQL / MySQL — 后端无关)
+  └── DatabaseManager 连接池（PostgresBackend(asyncpg) / MySQLBackend(aiomysql)）
+      ├── users 表           — 用户元数据
+      ├── conversations 表   — 对话历史（user_id, session_id, role, content, metadata）
+      ├── sessions 表        — 会话记录（parent_session_id, depth）
+      ├── agents 表          — Agent 配置
+      ├── mcps 表            — MCP 配置
+      └── skills 表          — Skill 配置
+```
+
+### 关键流程
+
+1. **会话创建**: 先查 Redis，命中则恢复 AgentState，未命中则新建
+2. **会话回复**: reply/stream 完成后，调用 `session_mgr.save()` 同时写入 AgentState 与 `:meta` 元数据，异步写入 PG
+3. **会话过期**: 内存中 TTL 过期后清理，Redis 中 key 保留至 TTL 到期
+4. **会话列表**: `list_sessions()` 仅返回内存中活跃会话；`list_user_sessions()` 按 KV 后端扫描 `:meta` key（redis SCAN / jsonl 内存 glob）返回历史会话
+5. **消息历史**: `get_session_messages()` 从 Redis 加载 AgentState，提取 user/assistant 文本消息返回
+6. **会话删除**: `delete_session()` 彻底删除（内存 + Redis AgentState + Redis 元数据）
+
+### Redis 配置
+
+```yaml
+redis:
+  url: "${REDIS_URL:-redis://localhost:6379/0}"
+  key_prefix: "dmx_agent_redis:session:"
+  session_ttl: 1800    # 秒
+```
+
+### KV 存储配置
+
+```yaml
+kv:
+  backend: "redis"                # redis / jsonl（jsonl 仅限开发/资源受限单进程场景）
+  jsonl_path: "workspaces/.history/kv_data"         # jsonl 后端存储目录（已加入 .gitignore）
+  jsonl_compact_threshold: 5000   # 追加行数达到阈值时压缩重写
+```
+
+`backend=redis` 时行为与旧版完全一致；`backend=jsonl` 时会话状态/元数据写本地 JSONL 文件（无 Redis 依赖，惰性 TTL + 阈值压缩）。消息总线 / 多端状态广播仍需 Redis（缺失时自动降级单实例；该模式下 `/health` 的 redis 项仅提示 `unavailable`，不置 503）。
+
+### 数据库配置（PostgreSQL / MySQL）
+
+```yaml
+database:
+  backend: "auto"               # auto / postgres / mysql（auto 按 URL scheme 推断）
+  url: "${DATABASE_URL:-postgresql://user:password@localhost:5432/dmx_agent_db}"
+  # MySQL 示例: mysql://user:password@localhost:3306/dmx_agent_db（需带库名，>= 8.0.20）
+  pool_size: 10
+  auto_create_tables: true      # 启动时执行幂等 DDL（受限账号场景设 false）
+  verify_tables: true           # 连接后校验必需表（禁用 DDL 时尤其重要）
+  timezone: "Asia/Shanghai"     # 时间列时区：created_at/last_active 等应用侧生成传参（DB NOW() 可能是 UTC）
+```
+
+`DatabaseManager` 在 `server.py` lifespan 中初始化，按 `backend`/URL scheme 分派 `PostgresBackend`（asyncpg）或 `MySQLBackend`（aiomysql）。`auto_create_tables=true` 时执行幂等 DDL，`verify_tables=true` 时校验 `core/db/ddl.py REQUIRED_TABLES` 的 6 张必需表。初始化失败固定 fail-fast（ERROR 日志 + 抛出 → 启动中止进程退出；`verify_tables` 缺表时日志列出缺表清单）。未配置 URL（空串）时跳过初始化。提供 `execute / fetch / fetchrow / fetchval` 通用接口、`execute_named / fetch_named / fetchval_named`（按方言取注册表 SQL）、`insert_returning_id`（PG RETURNING / MySQL lastrowid 或回查），以及 `insert_conversation / get_conversation_history` 便捷方法（消息写入显式携带 `channel` 列，默认 `web`，为飞书/微信渠道预留；OTel Resource 同步上报 `channel` tag，配置项 `otel.channel`）。时间列（`conversations.created_at`、`users.last_active`、`sessions.updated_at` 等）由 `DatabaseManager.now()` 按 `database.timezone`（默认 `Asia/Shanghai`）应用侧生成后显式传参——MySQL 侧 naive 墙钟、PG 侧 aware；DB `NOW()/DEFAULT` 仅作兜底（服务端可能跑 UTC，会差 8 小时）；读路径经 `_serialize_dt` 统一序列化（aware 转配置时区，naive 原样）。未初始化（URL 未配置）时访问 `/mcp` `/skill` 等未守卫路由返回 **503**（`DatabaseUnavailableError` 统一处理器）；启动后的运行期数据库故障由 `/health` 503 与各路由异常覆盖，进程不退出。
+
+## 健康检查
+
+```bash
+# 一键检查所有组件
+.venv/Scripts/python.exe health_check/check_all.py
+
+# 单独检查
+.venv/Scripts/python.exe health_check/check_http.py
+.venv/Scripts/python.exe health_check/check_redis.py
+.venv/Scripts/python.exe health_check/check_postgres.py
+.venv/Scripts/python.exe health_check/check_mysql.py
+.venv/Scripts/python.exe health_check/check_llm.py
+```
+
+## Git 提交安全钩子
+
+提交/推送前自动拦截敏感信息（内网 IP、API 密钥前缀、私钥块），防止内网地址被提交进历史。钩子源码在 [.githooks/](.githooks/)（`pre-commit` + `pre-push` 兜底）。
+
+```bash
+# 新克隆需启用一次（core.hooksPath 是本地配置，不会随仓库下发）
+git config core.hooksPath .githooks
+```
+
+- 误报或确需绕过：`git commit --no-verify` / `git push --no-verify`
+- 定位已存在的敏感信息：`git log --all --oneline -S '<敏感串>'`
+
+## 相关文档
+
+| 文档                                                    | 说明                                                                   |
+| ------------------------------------------------------- | ---------------------------------------------------------------------- |
+| [docs/dangerous-commands.md](docs/dangerous-commands.md) | 命令安全守卫说明                                                       |
+| [docs/middleware-guards.md](docs/middleware-guards.md)   | 中间件守卫体系（工具守卫 / 命令守卫 / 路径守卫 / 压缩守卫 / 速率限制） |
+| [docs/budget-control.md](docs/budget-control.md)         | 预算控制（回复预算 / 上下文压缩 / 回填预算）                           |
+| [docs/上下文管理.md](docs/上下文管理.md)                 | 上下文注入、压缩与卸载                                                 |
+| [docs/docker-deployment.md](docs/docker-deployment.md)   | Docker 容器化部署指南                                                  |
+| [docs/sandbox-guide.md](docs/sandbox-guide.md)           | 沙箱隔离指南                                                           |
